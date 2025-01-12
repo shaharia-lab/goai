@@ -46,6 +46,7 @@ const (
 ```
 
 ## Custom Fields
+
 ```go
 type VectorFieldConfig struct {
     Type     string `json:"type"`
