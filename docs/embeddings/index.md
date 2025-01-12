@@ -58,8 +58,8 @@ type Usage struct {
    ai.EmbeddingModelAllMiniLML6V2
    ```
 
-    - Lightweight model for general-purpose embedding generation
-    - Good balance between performance and quality
+   - Lightweight model for general-purpose embedding generation
+   - Good balance between performance and quality
 
 2. **all-mpnet-base-v2**
 
@@ -67,8 +67,8 @@ type Usage struct {
    ai.EmbeddingModelAllMpnetBaseV2
    ```
 
-    - Higher quality embeddings
-    - More computationally intensive
+   - Higher quality embeddings
+   - More computationally intensive
 
 3. **paraphrase-multilingual-MiniLM-L12-v2**
 
@@ -76,8 +76,8 @@ type Usage struct {
    ai.EmbeddingModelParaphraseMultilingualMiniLML12V2
    ```
 
-    - Specialized for multilingual text
-    - Supports embedding generation across multiple languages
+   - Specialized for multilingual text
+   - Supports embedding generation across multiple languages
 
 ## Error Handling
 
