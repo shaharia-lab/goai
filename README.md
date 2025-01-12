@@ -76,7 +76,7 @@ We welcome contributions! See our [Contributing Guide](CONTRIBUTING.md) for deta
 
 ## 🔒 Security
 
-Review our [Security Policy](SECURITY.md) for reporting vulnerabilities.
+Review our [Security Policy](docs/SECURITY.md) for reporting vulnerabilities.
 
 ## 📝 License
 
