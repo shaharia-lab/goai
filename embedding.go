@@ -1,6 +1,6 @@
-// Package ai provides artificial intelligence utilities including embedding generation capabilities.
+// Package goai provides artificial intelligence utilities including embedding generation capabilities.
 // It offers a flexible interface for generating text embeddings using various models and providers.
-package ai
+package goai
 
 import (
 	"bytes"

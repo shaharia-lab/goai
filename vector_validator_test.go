@@ -1,5 +1,5 @@
-// Package ai provides artificial intelligence utilities including vector storage capabilities.
-package ai
+// Package goai provides artificial intelligence utilities including vector storage capabilities.
+package goai
 
 import (
 	"testing"
