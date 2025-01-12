@@ -4,10 +4,10 @@
 
 ```go
 // Create client
-client := ai.NewRealAnthropicClient("your-api-key")
+client := goai.NewRealAnthropicClient("your-api-key")
 
 // Initialize provider
-provider := ai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
+provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
     Client: client,
     Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
 })
@@ -22,7 +22,7 @@ messages := []ai.LLMMessage{
     {Role: ai.AssistantRole, Text: "Hi there!"},
 }
 
-config := ai.NewRequestConfig(
+config := goai.NewRequestConfig(
     ai.WithMaxToken(1000),
     ai.WithTopP(0.9),
 )

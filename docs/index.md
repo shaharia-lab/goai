@@ -31,14 +31,14 @@ go get github.com/shaharia-lab/goai
 
 ```go
 // Initialize LLM
-client := ai.NewRealAnthropicClient("api-key")
-provider := ai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
+client := goai.NewRealAnthropicClient("api-key")
+provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
     Client: client,
 })
 
 // Configure request
-config := ai.NewRequestConfig(ai.WithMaxToken(1000))
-llm := ai.NewLLMRequest(config, provider)
+config := goai.NewRequestConfig(ai.WithMaxToken(1000))
+llm := goai.NewLLMRequest(config, provider)
 
 // Generate response
 response, err := llm.Generate([]ai.LLMMessage{

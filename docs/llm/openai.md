@@ -4,13 +4,13 @@
 
 ```go
 // Create client
-client := ai.NewRealOpenAIClient(
+client := goai.NewRealOpenAIClient(
     "your-api-key",
     option.WithHTTPClient(&http.Client{Timeout: 30 * time.Second}),
 )
 
 // Initialize provider
-provider := ai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
+provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
     Client: client,
     Model:  string(openai.ChatModelGPT3_5Turbo),
 })
@@ -24,7 +24,7 @@ messages := []ai.LLMMessage{
     {Role: ai.UserRole, Text: "Hello"},
 }
 
-config := ai.NewRequestConfig(
+config := goai.NewRequestConfig(
     ai.WithMaxToken(1000),
     ai.WithTemperature(0.7),
 )

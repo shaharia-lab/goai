@@ -38,13 +38,13 @@ and vector storage capabilities. Built for developers who want a clean, unified 
 
 ```go
 // Initialize LLM
-client := ai.NewRealAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"))
-provider := ai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
+client := goai.NewRealAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"))
+provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
     Client: client,
 })
 
 // Configure request
-llm := ai.NewLLMRequest(ai.NewRequestConfig(
+llm := goai.NewLLMRequest(ai.NewRequestConfig(
     ai.WithMaxToken(1000),
     ai.WithTemperature(0.7),
 ), provider)

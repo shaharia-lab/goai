@@ -20,7 +20,7 @@ type PostgresStorageConfig struct {
     SchemaName      string
 }
 
-provider, err := ai.NewPostgresProvider(PostgresStorageConfig{
+provider, err := goai.NewPostgresProvider(PostgresStorageConfig{
     ConnectionString: "postgres://user:pass@localhost:5432/dbname",
     MaxDimension:    384,
     SchemaName:      "vectors",

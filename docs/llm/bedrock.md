@@ -4,7 +4,7 @@
 
 ```go
 // Initialize provider with Bedrock client
-provider := ai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
+provider := goai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
     Client: bedrockClient,
     Model:  "anthropic.claude-3-sonnet-20240229-v1:0",
 })
@@ -18,7 +18,7 @@ messages := []ai.LLMMessage{
     {Role: ai.AssistantRole, Text: "Hi there!"},
 }
 
-config := ai.NewRequestConfig(
+config := goai.NewRequestConfig(
     ai.WithMaxToken(1000),
     ai.WithTemperature(0.7),
     ai.WithTopP(0.9),

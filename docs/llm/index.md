@@ -18,8 +18,8 @@ type LLMProvider interface {
 ### OpenAI
 
 ```go
-client := ai.NewRealOpenAIClient("api-key")
-provider := ai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
+client := goai.NewRealOpenAIClient("api-key")
+provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
     Client: client,
     Model:  "gpt-3.5-turbo",
 })
@@ -28,8 +28,8 @@ provider := ai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 ### Anthropic
 
 ```go
-client := ai.NewRealAnthropicClient("api-key")
-provider := ai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
+client := goai.NewRealAnthropicClient("api-key")
+provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
     Client: client,
     Model:  "claude-3-sonnet-20240229",
 })
@@ -38,7 +38,7 @@ provider := ai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
 ### AWS Bedrock
 
 ```go
-provider := ai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
+provider := goai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
     Client: bedrockClient,
     Model:  "anthropic.claude-3-sonnet-20240229-v1:0",
 })
@@ -47,7 +47,7 @@ provider := ai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
 ## Configuration
 
 ```go
-config := ai.NewRequestConfig(
+config := goai.NewRequestConfig(
     ai.WithMaxToken(1000),
     ai.WithTopP(0.9),
     ai.WithTemperature(0.7),
@@ -75,7 +75,7 @@ type LLMMessage struct {
 ## Basic Usage
 
 ```go
-llm := ai.NewLLMRequest(config, provider)
+llm := goai.NewLLMRequest(config, provider)
 
 response, err := llm.Generate([]ai.LLMMessage{
     {Role: ai.SystemRole, Text: "You are a helpful assistant"},

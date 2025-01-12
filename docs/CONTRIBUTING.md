@@ -2,26 +2,26 @@
 
 ## Development Setup
 
-1. Clone the repository:
+`1.` Clone the repository:
 
 ```bash
 git clone https://github.com/shaharia-lab/goai.git
 cd goai
 ```
 
-2. Install dependencies:
+`2.` Install dependencies:
 
 ```bash
 go mod download
 ```
 
-3. Setup PostgreSQL with pgvector:
+`3.` Setup PostgreSQL with pgvector:
 
 ```sql
 CREATE EXTENSION vector;
 ```
 
-4. Run tests:
+`4.` Run tests:
 
 ```bash
 go test ./...

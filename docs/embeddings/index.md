@@ -6,7 +6,7 @@ Generate vector embeddings from text using the EmbeddingService interface.
 
 ```go
 // Initialize the service
-service := ai.NewEmbeddingService(baseURL, httpClient)
+service := goai.NewEmbeddingService(baseURL, httpClient)
 
 // Single text embedding
 response, err := service.GenerateEmbedding(
@@ -99,7 +99,7 @@ if err != nil {
 When creating a new embedding service:
 
 ```go
-service := ai.NewEmbeddingService(
+service := goai.NewEmbeddingService(
     "https://api.example.com",  // Base URL for the embedding API
     &http.Client{              // Optional custom HTTP client
         Timeout: 30 * time.Second,
@@ -107,5 +107,5 @@ service := ai.NewEmbeddingService(
 )
 
 // If no HTTP client is provided, http.DefaultClient will be used
-service := ai.NewEmbeddingService("https://api.example.com", nil)
+service := goai.NewEmbeddingService("https://api.example.com", nil)
 ```

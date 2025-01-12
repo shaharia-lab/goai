@@ -17,18 +17,18 @@ go get github.com/shaharia-lab/goai
 import "github.com/shaharia-lab/goai"
 
 // Using OpenAI
-client := ai.NewRealOpenAIClient("your-api-key")
-provider := ai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
+client := goai.NewRealOpenAIClient("your-api-key")
+provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
     Client: client,
 })
 
 // Configure request
-config := ai.NewRequestConfig(
+config := goai.NewRequestConfig(
     ai.WithMaxToken(1000),
     ai.WithTopP(0.9),
     ai.WithTemperature(0.7),
 )
-llm := ai.NewLLMRequest(config, provider)
+llm := goai.NewLLMRequest(config, provider)
 
 // Generate response
 response, err := llm.Generate([]ai.LLMMessage{
@@ -37,13 +37,13 @@ response, err := llm.Generate([]ai.LLMMessage{
 })
 
 // Using Anthropic
-client := ai.NewRealAnthropicClient("your-api-key")
-provider := ai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
+client := goai.NewRealAnthropicClient("your-api-key")
+provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
     Client: client,
 })
 
 // Using AWS Bedrock
-provider := ai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
+provider := goai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
     Client: bedrockClient,
 })
 ```
@@ -51,7 +51,7 @@ provider := ai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
 ## Embeddings
 
 ```go
-service := ai.NewEmbeddingService(baseURL, nil)
+service := goai.NewEmbeddingService(baseURL, nil)
 response, err := service.GenerateEmbedding(
     context.Background(),
     "Hello world",
@@ -62,17 +62,17 @@ response, err := service.GenerateEmbedding(
 ## Vector Storage
 
 ```go
-config := ai.PostgresStorageConfig{
+config := goai.PostgresStorageConfig{
     ConnectionString: "postgres://user:pass@localhost:5432/dbname",
     MaxDimension:    384,
 }
 
-provider, err := ai.NewPostgresProvider(config)
+provider, err := goai.NewPostgresProvider(config)
 if err != nil {
     log.Fatal(err)
 }
 
-storage, err := ai.NewVectorStorage(context.Background(), provider)
+storage, err := goai.NewVectorStorage(context.Background(), provider)
 if err != nil {
     log.Fatal(err)
 }

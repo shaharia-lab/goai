@@ -3,14 +3,14 @@
 ## Initialization
 
 ```go
-config := ai.PostgresStorageConfig{
+config := goai.PostgresStorageConfig{
     ConnectionString: "postgres://user:pass@localhost:5432/dbname",
     MaxDimension:    384,
     SchemaName:      "vectors",
 }
 
-provider, err := ai.NewPostgresProvider(config)
-storage, err := ai.NewVectorStorage(context.Background(), provider)
+provider, err := goai.NewPostgresProvider(config)
+storage, err := goai.NewVectorStorage(context.Background(), provider)
 ```
 
 ## Collection Management

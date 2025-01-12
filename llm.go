@@ -16,19 +16,19 @@ type LLMRequest struct {
 // Example usage:
 //
 //	// Create provider
-//	provider := ai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
+//	provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 //	    APIKey: "your-api-key",
 //	    Model:  "gpt-3.5-turbo",
 //	})
 //
 //	// Configure request options
-//	config := ai.NewRequestConfig(
+//	config := goai.NewRequestConfig(
 //	    ai.WithMaxToken(2000),
 //	    ai.WithTemperature(0.7),
 //	)
 //
 //	// Create LLM request client
-//	llm := ai.NewLLMRequest(config, provider)
+//	llm := goai.NewLLMRequest(config, provider)
 func NewLLMRequest(config LLMRequestConfig, provider LLMProvider) *LLMRequest {
 	return &LLMRequest{
 		requestConfig: config,
