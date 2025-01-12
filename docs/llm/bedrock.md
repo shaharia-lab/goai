@@ -1,22 +1,47 @@
-# AWS Bedrock Integration
-
-Integration with AWS Bedrock service.
+# AWS Bedrock Provider
 
 ## Setup
+
 ```go
-client := bedrockruntime.New(aws.Config{})
+// Initialize provider with Bedrock client
 provider := ai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
-    Client: client,
+    Client: bedrockClient,
     Model:  "anthropic.claude-3-sonnet-20240229-v1:0",
 })
 ```
 
-## Usage
-```go
-config := ai.NewRequestConfig(ai.WithMaxToken(2000))
-request := ai.NewLLMRequest(config, provider)
+## Message Handling
 
-response, err := request.Generate([]ai.LLMMessage{
-    {Role: ai.UserRole, Text: "Hello!"},
-})
+```go
+messages := []ai.LLMMessage{
+    {Role: ai.UserRole, Text: "Hello"},
+    {Role: ai.AssistantRole, Text: "Hi there!"},
+}
+
+config := ai.NewRequestConfig(
+    ai.WithMaxToken(1000),
+    ai.WithTemperature(0.7),
+    ai.WithTopP(0.9),
+)
+
+response, err := provider.GetResponse(messages, config)
+if err != nil {
+    return err
+}
+
+fmt.Printf("Response: %s\n", response.Text)
+fmt.Printf("Tokens: Input=%d, Output=%d\n", 
+    response.TotalInputToken, 
+    response.TotalOutputToken)
+```
+
+## Response Structure
+
+```go
+type LLMResponse struct {
+    Text             string
+    TotalInputToken  int
+    TotalOutputToken int
+    CompletionTime   float64
+}
 ```

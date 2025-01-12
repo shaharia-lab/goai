@@ -4,54 +4,71 @@
 - PostgreSQL 11+
 - pgvector extension
 
-## Setup
-1. Install pgvector extension:
+## Installation
 ```sql
 CREATE EXTENSION vector;
 ```
 
-2. Configure storage:
+## Configuration
 ```go
-config := ai.PostgresStorageConfig{
+type PostgresStorageConfig struct {
+    ConnectionString string
+    MaxDimension    int
+    SchemaName      string
+}
+
+provider, err := ai.NewPostgresProvider(PostgresStorageConfig{
     ConnectionString: "postgres://user:pass@localhost:5432/dbname",
     MaxDimension:    384,
     SchemaName:      "vectors",
-}
-
-provider, err := ai.NewPostgresProvider(config)
-```
-
-## Operations
-
-1. Create Collection:
-```go
-err = storage.CreateCollection(ctx, &ai.VectorCollectionConfig{
-    Name:         "documents",
-    Dimension:    384,
-    IndexType:    ai.IndexTypeHNSW,
-    DistanceType: ai.DistanceTypeCosine,
 })
 ```
 
-2. Store Documents:
+## Collection Types
 ```go
-doc := &ai.VectorDocument{
-    ID:      "doc1",
-    Vector:  embedding.Data[0].Embedding,
-    Content: "Content text",
-    Metadata: map[string]interface{}{
-        "category": "technology",
-    },
-}
-err = storage.UpsertDocument(ctx, "documents", doc)
+type VectorIndexType string
+const (
+    IndexTypeFlat    VectorIndexType = "flat"
+    IndexTypeIVFFlat VectorIndexType = "ivf_flat"
+    IndexTypeHNSW    VectorIndexType = "hnsw"
+)
+
+type VectorDistanceType string
+const (
+    DistanceTypeCosine     VectorDistanceType = "cosine"
+    DistanceTypeEuclidean  VectorDistanceType = "euclidean"
+    DistanceTypeDotProduct VectorDistanceType = "dot_product"
+)
 ```
 
-3. Search:
+## Custom Fields
 ```go
-results, err := storage.SearchByVector(ctx, "documents", queryVector, &ai.VectorSearchOptions{
-    Limit: 10,
-    Filter: map[string]interface{}{
-        "category": "technology",
+type VectorFieldConfig struct {
+    Type     string `json:"type"`
+    Required bool   `json:"required"`
+    Indexed  bool   `json:"indexed"`
+}
+
+config := &ai.VectorCollectionConfig{
+    Name:      "documents",
+    Dimension: 384,
+    CustomFields: map[string]VectorFieldConfig{
+        "category": {
+            Type:     "string",
+            Required: true,
+            Indexed:  true,
+        },
     },
-})
+}
+```
+
+## Error Handling
+```go
+var (
+ErrDocumentNotFound   = &VectorError{Code: ErrCodeNotFound}
+ErrCollectionNotFound = &VectorError{Code: ErrCodeCollectionNotFound}
+ErrCollectionExists   = &VectorError{Code: ErrCodeCollectionExists}
+ErrInvalidDimension   = &VectorError{Code: ErrCodeInvalidDimension}
+ErrInvalidConfig      = &VectorError{Code: ErrCodeInvalidConfig}
+)
 ```

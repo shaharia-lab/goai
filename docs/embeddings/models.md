@@ -2,17 +2,41 @@
 
 ## Available Models
 
-1. **EmbeddingModelAllMiniLML6V2**
-    - Lightweight, general-purpose model
-    - Good balance of performance and quality
-    - Dimension: 384
+```go
+const (
+    EmbeddingModelAllMiniLML6V2 EmbeddingModel = "all-MiniLM-L6-v2"
+    EmbeddingModelAllMpnetBaseV2 EmbeddingModel = "all-mpnet-base-v2"
+    EmbeddingModelParaphraseMultilingualMiniLML12V2 EmbeddingModel = "paraphrase-multilingual-MiniLM-L12-v2"
+)
+```
 
-2. **EmbeddingModelAllMpnetBaseV2**
-    - Higher quality embeddings
-    - More compute intensive
-    - Dimension: 768
+### all-MiniLM-L6-v2
+- Lightweight model suitable for general-purpose embedding generation
+- Good balance between performance and quality
 
-3. **EmbeddingModelParaphraseMultilingualMiniLML12V2**
-    - Optimized for multilingual text
-    - Supports multiple languages
-    - Dimension: 384
+### all-mpnet-base-v2
+- Higher quality embeddings
+- More powerful model with increased computation time
+
+### paraphrase-multilingual-MiniLM-L12-v2
+- Specialized for multilingual text
+- Supports embedding generation across multiple languages
+- Maintains semantic meaning across languages
+
+## Usage
+
+```go
+response, err := service.GenerateEmbedding(
+    ctx,
+    input,
+    ai.EmbeddingModelAllMiniLML6V2,
+)
+
+// Response includes:
+type EmbeddingResponse struct {
+    Object string            `json:"object"`
+    Data   []EmbeddingObject `json:"data"`
+    Model  EmbeddingModel    `json:"model"`
+    Usage  Usage             `json:"usage"`
+}
+```

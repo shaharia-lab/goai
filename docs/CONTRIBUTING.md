@@ -1,4 +1,4 @@
-# Contributing to AI Package
+# Contributing to GoAI
 
 ## Development Setup
 
@@ -13,50 +13,58 @@ cd goai
 go mod download
 ```
 
-3. Run tests:
+3. Setup PostgreSQL with pgvector:
+```sql
+CREATE EXTENSION vector;
+```
+
+4. Run tests:
 ```bash
 go test ./...
 ```
 
 ## Code Guidelines
 
-1. **Documentation**
-    - Add godoc comments for exported types and functions
-    - Include usage examples in documentation
-    - Keep documentation up to date with changes
+### Documentation
+- Add godoc comments for all exported types, functions, and methods
+- Include usage examples in code comments
+- Update /docs directory for major features
+- Follow standard Go comment format
 
-2. **Testing**
-    - Write unit tests for new features
-    - Include integration tests where appropriate
-    - Maintain test coverage
+### Testing
+- Write unit tests for all exported functionality
+- Include integration tests for providers
+- Add examples in _test.go files
+- Test all error conditions
 
-3. **Style**
-    - Follow Go best practices
-    - Use gofmt for formatting
-    - Pass golangci-lint checks
+### Style
+- Follow Go standard formatting with `gofmt`
+- Use meaningful variable names
+- Keep functions focused and concise
+- Handle errors appropriately
 
-4. **Pull Requests**
-    - Create feature branch from main
-    - Include tests and documentation
-    - Update CHANGELOG.md
-    - Request review from maintainers
+### Pull Requests
+- Create feature branches from main
+- Include tests and documentation
+- Update CHANGELOG.md
+- Write clear commit messages
 
-## Adding New Features
+## Adding Features
 
-1. **LLM Providers**
-    - Implement LLMProvider interface
-    - Add provider-specific configuration
-    - Include streaming support
-    - Add documentation and examples
+### LLM Providers
+- Implement `LLMProvider` interface
+- Support both sync and streaming responses
+- Handle rate limits and timeouts
+- Follow existing provider patterns
 
-2. **Embedding Models**
-    - Add model constant
-    - Update validation logic
-    - Document model characteristics
-    - Add usage examples
+### Vector Storage
+- Implement `VectorStorageProvider` interface
+- Include proper error types
+- Support metadata and filtering
+- Optimize for performance
 
-3. **Vector Storage**
-    - Implement VectorStorageProvider interface
-    - Add storage-specific configuration
-    - Include performance optimizations
-    - Add documentation and examples
+### Error Handling
+- Use appropriate error types
+- Include error codes
+- Provide meaningful error messages
+- Document error conditions

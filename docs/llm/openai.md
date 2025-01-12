@@ -1,26 +1,49 @@
-# OpenAI Integration
-
-Integration with OpenAI's GPT models.
+# OpenAI Provider
 
 ## Setup
+
 ```go
+// Create client
 client := ai.NewRealOpenAIClient(
     "your-api-key",
     option.WithHTTPClient(&http.Client{Timeout: 30 * time.Second}),
 )
 
+// Initialize provider
 provider := ai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
     Client: client,
-    Model:  "gpt-3.5-turbo",
+    Model:  string(openai.ChatModelGPT3_5Turbo),
 })
 ```
 
-## Usage
-```go
-config := ai.NewRequestConfig(ai.WithMaxToken(2000))
-request := ai.NewLLMRequest(config, provider)
+## Message Handling
 
-response, err := request.Generate([]ai.LLMMessage{
-    {Role: ai.UserRole, Text: "Hello!"},
-})
+```go
+messages := []ai.LLMMessage{
+    {Role: ai.SystemRole, Text: "You are a helpful assistant"},
+    {Role: ai.UserRole, Text: "Hello"},
+}
+
+config := ai.NewRequestConfig(
+    ai.WithMaxToken(1000),
+    ai.WithTemperature(0.7),
+)
+
+response, err := provider.GetResponse(messages, config)
+```
+
+## Streaming
+
+```go
+stream, err := provider.GetStreamingResponse(ctx, messages, config)
+if err != nil {
+    return err
+}
+
+for chunk := range stream {
+    if chunk.Error != nil {
+        break
+    }
+    fmt.Print(chunk.Text)
+}
 ```
