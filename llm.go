@@ -23,8 +23,8 @@ type LLMRequest struct {
 //
 //	// Configure request options
 //	config := goai.NewRequestConfig(
-//	    ai.WithMaxToken(2000),
-//	    ai.WithTemperature(0.7),
+//	    goai.WithMaxToken(2000),
+//	    goai.WithTemperature(0.7),
 //	)
 //
 //	// Create LLM request client
@@ -42,8 +42,8 @@ func NewLLMRequest(config LLMRequestConfig, provider LLMProvider) *LLMRequest {
 // Example usage:
 //
 //	messages := []ai.LLMMessage{
-//	    {Role: ai.SystemRole, Text: "You are a helpful assistant"},
-//	    {Role: ai.UserRole, Text: "What is the capital of France?"},
+//	    {Role: goai.SystemRole, Text: "You are a helpful assistant"},
+//	    {Role: goai.UserRole, Text: "What is the capital of France?"},
 //	}
 //
 //	response, err := llm.Generate(messages)

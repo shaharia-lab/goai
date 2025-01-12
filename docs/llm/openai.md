@@ -20,13 +20,13 @@ provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 
 ```go
 messages := []ai.LLMMessage{
-    {Role: ai.SystemRole, Text: "You are a helpful assistant"},
-    {Role: ai.UserRole, Text: "Hello"},
+    {Role: goai.SystemRole, Text: "You are a helpful assistant"},
+    {Role: goai.UserRole, Text: "Hello"},
 }
 
 config := goai.NewRequestConfig(
-    ai.WithMaxToken(1000),
-    ai.WithTemperature(0.7),
+    goai.WithMaxToken(1000),
+    goai.WithTemperature(0.7),
 )
 
 response, err := provider.GetResponse(messages, config)

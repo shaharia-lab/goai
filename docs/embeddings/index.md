@@ -12,7 +12,7 @@ service := goai.NewEmbeddingService(baseURL, httpClient)
 response, err := service.GenerateEmbedding(
     context.Background(),
     "Hello world",
-    ai.EmbeddingModelAllMiniLML6V2,
+    goai.EmbeddingModelAllMiniLML6V2,
 )
 if err != nil {
     return err
@@ -24,7 +24,7 @@ texts := []string{"First text", "Second text"}
 response, err := service.GenerateEmbedding(
     context.Background(),
     texts,
-    ai.EmbeddingModelAllMiniLML6V2,
+    goai.EmbeddingModelAllMiniLML6V2,
 )
 ```
 
@@ -55,7 +55,7 @@ type Usage struct {
 1. **all-MiniLM-L6-v2**
 
    ```go
-   ai.EmbeddingModelAllMiniLML6V2
+   goai.EmbeddingModelAllMiniLML6V2
    ```
 
    - Lightweight model for general-purpose embedding generation
@@ -64,7 +64,7 @@ type Usage struct {
 2. **all-mpnet-base-v2**
 
    ```go
-   ai.EmbeddingModelAllMpnetBaseV2
+   goai.EmbeddingModelAllMpnetBaseV2
    ```
 
    - Higher quality embeddings
@@ -73,7 +73,7 @@ type Usage struct {
 3. **paraphrase-multilingual-MiniLM-L12-v2**
 
    ```go
-   ai.EmbeddingModelParaphraseMultilingualMiniLML12V2
+   goai.EmbeddingModelParaphraseMultilingualMiniLML12V2
    ```
 
    - Specialized for multilingual text

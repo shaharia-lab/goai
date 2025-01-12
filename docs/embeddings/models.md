@@ -32,7 +32,7 @@ const (
 response, err := service.GenerateEmbedding(
     ctx,
     input,
-    ai.EmbeddingModelAllMiniLML6V2,
+    goai.EmbeddingModelAllMiniLML6V2,
 )
 
 // Response includes:

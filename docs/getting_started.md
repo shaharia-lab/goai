@@ -24,16 +24,16 @@ provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 
 // Configure request
 config := goai.NewRequestConfig(
-    ai.WithMaxToken(1000),
-    ai.WithTopP(0.9),
-    ai.WithTemperature(0.7),
+    goai.WithMaxToken(1000),
+    goai.WithTopP(0.9),
+    goai.WithTemperature(0.7),
 )
 llm := goai.NewLLMRequest(config, provider)
 
 // Generate response
 response, err := llm.Generate([]ai.LLMMessage{
-    {Role: ai.SystemRole, Text: "You are a helpful assistant"},
-    {Role: ai.UserRole, Text: "Hello"},
+    {Role: goai.SystemRole, Text: "You are a helpful assistant"},
+    {Role: goai.UserRole, Text: "Hello"},
 })
 
 // Using Anthropic
@@ -55,7 +55,7 @@ service := goai.NewEmbeddingService(baseURL, nil)
 response, err := service.GenerateEmbedding(
     context.Background(),
     "Hello world",
-    ai.EmbeddingModelAllMiniLML6V2,
+    goai.EmbeddingModelAllMiniLML6V2,
 )
 ```
 
@@ -81,8 +81,8 @@ if err != nil {
 err = storage.CreateCollection(ctx, &ai.VectorCollectionConfig{
     Name:         "documents",
     Dimension:    384,
-    IndexType:    ai.IndexTypeHNSW,
-    DistanceType: ai.DistanceTypeCosine,
+    IndexType:    goai.IndexTypeHNSW,
+    DistanceType: goai.DistanceTypeCosine,
 })
 
 // Store document

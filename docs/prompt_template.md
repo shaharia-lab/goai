@@ -42,6 +42,6 @@ if err != nil {
 }
 
 messages := []ai.LLMMessage{
-    {Role: ai.UserRole, Text: promptText},
+    {Role: goai.UserRole, Text: promptText},
 }
 ```

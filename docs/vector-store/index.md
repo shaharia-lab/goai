@@ -20,8 +20,8 @@ storage, err := goai.NewVectorStorage(context.Background(), provider)
 config := &ai.VectorCollectionConfig{
     Name:         "documents",
     Dimension:    384,
-    IndexType:    ai.IndexTypeHNSW,
-    DistanceType: ai.DistanceTypeCosine,
+    IndexType:    goai.IndexTypeHNSW,
+    DistanceType: goai.DistanceTypeCosine,
 }
 err := storage.CreateCollection(ctx, config)
 

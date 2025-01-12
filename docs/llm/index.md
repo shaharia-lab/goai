@@ -48,10 +48,10 @@ provider := goai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
 
 ```go
 config := goai.NewRequestConfig(
-    ai.WithMaxToken(1000),
-    ai.WithTopP(0.9),
-    ai.WithTemperature(0.7),
-    ai.WithTopK(50),
+    goai.WithMaxToken(1000),
+    goai.WithTopP(0.9),
+    goai.WithTemperature(0.7),
+    goai.WithTopK(50),
 )
 ```
 
@@ -78,8 +78,8 @@ type LLMMessage struct {
 llm := goai.NewLLMRequest(config, provider)
 
 response, err := llm.Generate([]ai.LLMMessage{
-    {Role: ai.SystemRole, Text: "You are a helpful assistant"},
-    {Role: ai.UserRole, Text: "Hello"},
+    {Role: goai.SystemRole, Text: "You are a helpful assistant"},
+    {Role: goai.UserRole, Text: "Hello"},
 })
 
 fmt.Printf("Response: %s\n", response.Text)
@@ -120,6 +120,6 @@ template := &ai.LLMPromptTemplate{
 
 promptText, err := template.Parse()
 messages := []ai.LLMMessage{
-    {Role: ai.UserRole, Text: promptText},
+    {Role: goai.UserRole, Text: promptText},
 }
 ```

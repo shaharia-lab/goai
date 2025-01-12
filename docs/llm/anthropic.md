@@ -17,14 +17,14 @@ provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
 
 ```go
 messages := []ai.LLMMessage{
-    {Role: ai.SystemRole, Text: "You are a helpful assistant"},
-    {Role: ai.UserRole, Text: "Hello"},
-    {Role: ai.AssistantRole, Text: "Hi there!"},
+    {Role: goai.SystemRole, Text: "You are a helpful assistant"},
+    {Role: goai.UserRole, Text: "Hello"},
+    {Role: goai.AssistantRole, Text: "Hi there!"},
 }
 
 config := goai.NewRequestConfig(
-    ai.WithMaxToken(1000),
-    ai.WithTopP(0.9),
+    goai.WithMaxToken(1000),
+    goai.WithTopP(0.9),
 )
 
 response, err := provider.GetResponse(messages, config)

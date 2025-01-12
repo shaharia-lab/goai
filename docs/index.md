@@ -42,7 +42,7 @@ llm := goai.NewLLMRequest(config, provider)
 
 // Generate response
 response, err := llm.Generate([]ai.LLMMessage{
-    {Role: ai.UserRole, Text: "Hello"},
+    {Role: goai.UserRole, Text: "Hello"},
 })
 ```
 

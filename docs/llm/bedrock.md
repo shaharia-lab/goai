@@ -14,14 +14,14 @@ provider := goai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
 
 ```go
 messages := []ai.LLMMessage{
-    {Role: ai.UserRole, Text: "Hello"},
-    {Role: ai.AssistantRole, Text: "Hi there!"},
+    {Role: goai.UserRole, Text: "Hello"},
+    {Role: goai.AssistantRole, Text: "Hi there!"},
 }
 
 config := goai.NewRequestConfig(
-    ai.WithMaxToken(1000),
-    ai.WithTemperature(0.7),
-    ai.WithTopP(0.9),
+    goai.WithMaxToken(1000),
+    goai.WithTemperature(0.7),
+    goai.WithTopP(0.9),
 )
 
 response, err := provider.GetResponse(messages, config)

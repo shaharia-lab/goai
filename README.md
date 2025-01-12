@@ -45,13 +45,13 @@ provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
 
 // Configure request
 llm := goai.NewLLMRequest(ai.NewRequestConfig(
-    ai.WithMaxToken(1000),
-    ai.WithTemperature(0.7),
+    goai.WithMaxToken(1000),
+    goai.WithTemperature(0.7),
 ), provider)
 
 // Generate response
 response, err := llm.Generate([]ai.LLMMessage{
-    {Role: ai.UserRole, Text: "Explain quantum computing"},
+    {Role: goai.UserRole, Text: "Explain quantum computing"},
 })
 ```
 
