@@ -1,6 +1,7 @@
 # Vector Storage
 
 ## Initialization
+
 ```go
 config := ai.PostgresStorageConfig{
     ConnectionString: "postgres://user:pass@localhost:5432/dbname",
@@ -13,6 +14,7 @@ storage, err := ai.NewVectorStorage(context.Background(), provider)
 ```
 
 ## Collection Management
+
 ```go
 // Create collection
 config := &ai.VectorCollectionConfig{
@@ -31,6 +33,7 @@ err = storage.DeleteCollection(ctx, "documents")
 ```
 
 ## Document Operations
+
 ```go
 // Store document
 doc := &ai.VectorDocument{
@@ -51,6 +54,7 @@ err = storage.DeleteDocument(ctx, "documents", "doc1")
 ```
 
 ## Search Operations
+
 ```go
 opts := &ai.VectorSearchOptions{
     Limit: 10,

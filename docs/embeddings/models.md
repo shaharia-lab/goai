@@ -11,14 +11,17 @@ const (
 ```
 
 ### all-MiniLM-L6-v2
+
 - Lightweight model suitable for general-purpose embedding generation
 - Good balance between performance and quality
 
 ### all-mpnet-base-v2
+
 - Higher quality embeddings
 - More powerful model with increased computation time
 
 ### paraphrase-multilingual-MiniLM-L12-v2
+
 - Specialized for multilingual text
 - Supports embedding generation across multiple languages
 - Maintains semantic meaning across languages

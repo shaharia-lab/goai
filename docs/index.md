@@ -22,11 +22,13 @@ Go package for AI operations including LLM integration, embeddings generation, a
   - Similarity search
 
 ## Installation
+
 ```bash
 go get github.com/shaharia-lab/goai
 ```
 
 ## Quick Start
+
 ```go
 // Initialize LLM
 client := ai.NewRealAnthropicClient("api-key")

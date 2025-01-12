@@ -1,6 +1,7 @@
 # Prompt Templates
 
 ## Structure
+
 ```go
 type LLMPromptTemplate struct {
     Template string
@@ -9,6 +10,7 @@ type LLMPromptTemplate struct {
 ```
 
 ## Basic Usage
+
 ```go
 template := &ai.LLMPromptTemplate{
     Template: "Hello {{.Name}}! Tell me about {{.Topic}}.",
@@ -25,11 +27,13 @@ if err != nil {
 ```
 
 ## Template Syntax
+
 - Variables: `{{.VarName}}`
 - Text blocks: `{{ block "name" . }}...{{ end }}`
 - HTML escaping: `{{.UserInput | html}}`
 
 ## Error Handling
+
 ```go
 promptText, err := template.Parse()
 if err != nil {

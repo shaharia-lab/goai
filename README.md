@@ -11,21 +11,25 @@
 [![Bugs](https://sonarcloud.io/api/project_badges/measure?project=shaharia-lab_goai&metric=bugs)](https://sonarcloud.io/summary/new_code?id=shaharia-lab_goai)
 [![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=shaharia-lab_goai&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=shaharia-lab_goai)
 
-GoAI is a powerful Go library that seamlessly integrates multiple LLM providers, vector embeddings, and vector storage capabilities. Built for developers who want a clean, unified interface for AI operations.
+GoAI is a powerful Go library that seamlessly integrates multiple LLM providers, vector embeddings,
+and vector storage capabilities. Built for developers who want a clean, unified interface for AI operations.
 
 ## ✨ Features
 
 🤖 **Multiple LLM Providers**
+
 - OpenAI
 - Anthropic Claude
 - AWS Bedrock
 
 📊 **Vector Operations**
+
 - Efficient embeddings generation
 - PostgreSQL vector storage
 - Similarity search
 
 🛠 **Developer Experience**
+
 - Consistent interfaces
 - Streaming support
 - Type-safe operations
@@ -60,6 +64,7 @@ go get github.com/shaharia-lab/goai
 ## 📚 Documentation
 
 Visit our [documentation](docs/index.md) for detailed guides on:
+
 - [Getting Started](docs/getting_started.md)
 - [LLM Integration](docs/llm/index.md)
 - [Vector Operations](docs/vector-store/index.md)
@@ -74,7 +79,6 @@ We welcome contributions! See our [Contributing Guide](CONTRIBUTING.md) for deta
 Review our [Security Policy](SECURITY.md) for reporting vulnerabilities.
 
 ## 📝 License
-
 MIT License - see [LICENSE](LICENSE) for details.
 
 ---

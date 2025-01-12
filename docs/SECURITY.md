@@ -19,6 +19,7 @@
 
 ### For Critical Vulnerabilities
 Email us at hello@shaharialab.com with:
+
 - Vulnerability description
 - Steps to reproduce
 - Impact assessment
@@ -28,6 +29,7 @@ You'll receive a response within 48 hours.
 
 ### For Non-Critical Issues
 Create a GitHub issue with label `security`:
+
 - Clearly mark non-sensitive vulnerabilities
 - Follow issue template guidelines
 - Avoid including sensitive data or credentials

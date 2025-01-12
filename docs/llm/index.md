@@ -5,7 +5,11 @@
 ```go
 type LLMProvider interface {
     GetResponse(messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error)
-    GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error)
+    GetStreamingResponse(
+        ctx context.Context,
+        messages []LLMMessage,
+        config LLMRequestConfig,
+    ) (<-chan StreamingLLMResponse, error)
 }
 ```
 

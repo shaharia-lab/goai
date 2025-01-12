@@ -1,15 +1,18 @@
 # PostgreSQL Vector Storage
 
 ## Prerequisites
+
 - PostgreSQL 11+
 - pgvector extension
 
 ## Installation
+
 ```sql
 CREATE EXTENSION vector;
 ```
 
 ## Configuration
+
 ```go
 type PostgresStorageConfig struct {
     ConnectionString string
@@ -25,6 +28,7 @@ provider, err := ai.NewPostgresProvider(PostgresStorageConfig{
 ```
 
 ## Collection Types
+
 ```go
 type VectorIndexType string
 const (
@@ -63,6 +67,7 @@ config := &ai.VectorCollectionConfig{
 ```
 
 ## Error Handling
+
 ```go
 var (
 ErrDocumentNotFound   = &VectorError{Code: ErrCodeNotFound}
