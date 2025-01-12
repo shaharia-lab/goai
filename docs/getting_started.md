@@ -31,7 +31,7 @@ config := goai.NewRequestConfig(
 llm := goai.NewLLMRequest(config, provider)
 
 // Generate response
-response, err := llm.Generate([]ai.LLMMessage{
+response, err := llm.Generate([]goai.LLMMessage{
     {Role: goai.SystemRole, Text: "You are a helpful assistant"},
     {Role: goai.UserRole, Text: "Hello"},
 })

@@ -77,7 +77,7 @@ type LLMMessage struct {
 ```go
 llm := goai.NewLLMRequest(config, provider)
 
-response, err := llm.Generate([]ai.LLMMessage{
+response, err := llm.Generate([]goai.LLMMessage{
     {Role: goai.SystemRole, Text: "You are a helpful assistant"},
     {Role: goai.UserRole, Text: "Hello"},
 })
@@ -119,7 +119,7 @@ template := &ai.LLMPromptTemplate{
 }
 
 promptText, err := template.Parse()
-messages := []ai.LLMMessage{
+messages := []goai.LLMMessage{
     {Role: goai.UserRole, Text: promptText},
 }
 ```

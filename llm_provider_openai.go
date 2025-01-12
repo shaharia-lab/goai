@@ -85,7 +85,7 @@ func (p *OpenAILLMProvider) createCompletionParams(messages []openai.ChatComplet
 //
 // Example usage:
 //
-//	messages := []ai.LLMMessage{
+//	messages := []goai.LLMMessage{
 //	    {Role: "system", Text: "You are a helpful assistant"},
 //	    {Role: "user", Text: "What is the capital of France?"},
 //	}

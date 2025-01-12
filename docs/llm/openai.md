@@ -19,7 +19,7 @@ provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 ## Message Handling
 
 ```go
-messages := []ai.LLMMessage{
+messages := []goai.LLMMessage{
     {Role: goai.SystemRole, Text: "You are a helpful assistant"},
     {Role: goai.UserRole, Text: "Hello"},
 }

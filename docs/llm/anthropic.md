@@ -16,7 +16,7 @@ provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
 ## Message Handling
 
 ```go
-messages := []ai.LLMMessage{
+messages := []goai.LLMMessage{
     {Role: goai.SystemRole, Text: "You are a helpful assistant"},
     {Role: goai.UserRole, Text: "Hello"},
     {Role: goai.AssistantRole, Text: "Hi there!"},
