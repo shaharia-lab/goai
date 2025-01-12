@@ -153,7 +153,7 @@ func TestAnthropicLLMProvider_GetResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockClient := &MockAnthropicClient{
-				createMessageFunc: func(ctx context.Context, params anthropic.MessageNewParams) (*anthropic.Message, error) {
+				createMessageFunc: func(_ context.Context, _ anthropic.MessageNewParams) (*anthropic.Message, error) {
 					message := &anthropic.Message{
 						Role:  anthropic.MessageRoleAssistant,
 						Model: anthropic.ModelClaude_3_5_Sonnet_20240620,
@@ -223,7 +223,7 @@ func TestAnthropicLLMProvider_GetStreamingResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockClient := &MockAnthropicClient{
-				createStreamingMessageFunc: func(ctx context.Context, params anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEvent] {
+				createStreamingMessageFunc: func(_ context.Context, _ anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEvent] {
 					var events []anthropic.MessageStreamEvent
 
 					// Create start event

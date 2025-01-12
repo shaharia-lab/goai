@@ -38,7 +38,7 @@ type mockTransport struct {
 	delay     time.Duration
 }
 
-func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (m *mockTransport) RoundTrip(_ *http.Request) (*http.Response, error) {
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}

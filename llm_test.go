@@ -13,11 +13,11 @@ type mockProvider struct {
 	streamErr       error
 }
 
-func (m *mockProvider) GetResponse(messages []LLMMessage, _ LLMRequestConfig) (LLMResponse, error) {
+func (m *mockProvider) GetResponse(_ []LLMMessage, _ LLMRequestConfig) (LLMResponse, error) {
 	return m.response, m.err
 }
 
-func (m *mockProvider) GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
+func (m *mockProvider) GetStreamingResponse(ctx context.Context, _ []LLMMessage, _ LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
 	if m.streamErr != nil {
 		return nil, m.streamErr
 	}

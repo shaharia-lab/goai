@@ -1,3 +1,6 @@
+// Package goai provides utilities for text chunking and AI-powered text processing.
+// It offers flexible interfaces for breaking down large texts into manageable chunks
+// while preserving context and meaning.
 package goai
 
 import (
@@ -7,14 +10,26 @@ import (
 	"strings"
 )
 
+// ChunkingProvider defines the interface for services that can split text into chunks.
 type ChunkingProvider interface {
+	// Chunk splits the input text into coherent segments using the provided context.
+	// Returns the array of text chunks or an error if the chunking fails.
 	Chunk(ctx context.Context, text string) ([]string, error)
 }
 
+// ChunkingByLLMProvider implements ChunkingProvider using a language model to
+// intelligently split text while preserving context and meaning.
 type ChunkingByLLMProvider struct {
 	llm *LLMRequest
 }
 
+// NewChunkingByLLMProvider creates a new ChunkingByLLMProvider with the specified LLM request client.
+//
+// Example usage:
+//
+//	llm := NewLLMRequest(config, provider)
+//	chunker := NewChunkingByLLMProvider(llm)
+//	chunks, err := chunker.Chunk(ctx, longText)
 func NewChunkingByLLMProvider(llm *LLMRequest) *ChunkingByLLMProvider {
 	return &ChunkingByLLMProvider{
 		llm: llm,
@@ -38,33 +53,31 @@ Return ONLY a JSON array of chunk positions in the following format, with no oth
 Example format:
 [[0, 500], [501, 1000], [1001, 1500]]`
 
+// Offset represents a text chunk's starting and ending positions in the original text.
 type Offset struct {
 	Start int
 	End   int
 }
 
+// parseOffsets converts the LLM response string into a slice of Offset structs.
+// Returns an error if the response format is invalid or cannot be parsed.
 func parseOffsets(response string) ([]Offset, error) {
-	// Clean up the response to ensure we have valid JSON
 	response = strings.TrimSpace(response)
 
-	// Convert string array format to valid JSON
 	if !strings.HasPrefix(response, "[[") && !strings.HasPrefix(response, "[]") {
 		return nil, fmt.Errorf("invalid response format: %s", response)
 	}
 
-	// Parse the array
 	var rawOffsets [][]int
 	err := json.Unmarshal([]byte(response), &rawOffsets)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse offsets: %w", err)
 	}
 
-	// Handle empty array case
 	if len(rawOffsets) == 0 {
 		return []Offset{}, nil
 	}
 
-	// Convert to Offset structs
 	offsets := make([]Offset, len(rawOffsets))
 	for i, raw := range rawOffsets {
 		if len(raw) != 2 {
@@ -79,13 +92,25 @@ func parseOffsets(response string) ([]Offset, error) {
 	return offsets, nil
 }
 
-func (p *ChunkingByLLMProvider) Chunk(ctx context.Context, text string) ([]string, error) {
-	// Handle empty input text
+// Chunk splits the input text into coherent segments using the language model.
+// It preserves sentence boundaries and semantic units while maintaining consistent chunk sizes.
+// Returns an error if the chunking process fails at any stage.
+//
+// Example usage:
+//
+//	chunker := NewChunkingByLLMProvider(llm)
+//	chunks, err := chunker.Chunk(ctx, "Long text to be split...")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	for i, chunk := range chunks {
+//	    fmt.Printf("Chunk %d: %s\n", i, chunk)
+//	}
+func (p *ChunkingByLLMProvider) Chunk(_ context.Context, text string) ([]string, error) {
 	if len(text) == 0 {
 		return []string{}, nil
 	}
 
-	// Create the prompt template
 	template := &LLMPromptTemplate{
 		Template: chunkingPromptTemplate,
 		Data: map[string]interface{}{
@@ -93,7 +118,6 @@ func (p *ChunkingByLLMProvider) Chunk(ctx context.Context, text string) ([]strin
 		},
 	}
 
-	// Parse the template
 	promptText, err := template.Parse()
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse prompt template: %w", err)
@@ -103,19 +127,16 @@ func (p *ChunkingByLLMProvider) Chunk(ctx context.Context, text string) ([]strin
 		{Role: UserRole, Text: promptText},
 	}
 
-	// Get response from LLM
 	llmResponse, err := p.llm.Generate(messages)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate chunks: %w", err)
 	}
 
-	// Parse the response into offsets
 	offsets, err := parseOffsets(llmResponse.Text)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse chunks: %w", err)
 	}
 
-	// Generate the chunks from the text using the offsets
 	chunks := make([]string, len(offsets))
 	for i, offset := range offsets {
 		if offset.Start >= len(text) || offset.End > len(text) || offset.Start > offset.End {
