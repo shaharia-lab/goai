@@ -79,6 +79,7 @@ We welcome contributions! See our [Contributing Guide](CONTRIBUTING.md) for deta
 Review our [Security Policy](SECURITY.md) for reporting vulnerabilities.
 
 ## 📝 License
+
 MIT License - see [LICENSE](LICENSE) for details.
 
 ---
