@@ -1,6 +1,8 @@
 module github.com/shaharia-lab/goai
 
-go 1.23.2
+go 1.21
+
+toolchain go1.23.2
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
