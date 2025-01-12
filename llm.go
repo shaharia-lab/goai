@@ -41,7 +41,7 @@ func NewLLMRequest(config LLMRequestConfig, provider LLMProvider) *LLMRequest {
 //
 // Example usage:
 //
-//	messages := []ai.LLMMessage{
+//	messages := []goai.LLMMessage{
 //	    {Role: goai.SystemRole, Text: "You are a helpful assistant"},
 //	    {Role: goai.UserRole, Text: "What is the capital of France?"},
 //	}

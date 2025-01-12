@@ -50,7 +50,7 @@ llm := goai.NewLLMRequest(ai.NewRequestConfig(
 ), provider)
 
 // Generate response
-response, err := llm.Generate([]ai.LLMMessage{
+response, err := llm.Generate([]goai.LLMMessage{
     {Role: goai.UserRole, Text: "Explain quantum computing"},
 })
 ```

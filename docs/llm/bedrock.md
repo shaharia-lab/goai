@@ -13,7 +13,7 @@ provider := goai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
 ## Message Handling
 
 ```go
-messages := []ai.LLMMessage{
+messages := []goai.LLMMessage{
     {Role: goai.UserRole, Text: "Hello"},
     {Role: goai.AssistantRole, Text: "Hi there!"},
 }

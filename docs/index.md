@@ -41,7 +41,7 @@ config := goai.NewRequestConfig(ai.WithMaxToken(1000))
 llm := goai.NewLLMRequest(config, provider)
 
 // Generate response
-response, err := llm.Generate([]ai.LLMMessage{
+response, err := llm.Generate([]goai.LLMMessage{
     {Role: goai.UserRole, Text: "Hello"},
 })
 ```
