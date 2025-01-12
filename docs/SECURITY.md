@@ -18,7 +18,8 @@
 ## Reporting a Vulnerability
 
 ### For Critical Vulnerabilities
-Email us at hello@shaharialab.com with:
+
+Email us at <hello@shaharialab.com> with:
 
 - Vulnerability description
 - Steps to reproduce
@@ -28,6 +29,7 @@ Email us at hello@shaharialab.com with:
 You'll receive a response within 48 hours.
 
 ### For Non-Critical Issues
+
 Create a GitHub issue with label `security`:
 
 - Clearly mark non-sensitive vulnerabilities

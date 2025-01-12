@@ -53,26 +53,29 @@ type Usage struct {
 ## Available Models
 
 1. **all-MiniLM-L6-v2**
+
    ```go
    ai.EmbeddingModelAllMiniLML6V2
    ```
-   
+
     - Lightweight model for general-purpose embedding generation
     - Good balance between performance and quality
 
 2. **all-mpnet-base-v2**
+
    ```go
    ai.EmbeddingModelAllMpnetBaseV2
    ```
-   
+
     - Higher quality embeddings
     - More computationally intensive
 
 3. **paraphrase-multilingual-MiniLM-L12-v2**
+
    ```go
    ai.EmbeddingModelParaphraseMultilingualMiniLML12V2
    ```
-   
+
     - Specialized for multilingual text
     - Supports embedding generation across multiple languages
 
