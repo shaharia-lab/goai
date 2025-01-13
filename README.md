@@ -4,7 +4,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/shaharia-lab/goai.svg)](https://pkg.go.dev/github.com/shaharia-lab/goai)
 [![CI Status](https://github.com/shaharia-lab/goai/actions/workflows/CI.yaml/badge.svg)](https://github.com/shaharia-lab/goai/actions/workflows/CI.yaml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/shaharia-lab/goai)](https://goreportcard.com/report/github.com/shaharia-lab/goai)
+[![Go Report Card](https://goreportcard.com/badge/shaharia-lab/goai)](https://goreportcard.com/report/shaharia-lab/goai)
 [![codecov](https://codecov.io/gh/shaharia-lab/goai/branch/main/graph/badge.svg)](https://codecov.io/gh/shaharia-lab/goai)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=shaharia-lab_goai&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=shaharia-lab_goai)
 [![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=shaharia-lab_goai&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=shaharia-lab_goai)
