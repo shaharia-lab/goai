@@ -10,14 +10,14 @@ import (
 
 // OpenAILLMProvider implements the LLMProvider interface using OpenAI's official SDK.
 type OpenAILLMProvider struct {
-	client OpenAIClient
+	client OpenAIClientProvider
 	model  string
 }
 
 // OpenAIProviderConfig holds configuration for OpenAI provider.
 type OpenAIProviderConfig struct {
-	// Client is the OpenAIClient implementation to use
-	Client OpenAIClient
+	// Client is the OpenAIClientProvider implementation to use
+	Client OpenAIClientProvider
 	// Model specifies which OpenAI model to use (e.g., "gpt-4", "gpt-3.5-turbo")
 	Model string
 }
@@ -28,7 +28,7 @@ type OpenAIProviderConfig struct {
 // Example usage:
 //
 //	// Create client
-//	client := NewRealOpenAIClient("your-api-key")
+//	client := NewOpenAIClient("your-api-key")
 //
 //	// Create provider with default model
 //	provider := NewOpenAILLMProvider(OpenAIProviderConfig{

@@ -40,7 +40,7 @@ and vector storage capabilities. Built for developers who want a clean, unified 
 
 ```go
 // Initialize LLM
-client := goai.NewRealAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"))
+client := goai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"))
 provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
     Client: client,
 })

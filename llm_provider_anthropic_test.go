@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// MockAnthropicClient implements AnthropicClient interface for testing
+// MockAnthropicClient implements AnthropicClientProvider interface for testing
 type MockAnthropicClient struct {
 	createMessageFunc          func(ctx context.Context, params anthropic.MessageNewParams) (*anthropic.Message, error)
 	createStreamingMessageFunc func(ctx context.Context, params anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEvent]

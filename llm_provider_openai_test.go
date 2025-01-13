@@ -12,7 +12,7 @@ import (
 	"github.com/openai/openai-go/packages/ssestream"
 )
 
-// MockOpenAIClient implements OpenAIClient interface for testing
+// MockOpenAIClient implements OpenAIClientProvider interface for testing
 type MockOpenAIClient struct {
 	client *openai.Client
 }

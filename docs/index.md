@@ -33,7 +33,7 @@ go get github.com/shaharia-lab/goai
 
 ```go
 // Initialize LLM
-client := goai.NewRealAnthropicClient("api-key")
+client := goai.NewAnthropicClient("api-key")
 provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
     Client: client,
 })

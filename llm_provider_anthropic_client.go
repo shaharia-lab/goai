@@ -9,9 +9,9 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 )
 
-// AnthropicClient defines the interface for interacting with Anthropic's API.
+// AnthropicClientProvider defines the interface for interacting with Anthropic's API.
 // This interface abstracts the essential message-related operations used by AnthropicLLMProvider.
-type AnthropicClient interface {
+type AnthropicClientProvider interface {
 	// CreateMessage creates a new message using Anthropic's API.
 	// The method takes a context and MessageNewParams and returns a Message response or an error.
 	CreateMessage(ctx context.Context, params anthropic.MessageNewParams) (*anthropic.Message, error)
@@ -21,17 +21,17 @@ type AnthropicClient interface {
 	CreateStreamingMessage(ctx context.Context, params anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEvent]
 }
 
-// RealAnthropicClient implements the AnthropicClient interface using Anthropic's official SDK.
-type RealAnthropicClient struct {
+// AnthropicClient implements the AnthropicClientProvider interface using Anthropic's official SDK.
+type AnthropicClient struct {
 	messages *anthropic.MessageService
 }
 
-// NewRealAnthropicClient creates a new instance of RealAnthropicClient with the provided API key.
+// NewAnthropicClient creates a new instance of AnthropicClient with the provided API key.
 //
 // Example usage:
 //
 //	// Regular message generation
-//	client := NewRealAnthropicClient("your-api-key")
+//	client := NewAnthropicClient("your-api-key")
 //	provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 //	    Client: client,
 //	    Model:  "claude-3-sonnet-20240229",
@@ -45,19 +45,19 @@ type RealAnthropicClient struct {
 //	for chunk := range streamingResp {
 //	    fmt.Print(chunk.Text)
 //	}
-func NewRealAnthropicClient(apiKey string) *RealAnthropicClient {
+func NewAnthropicClient(apiKey string) *AnthropicClient {
 	client := anthropic.NewClient(option.WithAPIKey(apiKey))
-	return &RealAnthropicClient{
+	return &AnthropicClient{
 		messages: client.Messages,
 	}
 }
 
-// CreateMessage implements the AnthropicClient interface using the real Anthropic client.
-func (c *RealAnthropicClient) CreateMessage(ctx context.Context, params anthropic.MessageNewParams) (*anthropic.Message, error) {
+// CreateMessage implements the AnthropicClientProvider interface using the Anthropic client.
+func (c *AnthropicClient) CreateMessage(ctx context.Context, params anthropic.MessageNewParams) (*anthropic.Message, error) {
 	return c.messages.New(ctx, params)
 }
 
-// CreateStreamingMessage implements the streaming support for the AnthropicClient interface.
-func (c *RealAnthropicClient) CreateStreamingMessage(ctx context.Context, params anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEvent] {
+// CreateStreamingMessage implements the streaming support for the AnthropicClientProvider interface.
+func (c *AnthropicClient) CreateStreamingMessage(ctx context.Context, params anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEvent] {
 	return c.messages.NewStreaming(ctx, params)
 }
