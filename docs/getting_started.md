@@ -17,7 +17,7 @@ go get github.com/shaharia-lab/goai
 import "github.com/shaharia-lab/goai"
 
 // Using OpenAI
-client := goai.NewRealOpenAIClient("your-api-key")
+client := goai.NewOpenAIClient("your-api-key")
 provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
     Client: client,
 })
@@ -37,7 +37,7 @@ response, err := llm.Generate([]goai.LLMMessage{
 })
 
 // Using Anthropic
-client := goai.NewRealAnthropicClient("your-api-key")
+client := goai.NewAnthropicClient("your-api-key")
 provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
     Client: client,
 })

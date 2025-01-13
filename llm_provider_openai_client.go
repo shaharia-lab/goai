@@ -9,9 +9,9 @@ import (
 	"github.com/openai/openai-go/packages/ssestream"
 )
 
-// OpenAIClient defines the interface for interacting with OpenAI's API.
+// OpenAIClientProvider defines the interface for interacting with OpenAI's API.
 // This interface abstracts the essential operations used by OpenAILLMProvider.
-type OpenAIClient interface {
+type OpenAIClientProvider interface {
 	// CreateCompletion creates a new chat completion using OpenAI's API.
 	CreateCompletion(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error)
 
@@ -19,38 +19,38 @@ type OpenAIClient interface {
 	CreateStreamingCompletion(ctx context.Context, params openai.ChatCompletionNewParams) *ssestream.Stream[openai.ChatCompletionChunk]
 }
 
-// RealOpenAIClient implements the OpenAIClient interface using OpenAI's official SDK.
-type RealOpenAIClient struct {
+// OpenAIClient implements the OpenAIClientProvider interface using OpenAI's official SDK.
+type OpenAIClient struct {
 	client *openai.Client
 }
 
-// NewRealOpenAIClient creates a new instance of RealOpenAIClient with the provided API key
+// NewOpenAIClient creates a new instance of OpenAIClient with the provided API key
 // and optional client options.
 //
 // Example usage:
 //
 //	// Basic usage with API key
-//	client := NewRealOpenAIClient("your-api-key")
+//	client := NewOpenAIClient("your-api-key")
 //
 //	// Usage with custom HTTP client
 //	httpClient := &http.Client{Timeout: 30 * time.Second}
-//	client := NewRealOpenAIClient(
+//	client := NewOpenAIClient(
 //	    "your-api-key",
 //	    option.WithHTTPClient(httpClient),
 //	)
-func NewRealOpenAIClient(apiKey string, opts ...option.RequestOption) *RealOpenAIClient {
+func NewOpenAIClient(apiKey string, opts ...option.RequestOption) *OpenAIClient {
 	opts = append(opts, option.WithAPIKey(apiKey))
-	return &RealOpenAIClient{
+	return &OpenAIClient{
 		client: openai.NewClient(opts...),
 	}
 }
 
-// CreateCompletion implements the OpenAIClient interface using the real OpenAI client.
-func (c *RealOpenAIClient) CreateCompletion(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+// CreateCompletion implements the OpenAIClientProvider interface using the OpenAI client.
+func (c *OpenAIClient) CreateCompletion(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
 	return c.client.Chat.Completions.New(ctx, params)
 }
 
-// CreateStreamingCompletion implements the streaming support for the OpenAIClient interface.
-func (c *RealOpenAIClient) CreateStreamingCompletion(ctx context.Context, params openai.ChatCompletionNewParams) *ssestream.Stream[openai.ChatCompletionChunk] {
+// CreateStreamingCompletion implements the streaming support for the OpenAIClientProvider interface.
+func (c *OpenAIClient) CreateStreamingCompletion(ctx context.Context, params openai.ChatCompletionNewParams) *ssestream.Stream[openai.ChatCompletionChunk] {
 	return c.client.Chat.Completions.NewStreaming(ctx, params)
 }
