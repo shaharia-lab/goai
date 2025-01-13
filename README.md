@@ -78,11 +78,12 @@ We welcome contributions! See our [Contributing Guide](CONTRIBUTING.md) for deta
 
 ## 🔒 Security
 
-Review our [Security Policy](SECURITY.md) for reporting vulnerabilities.
+Review our [Security Policy](docs/SECURITY.md) for reporting vulnerabilities.
 
 ## 📝 License
 
 MIT License - see [LICENSE](LICENSE) for details.
 
 ---
-Built with ❤️ by [Shaharia Lab](https://github.com/shaharia-lab)
+Built with ❤️ by [Shaharia Lab](https://github.com/shaharia-lab) and
+[Contributors](https://github.com/shaharia-lab/goai/graphs/contributors)
