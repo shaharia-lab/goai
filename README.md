@@ -1,5 +1,7 @@
 # 🚀 GoAI
 
+![AI Package Banner](docs/banner_image.png)
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/shaharia-lab/goai.svg)](https://pkg.go.dev/github.com/shaharia-lab/goai)
 [![CI Status](https://github.com/shaharia-lab/goai/actions/workflows/CI.yaml/badge.svg)](https://github.com/shaharia-lab/goai/actions/workflows/CI.yaml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/shaharia-lab/goai)](https://goreportcard.com/report/github.com/shaharia-lab/goai)
