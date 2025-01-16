@@ -88,3 +88,75 @@ func (p *BedrockLLMProvider) GetResponse(messages []LLMMessage, config LLMReques
 		CompletionTime:   time.Since(startTime).Seconds(),
 	}, nil
 }
+
+func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
+	var bedrockMessages []types.Message
+	for _, msg := range messages {
+		role := types.ConversationRoleUser
+		if msg.Role == "assistant" {
+			role = types.ConversationRoleAssistant
+		}
+		bedrockMessages = append(bedrockMessages, types.Message{
+			Role: role,
+			Content: []types.ContentBlock{
+				&types.ContentBlockMemberText{
+					Value: msg.Text,
+				},
+			},
+		})
+	}
+
+	input := &bedrockruntime.ConverseStreamInput{
+		ModelId:  &p.model,
+		Messages: bedrockMessages,
+		InferenceConfig: &types.InferenceConfiguration{
+			Temperature: aws.Float32(float32(config.Temperature)),
+			TopP:        aws.Float32(float32(config.TopP)),
+			MaxTokens:   aws.Int32(int32(config.MaxToken)),
+		},
+	}
+
+	output, err := p.client.ConverseStream(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	responseChan := make(chan StreamingLLMResponse, 100)
+
+	go func() {
+		defer close(responseChan)
+
+		for event := range output.GetStream().Events() {
+			select {
+			case <-ctx.Done():
+				responseChan <- StreamingLLMResponse{
+					Error: ctx.Err(),
+					Done:  true,
+				}
+				return
+			default:
+				switch v := event.(type) {
+				case *types.ConverseStreamOutputMemberContentBlockDelta:
+					if delta, ok := v.Value.Delta.(*types.ContentBlockDeltaMemberText); ok {
+						responseChan <- StreamingLLMResponse{
+							Text:       delta.Value,
+							TokenCount: 1,
+						}
+					}
+				case *types.ConverseStreamOutputMemberMessageStop:
+					responseChan <- StreamingLLMResponse{Done: true}
+					return
+				}
+			}
+		}
+
+		if err := output.GetStream().Err(); err != nil {
+			responseChan <- StreamingLLMResponse{
+				Error: err,
+				Done:  true,
+			}
+		}
+	}()
+
+	return responseChan, nil
+}
