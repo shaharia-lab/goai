@@ -1,38 +1,51 @@
 # AWS Bedrock Provider
 
+You need the necessary credentials to configure the AWS SDK.
+
 ## Setup
 
 ```go
+import (
+    "github.com/aws/aws-sdk-go-v2/config"
+    "github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+)
+//.....
 // Initialize provider with Bedrock client
-provider := goai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
+ctx := context.Background()
+
+awsConfig, err := config.LoadDefaultConfig(ctx)
+if err != nil {
+    log.Printf("failed to load AWS config: %w", err)
+    return
+}
+
+bedrockClient := bedrockruntime.NewFromConfig(awsConfig)
+
+provider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
     Client: bedrockClient,
-    Model:  "anthropic.claude-3-sonnet-20240229-v1:0",
+    Model:  "anthropic.claude-3-5-sonnet-20240620-v1:0",
 })
 ```
 
 ## Message Handling
 
 ```go
-messages := []goai.LLMMessage{
-    {Role: goai.UserRole, Text: "Hello"},
-    {Role: goai.AssistantRole, Text: "Hi there!"},
-}
+// Configure request
+cfg := goai.NewRequestConfig(goai.WithMaxToken(1000))
+llm := goai.NewLLMRequest(cfg, provider)
 
-config := goai.NewRequestConfig(
-    goai.WithMaxToken(1000),
-    goai.WithTemperature(0.7),
-    goai.WithTopP(0.9),
-)
+// Generate response
+response, err := llm.Generate([]goai.LLMMessage{
+    {Role: goai.UserRole, Text: "Explain the quantum theory"},
+})
 
-response, err := provider.GetResponse(messages, config)
 if err != nil {
-    return err
+    panic(err)
 }
 
-fmt.Printf("Response: %s\n", response.Text)
-fmt.Printf("Tokens: Input=%d, Output=%d\n", 
-    response.TotalInputToken, 
-    response.TotalOutputToken)
+// Print response
+log.Println(response.Text)
+fmt.Printf("Tokens: Input=%d, Output=%d\n", response.TotalInputToken, response.TotalOutputToken)
 ```
 
 ## Response Structure
