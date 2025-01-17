@@ -152,11 +152,7 @@ func NewCustomEmbeddingProvider(apiKey string, baseURL string, httpClient *http.
 `3.` Implement the Generate method:
 
 ```go
-func (p *CustomEmbeddingProvider) Generate(
-	ctx context.Context, 
-	input interface{}, 
-	model EmbeddingModel,
-) (*EmbeddingResponse, error) {
+func (p *CustomEmbeddingProvider) Generate(ctx context.Context, input interface{}, model EmbeddingModel) (*EmbeddingResponse, error) {
     // 1. Prepare your request
     reqBody := map[string]interface{}{
         "input": input,
