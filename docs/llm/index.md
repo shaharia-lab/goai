@@ -1,58 +1,72 @@
 # Language Models (LLM)
 
-## Core Interface
+The `goai` package provides a flexible interface for working with various Language Learning Models (LLMs). This module supports multiple providers and offers features like streaming responses and configurable parameters.
+
+## Complete Example
+
+Here's a complete example using OpenAI's GPT-3.5:
 
 ```go
-type LLMProvider interface {
-    GetResponse(messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error)
-    GetStreamingResponse(
-        ctx context.Context,
-        messages []LLMMessage,
-        config LLMRequestConfig,
-    ) (<-chan StreamingLLMResponse, error)
+package main
+
+import (
+    "fmt"
+    "github.com/openai/openai-go"
+    "github.com/shaharia-lab/goai"
+    "os"
+)
+
+func main() {
+    // Create OpenAI LLM Provider
+    llmProvider := goai.NewOpenAILLMProvider(goai.OpenAIProviderConfig{
+        Client: goai.NewOpenAIClient(os.Getenv("OPENAI_API_KEY")),
+        Model:  openai.ChatModelGPT3_5Turbo,
+    })
+
+    // Configure LLM Request
+    llm := goai.NewLLMRequest(goai.NewRequestConfig(
+        goai.WithMaxToken(100),
+        goai.WithTemperature(0.7),
+    ), llmProvider)
+
+    // Generate response
+    response, err := llm.Generate([]goai.LLMMessage{
+        {Role: goai.UserRole, Text: "Explain quantum computing"},
+    })
+
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Printf("Response: %s\n", response.Text)
+    fmt.Printf("Input token: %d, Output token: %d", response.TotalInputToken, response.TotalOutputToken)
 }
 ```
 
-## Supported Providers
+## Streaming Example
 
-### OpenAI
-
-```go
-client := goai.NewOpenAIClient("api-key")
-provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
-    Client: client,
-    Model:  "gpt-3.5-turbo",
-})
-```
-
-### Anthropic
+For streaming responses:
 
 ```go
-client := goai.NewAnthropicClient("api-key")
-provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
-    Client: client,
-    Model:  "claude-3-sonnet-20240229",
-})
-```
+    // Generate streaming response
+    stream, err := llm.GenerateStream(context.Background(), []goai.LLMMessage{
+        {Role: goai.UserRole, Text: "Explain quantum computing"},
+    })
 
-### AWS Bedrock
+    if err != nil {
+        panic(err)
+    }
 
-```go
-provider := goai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
-    Client: bedrockClient,
-    Model:  "anthropic.claude-3-sonnet-20240229-v1:0",
-})
-```
-
-## Configuration
-
-```go
-config := goai.NewRequestConfig(
-    goai.WithMaxToken(1000),
-    goai.WithTopP(0.9),
-    goai.WithTemperature(0.7),
-    goai.WithTopK(50),
-)
+    for resp := range stream {
+        if resp.Error != nil {
+            fmt.Printf("Error: %v\n", resp.Error)
+            break
+        }
+        if resp.Done {
+            break
+        }
+        fmt.Print(resp.Text)
+    }
 ```
 
 ## Message Types
@@ -72,54 +86,15 @@ type LLMMessage struct {
 }
 ```
 
-## Basic Usage
+## Configuration Options
 
 ```go
-llm := goai.NewLLMRequest(config, provider)
-
-response, err := llm.Generate([]goai.LLMMessage{
-    {Role: goai.SystemRole, Text: "You are a helpful assistant"},
-    {Role: goai.UserRole, Text: "Hello"},
-})
-
-fmt.Printf("Response: %s\n", response.Text)
-fmt.Printf("Tokens: Input=%d, Output=%d\n", 
-    response.TotalInputToken, 
-    response.TotalOutputToken)
+config := goai.NewRequestConfig(
+    goai.WithMaxToken(1000),    // Set maximum tokens
+    goai.WithTopP(0.9),         // Set top-p sampling
+    goai.WithTemperature(0.7),  // Set temperature
+    goai.WithTopK(50),          // Set top-k sampling
+)
 ```
 
-## Streaming Response
-
-```go
-stream, err := llm.GenerateStream(ctx, messages)
-if err != nil {
-    return err
-}
-
-for resp := range stream {
-    if resp.Error != nil {
-        fmt.Printf("Error: %v\n", resp.Error)
-        break
-    }
-    if resp.Done {
-        break
-    }
-    fmt.Print(resp.Text)
-}
-```
-
-## Template Usage
-
-```go
-template := &ai.LLMPromptTemplate{
-    Template: "Hello {{.Name}}!",
-    Data: map[string]interface{}{
-        "Name": "User",
-    },
-}
-
-promptText, err := template.Parse()
-messages := []goai.LLMMessage{
-    {Role: goai.UserRole, Text: promptText},
-}
-```
+For available LLM providers and their configurations, see [Providers](providers.md).
