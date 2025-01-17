@@ -89,6 +89,66 @@ func (p *BedrockLLMProvider) GetResponse(messages []LLMMessage, config LLMReques
 	}, nil
 }
 
+// GetStreamingResponse generates a streaming response using AWS Bedrock's API for the given messages and configuration.
+// It returns a channel that receives chunks of the response as they're generated.
+//
+// The method supports different message roles (user, assistant) and handles context cancellation.
+// The returned channel will be closed when the response is complete or if an error occurs.
+//
+// The returned StreamingLLMResponse contains:
+//   - Text: The text chunk from the model
+//   - Done: Boolean indicating if this is the final message
+//   - Error: Any error that occurred during streaming
+//   - TokenCount: Number of tokens in this chunk
+//
+// Example:
+//
+//	package main
+//
+//	import (
+//	    "context"
+//	    "fmt"
+//	    "github.com/aws/aws-sdk-go-v2/aws"
+//	    "github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+//	    "github.com/shaharia-lab/goai"
+//	)
+//
+//	func main() {
+//	    // Create Bedrock LLM Provider
+//	    llmProvider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
+//	        Client: bedrockruntime.New(aws.Config{}),
+//	        Model:  "anthropic.claude-3-sonnet-20240229-v1:0",
+//	    })
+//
+//	    // Configure LLM Request
+//	    llm := goai.NewLLMRequest(goai.NewRequestConfig(
+//	        goai.WithMaxToken(100),
+//	        goai.WithTemperature(0.7),
+//	    ), llmProvider)
+//
+//	    // Generate streaming response
+//	    stream, err := llm.GenerateStream(context.Background(), []goai.LLMMessage{
+//	        {Role: goai.UserRole, Text: "Explain quantum computing"},
+//	    })
+//
+//	    if err != nil {
+//	        panic(err)
+//	    }
+//
+//	    for resp := range stream {
+//	        if resp.Error != nil {
+//	            fmt.Printf("Error: %v\n", resp.Error)
+//	            break
+//	        }
+//	        if resp.Done {
+//	            break
+//	        }
+//	        fmt.Print(resp.Text)
+//	    }
+//	}
+//
+// Note: The streaming response must be fully consumed or the context must be
+// cancelled to prevent resource leaks.
 func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
 	var bedrockMessages []types.Message
 	for _, msg := range messages {
