@@ -2,7 +2,7 @@
 
 The `goai` package provides a flexible interface for working with various Language Learning Models (LLMs). This module supports multiple providers and offers features like streaming responses and configurable parameters.
 
-## Complete Example
+## Example
 
 Here's a complete example using OpenAI's GPT-3.5:
 
@@ -133,7 +133,7 @@ llmProvider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
 })
 ```
 
-### OpenAPI Compatible
+### OpenAI Compatible
 
 #### Hugging Face
 

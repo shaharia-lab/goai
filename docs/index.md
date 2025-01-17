@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Go 1.21 or later
-- PostgreSQL 11+ with pgvector extension (for vector storage)
+- PostgreSQL 11+ with [pgvector](https://github.com/pgvector/pgvector) extension (for embedding vector storage only)
 
 ## Installation
 
@@ -11,20 +11,10 @@
 go get github.com/shaharia-lab/goai
 ```
 
-## LLM Integration
+## Quick Start
 
 - [LLM integreation](llm.md)
-
-## Embeddings
-
-```go
-service := goai.NewEmbeddingService(baseURL, nil)
-response, err := service.GenerateEmbedding(
-    context.Background(),
-    "Hello world",
-    goai.EmbeddingModelAllMiniLML6V2,
-)
-```
+- [Embedding Vector Generation](embeddings.md)
 
 ## Vector Storage
 
