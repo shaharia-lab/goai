@@ -13,40 +13,7 @@ go get github.com/shaharia-lab/goai
 
 ## LLM Integration
 
-```go
-import "github.com/shaharia-lab/goai"
-
-// Using OpenAI
-client := goai.NewOpenAIClient("your-api-key")
-provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
-    Client: client,
-})
-
-// Configure request
-config := goai.NewRequestConfig(
-    goai.WithMaxToken(1000),
-    goai.WithTopP(0.9),
-    goai.WithTemperature(0.7),
-)
-llm := goai.NewLLMRequest(config, provider)
-
-// Generate response
-response, err := llm.Generate([]goai.LLMMessage{
-    {Role: goai.SystemRole, Text: "You are a helpful assistant"},
-    {Role: goai.UserRole, Text: "Hello"},
-})
-
-// Using Anthropic
-client := goai.NewAnthropicClient("your-api-key")
-provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
-    Client: client,
-})
-
-// Using AWS Bedrock
-provider := goai.NewBedrockLLMProvider(ai.BedrockProviderConfig{
-    Client: bedrockClient,
-})
-```
+- [LLM integreation](llm.md)
 
 ## Embeddings
 

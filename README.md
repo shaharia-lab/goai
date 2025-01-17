@@ -67,7 +67,7 @@ go get github.com/shaharia-lab/goai
 
 Visit our [documentation](docs/index.md) for detailed guides on:
 
-- [Getting Started](docs/getting_started.md)
+- [Getting Started](docs/index)
 - [LLM Integration](docs/llm/index.md)
 - [Vector Operations](docs/vector-store/index.md)
 - [API Reference](https://pkg.go.dev/github.com/shaharia-lab/goai)
