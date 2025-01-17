@@ -15,6 +15,7 @@ go get github.com/shaharia-lab/goai
 
 - [LLM integreation](llm.md)
 - [Embedding Vector Generation](embeddings.md)
+- [Prompt-based LLM Generation](prompt-template.md)
 
 ## Vector Storage
 
