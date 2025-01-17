@@ -124,11 +124,7 @@ This allows you to integrate with any embedding service or model of your choice.
 
 ```go
 type EmbeddingProvider interface {
-    Generate(
-		ctx context.Context,
-		input interface{},
-		model EmbeddingModel,
-    ) (*EmbeddingResponse, error)
+    Generate(ctx context.Context, input interface{}, model EmbeddingModel) (*EmbeddingResponse, error)
 }
 ```
 
