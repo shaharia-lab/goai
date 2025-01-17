@@ -171,10 +171,10 @@ func (p *CustomEmbeddingProvider) Generate(
 
     // 2. Create and send HTTP request
     req, err := http.NewRequestWithContext(
-		ctx, 
-		"POST", 
-		p.baseURL+"/embeddings", 
-		bytes.NewBuffer(jsonBody)
+        ctx,
+        "POST",
+        p.baseURL+"/embeddings",
+        bytes.NewBuffer(jsonBody),
     )
     if err != nil {
         return nil, fmt.Errorf("failed to create request: %w", err)
