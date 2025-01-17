@@ -88,7 +88,7 @@ func main() {
 
 Example output:
 
-```
+```text
 Single text embedding:
 - Input text: Hello, world! This is a test sentence for embedding generation.
 - Embedding dimension: 384
@@ -115,19 +115,24 @@ Total tokens used: 37
 
 ## Creating Custom Embedding Providers
 
-You can create your own embedding provider by implementing the `EmbeddingProvider` interface. This allows you to integrate with any embedding service or model of your choice.
+You can create your own embedding provider by implementing the `EmbeddingProvider` interface.
+This allows you to integrate with any embedding service or model of your choice.
 
 ### Implementation Steps
 
-1. Implement the EmbeddingProvider interface:
+`1.` Implement the EmbeddingProvider interface:
 
 ```go
 type EmbeddingProvider interface {
-    Generate(ctx context.Context, input interface{}, model EmbeddingModel) (*EmbeddingResponse, error)
+    Generate(
+		ctx context.Context,
+		input interface{},
+		model EmbeddingModel,
+    ) (*EmbeddingResponse, error)
 }
 ```
 
-2. Create your provider struct with necessary configuration:
+`2.` Create your provider struct with necessary configuration:
 
 ```go
 type CustomEmbeddingProvider struct {
@@ -148,10 +153,14 @@ func NewCustomEmbeddingProvider(apiKey string, baseURL string, httpClient *http.
 }
 ```
 
-3. Implement the Generate method:
+`3.` Implement the Generate method:
 
 ```go
-func (p *CustomEmbeddingProvider) Generate(ctx context.Context, input interface{}, model EmbeddingModel) (*EmbeddingResponse, error) {
+func (p *CustomEmbeddingProvider) Generate(
+	ctx context.Context, 
+	input interface{}, 
+	model EmbeddingModel,
+) (*EmbeddingResponse, error) {
     // 1. Prepare your request
     reqBody := map[string]interface{}{
         "input": input,
@@ -165,7 +174,12 @@ func (p *CustomEmbeddingProvider) Generate(ctx context.Context, input interface{
     }
 
     // 2. Create and send HTTP request
-    req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/embeddings", bytes.NewBuffer(jsonBody))
+    req, err := http.NewRequestWithContext(
+		ctx, 
+		"POST", 
+		p.baseURL+"/embeddings", 
+		bytes.NewBuffer(jsonBody)
+    )
     if err != nil {
         return nil, fmt.Errorf("failed to create request: %w", err)
     }
@@ -191,7 +205,7 @@ func (p *CustomEmbeddingProvider) Generate(ctx context.Context, input interface{
 }
 ```
 
-4. Use your custom provider:
+`4.` Use your custom provider:
 
 ```go
 func main() {

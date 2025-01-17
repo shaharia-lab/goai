@@ -1,6 +1,8 @@
 # Language Models (LLM)
 
-The `goai` package provides a flexible interface for working with various Language Learning Models (LLMs). This module supports multiple providers and offers features like streaming responses and configurable parameters.
+The `goai` package provides a flexible interface for working with various 
+Large Language Models (LLMs). This module supports multiple providers
+and offers features like streaming responses and configurable parameters.
 
 ## Example
 
