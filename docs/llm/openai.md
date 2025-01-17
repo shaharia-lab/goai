@@ -4,7 +4,7 @@
 
 ```go
 // Create client
-client := goai.NewRealOpenAIClient(
+client := goai.NewOpenAIClient(
     "your-api-key",
     option.WithHTTPClient(&http.Client{Timeout: 30 * time.Second}),
 )

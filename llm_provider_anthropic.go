@@ -11,14 +11,14 @@ import (
 // AnthropicLLMProvider implements the LLMProvider interface using Anthropic's official Go SDK.
 // It provides access to Claude models through Anthropic's API.
 type AnthropicLLMProvider struct {
-	client AnthropicClient
+	client AnthropicClientProvider
 	model  anthropic.Model
 }
 
 // AnthropicProviderConfig holds the configuration options for creating an Anthropic provider.
 type AnthropicProviderConfig struct {
-	// Client is the AnthropicClient implementation to use
-	Client AnthropicClient
+	// Client is the AnthropicClientProvider implementation to use
+	Client AnthropicClientProvider
 
 	// Model specifies which Anthropic model to use (e.g., "claude-3-opus-20240229", "claude-3-sonnet-20240229")
 	Model anthropic.Model
@@ -29,7 +29,7 @@ type AnthropicProviderConfig struct {
 //
 // Example usage:
 //
-//	client := NewRealAnthropicClient("your-api-key")
+//	client := NewAnthropicClient("your-api-key")
 //	provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 //	    Client: client,
 //	    Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
@@ -121,7 +121,7 @@ func (p *AnthropicLLMProvider) GetResponse(messages []LLMMessage, config LLMRequ
 //
 // Example usage:
 //
-//	client := NewRealAnthropicClient("your-api-key")
+//	client := NewAnthropicClient("your-api-key")
 //	provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 //	    Client: client,
 //	    Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,

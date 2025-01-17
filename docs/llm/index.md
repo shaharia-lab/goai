@@ -18,7 +18,7 @@ type LLMProvider interface {
 ### OpenAI
 
 ```go
-client := goai.NewRealOpenAIClient("api-key")
+client := goai.NewOpenAIClient("api-key")
 provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
     Client: client,
     Model:  "gpt-3.5-turbo",
@@ -28,7 +28,7 @@ provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 ### Anthropic
 
 ```go
-client := goai.NewRealAnthropicClient("api-key")
+client := goai.NewAnthropicClient("api-key")
 provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
     Client: client,
     Model:  "claude-3-sonnet-20240229",

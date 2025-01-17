@@ -4,7 +4,7 @@
 
 ```go
 // Create client
-client := goai.NewRealAnthropicClient("your-api-key")
+client := goai.NewAnthropicClient("your-api-key")
 
 // Initialize provider
 provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{

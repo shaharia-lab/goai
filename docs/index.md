@@ -1,5 +1,7 @@
 # GoAI Package
 
+![AI Package Banner](banner_image.png)
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/shaharia-lab/goai.svg)](https://pkg.go.dev/github.com/shaharia-lab/goai)
 
 Go package for AI operations including LLM integration, embeddings generation, and vector storage.
@@ -31,7 +33,7 @@ go get github.com/shaharia-lab/goai
 
 ```go
 // Initialize LLM
-client := goai.NewRealAnthropicClient("api-key")
+client := goai.NewAnthropicClient("api-key")
 provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
     Client: client,
 })
