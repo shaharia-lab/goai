@@ -110,6 +110,8 @@ llmProvider := goai.NewOpenAILLMProvider(goai.OpenAIProviderConfig{
 })
 ```
 
+For more details about OpenAI API can be found [here](https://platform.openai.com/docs/api-reference/chat)
+
 ### Anthropic
 
 ```go
@@ -118,6 +120,8 @@ llmProvider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{
     Model:  anthropic.ModelClaude3_5Sonnet20241022,
 })
 ```
+
+For more details about Anthropic API can be found [here](https://docs.anthropic.com/en/api/getting-started)
 
 ### AWS Bedrock
 
@@ -134,6 +138,8 @@ llmProvider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
     Model:  "anthropic.claude-3-5-sonnet-20240620-v1:0",
 })
 ```
+
+For more details about AWS Bedrock API can be found [here](https://docs.aws.amazon.com/bedrock/latest/userguide/getting-started-api.html)
 
 ### OpenAI Compatible
 
@@ -152,3 +158,41 @@ provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
     Model:  "microsoft/phi-4",
 })
 ```
+
+For more details about Hugging Face API can be found [here](https://huggingface.co/docs/api-inference/en/getting-started)
+
+#### DeepSeek
+
+```go
+// Create client
+client := goai.NewOpenAIClient(
+    "{DEEP_SEEK_API_KEY}",
+    option.WithBaseURL("https://api.deepseek.com/v1/"),
+)
+
+// Initialize provider
+provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
+    Client: client,
+    Model:  "deepseek-chat",
+})
+```
+
+For more details about DeepSeek API can be found [here](https://api-docs.deepseek.com/)
+
+#### Mistral AI
+
+```go
+// Create client
+client := goai.NewOpenAIClient(
+    "{MISTRAL_AI_API_KEY}",
+    option.WithBaseURL("https://api.mistral.ai/v1/"),
+)
+
+// Initialize provider
+provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
+    Client: client,
+    Model:  "mistral-small-latest",
+})
+```
+
+For more details about Mistral AI API can be found [here](https://docs.mistral.ai/api/)

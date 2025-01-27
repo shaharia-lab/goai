@@ -38,29 +38,47 @@ and vector storage capabilities. Built for developers who want a clean, unified 
 
 ## 🚀 Quick Start
 
-```go
-// Initialize LLM
-client := goai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"))
-provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
-    Client: client,
-})
-
-// Configure request
-llm := goai.NewLLMRequest(ai.NewRequestConfig(
-    goai.WithMaxToken(1000),
-    goai.WithTemperature(0.7),
-), provider)
-
-// Generate response
-response, err := llm.Generate([]goai.LLMMessage{
-    {Role: goai.UserRole, Text: "Explain quantum computing"},
-})
-```
-
-## 📦 Installation
+### 📦 Installation
 
 ```bash
 go get github.com/shaharia-lab/goai
+```
+
+### Example
+
+```go
+package main
+
+import (
+	"github.com/shaharia-lab/goai"
+	"log"
+	"os"
+)
+
+func main() {
+	// Initialize LLM
+	client := goai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"))
+	provider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{
+		Client: client,
+	})
+
+	// Configure request
+	llm := goai.NewLLMRequest(goai.NewRequestConfig(
+		goai.WithMaxToken(200),
+		goai.WithTemperature(0.7),
+	), provider)
+
+	// Generate response
+	response, err := llm.Generate([]goai.LLMMessage{
+		{Role: goai.UserRole, Text: "Explain quantum computing"},
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	log.Println(response)
+}
 ```
 
 ## 📚 Documentation

@@ -54,7 +54,7 @@ type VectorFieldConfig struct {
     Indexed  bool   `json:"indexed"`
 }
 
-config := &ai.VectorCollectionConfig{
+config := &goai.VectorCollectionConfig{
     Name:      "documents",
     Dimension: 384,
     CustomFields: map[string]VectorFieldConfig{

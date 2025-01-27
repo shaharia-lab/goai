@@ -12,7 +12,7 @@ type LLMPromptTemplate struct {
 ## Basic Usage
 
 ```go
-template := &ai.LLMPromptTemplate{
+template := &goai.LLMPromptTemplate{
     Template: "Hello {{.Name}}! Tell me about {{.Topic}}.",
     Data: map[string]interface{}{
         "Name":  "User",

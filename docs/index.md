@@ -36,7 +36,7 @@ if err != nil {
 }
 
 // Create collection
-err = storage.CreateCollection(ctx, &ai.VectorCollectionConfig{
+err = storage.CreateCollection(ctx, &goai.VectorCollectionConfig{
     Name:         "documents",
     Dimension:    384,
     IndexType:    goai.IndexTypeHNSW,
@@ -44,7 +44,7 @@ err = storage.CreateCollection(ctx, &ai.VectorCollectionConfig{
 })
 
 // Store document
-doc := &ai.VectorDocument{
+doc := &goai.VectorDocument{
     ID:      "doc1",
     Vector:  embedding.Data[0].Embedding,
     Content: "Document content",
@@ -52,7 +52,7 @@ doc := &ai.VectorDocument{
 err = storage.UpsertDocument(ctx, "documents", doc)
 
 // Search
-results, err := storage.SearchByVector(ctx, "documents", queryVector, &ai.VectorSearchOptions{
+results, err := storage.SearchByVector(ctx, "documents", queryVector, &goai.VectorSearchOptions{
     Limit: 10,
 })
 ```
