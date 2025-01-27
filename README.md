@@ -50,34 +50,34 @@ go get github.com/shaharia-lab/goai
 package main
 
 import (
-	"github.com/shaharia-lab/goai"
-	"log"
-	"os"
+   "github.com/shaharia-lab/goai"
+   "log"
+   "os"
 )
 
 func main() {
-	// Initialize LLM
-	client := goai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"))
-	provider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{
-		Client: client,
-	})
+    // Initialize LLM
+    client := goai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"))
+    provider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{
+        Client: client,
+    })
 
-	// Configure request
-	llm := goai.NewLLMRequest(goai.NewRequestConfig(
-		goai.WithMaxToken(200),
-		goai.WithTemperature(0.7),
-	), provider)
+    // Configure request
+    llm := goai.NewLLMRequest(goai.NewRequestConfig(
+        goai.WithMaxToken(200),
+        goai.WithTemperature(0.7),
+    ), provider)
 
-	// Generate response
-	response, err := llm.Generate([]goai.LLMMessage{
-		{Role: goai.UserRole, Text: "Explain quantum computing"},
-	})
+    // Generate response
+    response, err := llm.Generate([]goai.LLMMessage{
+        {Role: goai.UserRole, Text: "Explain quantum computing"},
+    })
 
-	if err != nil {
-		panic(err)
-	}
-
-	log.Println(response)
+    if err != nil {
+        panic(err)
+    }
+    
+    log.Println(response)
 }
 ```
 
