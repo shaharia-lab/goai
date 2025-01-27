@@ -17,7 +17,7 @@ storage, err := goai.NewVectorStorage(context.Background(), provider)
 
 ```go
 // Create collection
-config := &ai.VectorCollectionConfig{
+config := &goai.VectorCollectionConfig{
     Name:         "documents",
     Dimension:    384,
     IndexType:    goai.IndexTypeHNSW,
@@ -36,7 +36,7 @@ err = storage.DeleteCollection(ctx, "documents")
 
 ```go
 // Store document
-doc := &ai.VectorDocument{
+doc := &goai.VectorDocument{
     ID:      "doc1",
     Vector:  vector,
     Content: "content",
@@ -56,7 +56,7 @@ err = storage.DeleteDocument(ctx, "documents", "doc1")
 ## Search Operations
 
 ```go
-opts := &ai.VectorSearchOptions{
+opts := &goai.VectorSearchOptions{
     Limit: 10,
     Filter: map[string]interface{}{
         "category": "technology",

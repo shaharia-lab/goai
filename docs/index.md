@@ -1,27 +1,9 @@
-# GoAI Package
+# Getting Started with GoAI
 
-![AI Package Banner](banner_image.png)
+## Prerequisites
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/shaharia-lab/goai.svg)](https://pkg.go.dev/github.com/shaharia-lab/goai)
-
-Go package for AI operations including LLM integration, embeddings generation, and vector storage.
-
-## Features
-
-- **Language Models**
-  - OpenAI, Anthropic, AWS Bedrock support
-  - Streaming responses
-  - Template-based prompts
-
-- **Embeddings**
-  - Multiple model support
-  - Batch processing
-  - Usage tracking
-
-- **Vector Storage**
-  - PostgreSQL/pgvector implementation
-  - Collection management
-  - Similarity search
+- Go 1.21 or later
+- PostgreSQL 11+ with [pgvector](https://github.com/pgvector/pgvector) extension (for embedding vector storage only)
 
 ## Installation
 
@@ -31,39 +13,78 @@ go get github.com/shaharia-lab/goai
 
 ## Quick Start
 
+- [LLM integreation](llm.md)
+- [Embedding Vector Generation](embeddings.md)
+- [Prompt-based LLM Generation](prompt-template.md)
+
+## Vector Storage
+
 ```go
-// Initialize LLM
-client := goai.NewAnthropicClient("api-key")
-provider := goai.NewAnthropicLLMProvider(ai.AnthropicProviderConfig{
-    Client: client,
+config := goai.PostgresStorageConfig{
+    ConnectionString: "postgres://user:pass@localhost:5432/dbname",
+    MaxDimension:    384,
+}
+
+provider, err := goai.NewPostgresProvider(config)
+if err != nil {
+    log.Fatal(err)
+}
+
+storage, err := goai.NewVectorStorage(context.Background(), provider)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Create collection
+err = storage.CreateCollection(ctx, &goai.VectorCollectionConfig{
+    Name:         "documents",
+    Dimension:    384,
+    IndexType:    goai.IndexTypeHNSW,
+    DistanceType: goai.DistanceTypeCosine,
 })
 
-// Configure request
-config := goai.NewRequestConfig(ai.WithMaxToken(1000))
-llm := goai.NewLLMRequest(config, provider)
+// Store document
+doc := &goai.VectorDocument{
+    ID:      "doc1",
+    Vector:  embedding.Data[0].Embedding,
+    Content: "Document content",
+}
+err = storage.UpsertDocument(ctx, "documents", doc)
 
-// Generate response
-response, err := llm.Generate([]goai.LLMMessage{
-    {Role: goai.UserRole, Text: "Hello"},
+// Search
+results, err := storage.SearchByVector(ctx, "documents", queryVector, &goai.VectorSearchOptions{
+    Limit: 10,
 })
 ```
 
-## Documentation
+## Error Types
 
-- [Getting Started](getting_started.md)
-- Language Models
-  - [Overview](llm/index.md)
-  - [OpenAI](llm/openai.md)
-  - [Anthropic](llm/anthropic.md)
-  - [AWS Bedrock](llm/bedrock.md)
-- [Embeddings](embeddings/index.md)
-- [Vector Storage](vector-store/index.md)
-- [Prompt Templates](prompt_template.md)
+```go
+// LLM errors
+type LLMError struct {
+    Code    int
+    Message string
+}
 
-## Contributing
+// Vector storage errors
+type VectorError struct {
+    Code    int
+    Message string
+    Err     error
+}
 
-See [contribution guidelines](CONTRIBUTING.md).
+// Common error codes
+const (
+    ErrCodeNotFound           = 404
+    ErrCodeInvalidDimension   = 400
+    ErrCodeInvalidConfig      = 401
+    ErrCodeCollectionExists   = 402
+    ErrCodeCollectionNotFound = 403
+)
+```
 
-## License
+## Next Steps
 
-MIT License - see [LICENSE](LICENSE) file.
+- [Language Models Documentation](llm/index.md)
+- [Embeddings Documentation](embeddings/index.md)
+- [Vector Storage Documentation](vector-store/index.md)
