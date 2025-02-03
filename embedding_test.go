@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/sync/errgroup"
-	"golang.org/x/time/rate"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +12,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 )
 
 // mockEmbeddingProvider implements EmbeddingProvider for testing
