@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // EmbeddingModel represents the type of embedding model to be used for generating embeddings.
@@ -45,7 +46,20 @@ func NewEmbeddingService(provider EmbeddingProvider) *EmbeddingService {
 
 // Generate creates embeddings using the configured provider.
 func (s *EmbeddingService) Generate(ctx context.Context, input interface{}, model EmbeddingModel) (*EmbeddingResponse, error) {
-	return s.provider.Generate(ctx, input, model)
+	if err := validateInput(input, model); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.provider.Generate(ctx, input, model)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validateEmbeddingResponse(resp); err != nil {
+		return nil, err
+	}
+
+	return resp, nil
 }
 
 // EmbeddingObject represents a single embedding result containing the generated vector.
@@ -94,6 +108,10 @@ type embeddingRequest struct {
 
 // Generate implements EmbeddingProvider.Generate for OpenAI-compatible APIs.
 func (p *OpenAICompatibleEmbeddingProvider) Generate(ctx context.Context, input interface{}, model EmbeddingModel) (*EmbeddingResponse, error) {
+	if err := validateInput(input, model); err != nil {
+		return nil, err
+	}
+
 	reqBody := embeddingRequest{
 		Input:          input,
 		Model:          model,
@@ -105,7 +123,7 @@ func (p *OpenAICompatibleEmbeddingProvider) Generate(ctx context.Context, input 
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/embeddings", bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/v1/embeddings", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -118,7 +136,14 @@ func (p *OpenAICompatibleEmbeddingProvider) Generate(ctx context.Context, input 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		switch resp.StatusCode {
+		case http.StatusTooManyRequests:
+			return nil, fmt.Errorf("rate limit exceeded: %d", resp.StatusCode)
+		case http.StatusInternalServerError:
+			return nil, fmt.Errorf("server error: %d", resp.StatusCode)
+		default:
+			return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		}
 	}
 
 	var embResp EmbeddingResponse
@@ -126,5 +151,73 @@ func (p *OpenAICompatibleEmbeddingProvider) Generate(ctx context.Context, input 
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
+	if err := validateEmbeddingResponse(&embResp); err != nil {
+		return nil, err
+	}
+
 	return &embResp, nil
+}
+
+func validateInput(input interface{}, model EmbeddingModel) error {
+	if input == nil {
+		return fmt.Errorf("input cannot be nil")
+	}
+
+	if model == "" {
+		return fmt.Errorf("model cannot be empty")
+	}
+
+	switch v := input.(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return fmt.Errorf("input cannot be empty")
+		}
+	case []string:
+		if len(v) == 0 {
+			return fmt.Errorf("input array cannot be empty")
+		}
+		for i, s := range v {
+			if strings.TrimSpace(s) == "" {
+				return fmt.Errorf("input strings cannot be empty at index %d", i)
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported input type: %T", input)
+	}
+
+	return nil
+}
+
+// ValidateEmbeddingResponse validates that an embedding response meets all requirements:
+// - Response must not be nil
+// - Must contain at least one embedding
+// - All embedding vectors must be non-nil and non-empty
+// - Indices must be sequential and match array position
+func validateEmbeddingResponse(resp *EmbeddingResponse) error {
+	if resp == nil {
+		return fmt.Errorf("response cannot be nil")
+	}
+	if len(resp.Data) == 0 {
+		return fmt.Errorf("response must contain at least one embedding")
+	}
+
+	dimension := -1
+	for i, obj := range resp.Data {
+		if obj.Embedding == nil || len(obj.Embedding) == 0 {
+			return fmt.Errorf("embedding vector at index %d cannot be nil or empty", i)
+		}
+
+		// Verify consistent dimensions
+		if dimension == -1 {
+			dimension = len(obj.Embedding)
+		} else if len(obj.Embedding) != dimension {
+			return fmt.Errorf("inconsistent embedding dimensions: got %d, want %d at index %d",
+				len(obj.Embedding), dimension, i)
+		}
+
+		if obj.Index != i {
+			return fmt.Errorf("invalid embedding index: got %d, want %d", obj.Index, i)
+		}
+	}
+	return nil
 }
