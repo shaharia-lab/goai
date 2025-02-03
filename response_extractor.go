@@ -106,26 +106,61 @@ func extractFromCodeBlock(text, language string) string {
 	return strings.TrimSpace(matches[1])
 }
 
-// TableExtractor extracts table-like data structures from responses.
-// Handles markdown tables, ASCII tables, and other tabular formats.
-type TableExtractor struct {
-	// Format specifies the expected table format (markdown, ascii, etc.)
-	Format string
-}
-
-// Table represents extracted tabular data
+// Table represents extracted tabular data from an LLM response.
+// It includes headers, rows, and the format of the table (e.g., "markdown").
 type Table struct {
-	Headers []string
-	Rows    [][]string
-	Format  string
+	Headers []string   // Headers contains the column names of the table.
+	Rows    [][]string // Rows contains the data rows of the table.
+	Format  string     // Format specifies the format of the table (e.g., "markdown").
 }
 
+// NewTableExtractor creates a new TableExtractor for extracting tables in the specified format.
+// The format parameter specifies the expected format of the table (e.g., "markdown").
 func NewTableExtractor(format string) *TableExtractor {
 	return &TableExtractor{
 		Format: format,
 	}
 }
 
+// TableExtractor implements the ResponseExtractor interface for extracting tabular data.
+type TableExtractor struct {
+	Format string // Format specifies the expected format of the table (e.g., "markdown").
+}
+
+// Extract processes the LLM response to extract a table in the specified format.
+// It identifies the table headers and rows, and returns a Table struct containing the extracted data.
+//
+// Parameters:
+//   - response: The LLMResponse containing the text to be processed.
+//
+// Returns:
+//   - interface{}: A Table struct containing the extracted headers and rows.
+//   - error: An error if the table is malformed or no valid table is found.
+//
+// Example Usage:
+//
+//	func main() {
+//	    response := LLMResponse{
+//	        Text: `
+//	        | Name  | Age | Occupation |
+//	        |-------|-----|------------|
+//	        | Alice | 30  | Engineer   |
+//	        | Bob   | 25  | Designer   |
+//	        `,
+//	    }
+//
+//	    extractor := NewTableExtractor("markdown")
+//	    result, err := response.Extract(extractor)
+//	    if err != nil {
+//	        log.Fatalf("Failed to extract table: %v", err)
+//	    }
+//
+//	    table := result.(*Table)
+//	    fmt.Printf("Headers: %v\n", table.Headers)
+//	    for _, row := range table.Rows {
+//	        fmt.Printf("Row: %v\n", row)
+//	    }
+//	}
 func (e *TableExtractor) Extract(response LLMResponse) (interface{}, error) {
 	table := &Table{
 		Format: e.Format,
