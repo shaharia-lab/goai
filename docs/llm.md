@@ -197,8 +197,6 @@ provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 
 For more details about Mistral AI API can be found [here](https://docs.mistral.ai/api/)
 
-For more details about Mistral AI API can be found [here](https://docs.mistral.ai/api/)
-
 ## Response Extraction
 
 The package provides several extractors to parse structured data from LLM responses:
