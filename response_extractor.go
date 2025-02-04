@@ -177,48 +177,32 @@ func (e *TableExtractor) Extract(response LLMResponse) (interface{}, error) {
 			continue
 		}
 
-		// Detect table start for markdown tables
-		if strings.Contains(line, "|") && !inTable {
-			inTable = true
-			cells := strings.Split(line, "|")
-			// Skip empty cells at start and end
-			if len(cells) > 2 {
-				cells = cells[1 : len(cells)-1]
+		if !inTable {
+			inTable, headerCount = e.detectTableStart(line, table)
+			if inTable {
+				continue
 			}
-			for _, cell := range cells {
-				table.Headers = append(table.Headers, strings.TrimSpace(cell))
-			}
-			headerCount = len(table.Headers)
-			continue
 		}
 
-		// Handle separator line in markdown tables
-		if strings.Contains(line, "|-") {
-			separator = line
-			if !strings.Contains(line, "|") || !inTable {
-				return nil, fmt.Errorf("malformed table: missing proper separator")
-			}
-			continue
-		}
-
-		// Parse data rows
-		if inTable && line != separator {
-			if !strings.Contains(line, "|") {
-				inTable = false
+		if inTable {
+			if e.isSeparatorLine(line) {
+				separator = line
+				if !strings.Contains(line, "|") || !inTable {
+					return nil, fmt.Errorf("malformed table: missing proper separator")
+				}
 				continue
 			}
 
-			cells := strings.Split(line, "|")
-			if len(cells) > 2 {
-				cells = cells[1 : len(cells)-1]
-			}
-			row := make([]string, len(cells))
-			for i, cell := range cells {
-				row[i] = strings.TrimSpace(cell)
-			}
+			if line != separator {
+				if !strings.Contains(line, "|") {
+					inTable = false
+					continue
+				}
 
-			if len(row) == headerCount {
-				table.Rows = append(table.Rows, row)
+				row := e.parseTableRow(line, headerCount)
+				if row != nil {
+					table.Rows = append(table.Rows, row)
+				}
 			}
 		}
 	}
@@ -228,4 +212,40 @@ func (e *TableExtractor) Extract(response LLMResponse) (interface{}, error) {
 	}
 
 	return table, nil
+}
+
+// detectTableStart detects the start of a markdown table and extracts headers.
+func (e *TableExtractor) detectTableStart(line string, table *Table) (bool, int) {
+	if strings.Contains(line, "|") {
+		cells := strings.Split(line, "|")
+		if len(cells) > 2 {
+			cells = cells[1 : len(cells)-1]
+		}
+		for _, cell := range cells {
+			table.Headers = append(table.Headers, strings.TrimSpace(cell))
+		}
+		return true, len(table.Headers)
+	}
+	return false, 0
+}
+
+// isSeparatorLine checks if the line is a markdown table separator.
+func (e *TableExtractor) isSeparatorLine(line string) bool {
+	return strings.Contains(line, "|-")
+}
+
+// parseTableRow parses a row of the table and returns it as a slice of strings.
+func (e *TableExtractor) parseTableRow(line string, headerCount int) []string {
+	cells := strings.Split(line, "|")
+	if len(cells) > 2 {
+		cells = cells[1 : len(cells)-1]
+	}
+	row := make([]string, len(cells))
+	for i, cell := range cells {
+		row[i] = strings.TrimSpace(cell)
+	}
+	if len(row) == headerCount {
+		return row
+	}
+	return nil
 }
