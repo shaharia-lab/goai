@@ -105,6 +105,47 @@ type LLMResponse struct {
 	CompletionTime float64
 }
 
+// Extract is a method on LLMResponse that uses a ResponseExtractor to extract structured data
+// from the LLM response. It delegates the extraction logic to the provided extractor, which
+// processes the response text and returns the extracted data in a structured format.
+//
+// Parameters:
+//   - extractor: An implementation of the ResponseExtractor interface that defines how to
+//     extract and parse the data from the LLM response.
+//
+// Returns:
+//   - interface{}: The extracted data, whose type depends on the specific extractor implementation.
+//   - error: An error if the extraction process fails.
+//
+// Example Usage:
+//
+//	type MyStruct struct {
+//	    Field1 string `json:"field1"`
+//	    Field2 int    `json:"field2"`
+//	}
+//
+//	func main() {
+//	    response := LLMResponse{
+//	        Text:            "```json\n{\"field1\": \"value1\", \"field2\": 42}\n```",
+//	        TotalInputToken: 10,
+//	        TotalOutputToken: 5,
+//	        CompletionTime:  1.23,
+//	    }
+//
+//	    var target MyStruct
+//	    extractor := NewJSONExtractor(&target)
+//
+//	    result, err := response.Extract(extractor)
+//	    if err != nil {
+//	        log.Fatalf("Failed to extract data: %v", err)
+//	    }
+//
+//	    fmt.Printf("Extracted data: %+v\n", result)
+//	}
+func (r LLMResponse) Extract(extractor ResponseExtractor) (interface{}, error) {
+	return extractor.Extract(r)
+}
+
 // LLMError represents errors that occur during LLM operations.
 // It provides structured error information including an error code.
 type LLMError struct {

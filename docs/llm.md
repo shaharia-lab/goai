@@ -196,3 +196,103 @@ provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 ```
 
 For more details about Mistral AI API can be found [here](https://docs.mistral.ai/api/)
+
+## Response Extraction
+
+The package provides several extractors to parse structured data from LLM responses:
+
+### JSON Extraction
+
+```go
+// Define a struct for your data
+type Person struct {
+    Name    string `json:"name"`
+    Age     int    `json:"age"`
+    IsAdmin bool   `json:"is_admin"`
+}
+
+// Create response with JSON data
+response := LLMResponse{
+    Text: `{"name": "John Doe", "age": 30, "is_admin": true}`,
+}
+
+// Create extractor and extract data
+var person Person
+extractor := goai.NewJSONExtractor(&person)
+result, err := extractor.Extract(response)
+if err != nil {
+    panic(err)
+}
+
+// Use the extracted data
+extracted := result.(*Person)
+fmt.Printf("Name: %s, Age: %d\n", extracted.Name, extracted.Age)
+```
+
+### XML Extraction
+
+```go
+// Define a struct for your data
+type Product struct {
+    Name  string  `xml:"name"`
+    Price float64 `xml:"price"`
+}
+
+// Create response with XML data
+response := LLMResponse{
+    Text: `<product><name>Widget</name><price>29.99</price></product>`,
+}
+
+// Create extractor and extract data
+var product Product
+extractor := goai.NewXMLExtractor(&product)
+result, err := extractor.Extract(response)
+if err != nil {
+    panic(err)
+}
+```
+
+### Custom Tag Extraction
+
+```go
+// Create response with tagged content
+response := LLMResponse{
+    Text: "The SQL query is: <query>SELECT * FROM users WHERE age > 21</query>",
+}
+
+// Extract content between custom tags
+extractor := goai.NewTagExtractor("query")
+result, err := extractor.Extract(response)
+if err != nil {
+    panic(err)
+}
+
+query := result.(string)
+fmt.Println("Extracted query:", query)
+```
+
+### Table Extraction
+
+```go
+// Create response with markdown table
+response := LLMResponse{
+    Text: `| Name  | Score |
+|--------|--------|
+| Alice  | 95     |
+| Bob    | 87     |`,
+}
+
+// Extract table data
+extractor := goai.NewTableExtractor("markdown")
+result, err := extractor.Extract(response)
+if err != nil {
+    panic(err)
+}
+
+// Access table data
+table := result.(*goai.Table)
+fmt.Printf("Headers: %v\n", table.Headers)
+for _, row := range table.Rows {
+    fmt.Printf("Row: %v\n", row)
+}
+```
