@@ -163,6 +163,7 @@ The MCP server supports graceful shutdown in two modes:
 #### Basic Shutdown
 
 For simple servers, just call Shutdown:
+
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 defer cancel()
@@ -175,6 +176,7 @@ if err := server.Shutdown(ctx); err != nil {
 #### HTTP Server Shutdown
 
 For servers using `http.Server`, register it for full shutdown handling:
+
 ```go
 httpServer := &http.Server{
     Addr:    ":8080",
