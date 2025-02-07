@@ -36,6 +36,7 @@ type MCPServer struct {
 	version             MCPVersion
 	state               MCPLifecycleState
 	shutdown            chan struct{}
+	resourceManager     *MCPResourceManager
 }
 
 // MCPProgress represents a progress update during tool execution
@@ -421,4 +422,201 @@ func (s *MCPServer) handleCancellation(ctx context.Context, token MCPCancellatio
 
 	s.cancellationManager.tokens[token.ID] = &token
 	return nil
+}
+
+// MCPResourceManager handles resource operations
+type MCPResourceManager struct {
+	resources   map[string]*MCPResource
+	subscribers map[string]map[string]*MCPConnection // resourceID -> connectionID -> connection
+	mu          sync.RWMutex
+}
+
+// MCPResourceChange represents a change in a resource
+type MCPResourceChange struct {
+	ResourceID string          `json:"resourceId"`
+	Type       string          `json:"type"` // "created", "updated", "deleted"
+	Resource   *MCPResource    `json:"resource,omitempty"`
+	Timestamp  time.Time       `json:"timestamp"`
+	Delta      json.RawMessage `json:"delta,omitempty"`
+}
+
+// MCPResourceQuery represents query parameters for listing resources
+type MCPResourceQuery struct {
+	Types    []string `json:"types,omitempty"`
+	Pattern  string   `json:"pattern,omitempty"`
+	MaxItems int      `json:"maxItems,omitempty"`
+}
+
+// Add ResourceManager to MCPServer
+func (s *MCPServer) initResourceManager() {
+	s.resourceManager = &MCPResourceManager{
+		resources:   make(map[string]*MCPResource),
+		subscribers: make(map[string]map[string]*MCPConnection),
+	}
+}
+
+// Resource Management methods
+func (m *MCPResourceManager) AddResource(resource *MCPResource) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if resource.ID == "" {
+		return fmt.Errorf("resource ID cannot be empty")
+	}
+
+	resource.UpdatedAt = time.Now()
+	m.resources[resource.ID] = resource
+
+	// Notify subscribers
+	m.notifyResourceChange(MCPResourceChange{
+		ResourceID: resource.ID,
+		Type:       "created",
+		Resource:   resource,
+		Timestamp:  resource.UpdatedAt,
+	})
+
+	return nil
+}
+
+func (m *MCPResourceManager) UpdateResource(id string, updates *MCPResource) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	existing, exists := m.resources[id]
+	if !exists {
+		return fmt.Errorf("resource %s not found", id)
+	}
+
+	// Create delta for change notification
+	delta, _ := json.Marshal(map[string]interface{}{
+		"oldContent": existing.Content,
+		"newContent": updates.Content,
+	})
+
+	updates.ID = id
+	updates.UpdatedAt = time.Now()
+	m.resources[id] = updates
+
+	// Notify subscribers
+	m.notifyResourceChange(MCPResourceChange{
+		ResourceID: id,
+		Type:       "updated",
+		Resource:   updates,
+		Timestamp:  updates.UpdatedAt,
+		Delta:      delta,
+	})
+
+	return nil
+}
+
+func (m *MCPResourceManager) DeleteResource(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.resources[id]; !exists {
+		return fmt.Errorf("resource %s not found", id)
+	}
+
+	delete(m.resources, id)
+
+	// Notify subscribers
+	m.notifyResourceChange(MCPResourceChange{
+		ResourceID: id,
+		Type:       "deleted",
+		Timestamp:  time.Now(),
+	})
+
+	return nil
+}
+
+func (m *MCPResourceManager) ListResources(query MCPResourceQuery) ([]*MCPResource, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var results []*MCPResource
+
+	for _, resource := range m.resources {
+		if matchesQuery(resource, query) {
+			results = append(results, resource)
+		}
+	}
+
+	if query.MaxItems > 0 && len(results) > query.MaxItems {
+		results = results[:query.MaxItems]
+	}
+
+	return results, nil
+}
+
+// Subscription management
+func (m *MCPResourceManager) Subscribe(resourceID string, conn *MCPConnection) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.subscribers[resourceID]; !exists {
+		m.subscribers[resourceID] = make(map[string]*MCPConnection)
+	}
+	m.subscribers[resourceID][conn.ID] = conn
+	return nil
+}
+
+func (m *MCPResourceManager) Unsubscribe(resourceID string, conn *MCPConnection) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if subs, exists := m.subscribers[resourceID]; exists {
+		delete(subs, conn.ID)
+		if len(subs) == 0 {
+			delete(m.subscribers, resourceID)
+		}
+	}
+}
+
+func (m *MCPResourceManager) notifyResourceChange(change MCPResourceChange) {
+	if subs, exists := m.subscribers[change.ResourceID]; exists {
+		notification := MCPMessage{
+			JsonRPC: "2.0",
+			Method:  "$/resource/change",
+			Params:  mustMarshal(change),
+		}
+
+		for _, conn := range subs {
+			// Async notification to avoid blocking
+			go func(c *MCPConnection) {
+				if err := c.Conn.WriteJSON(notification); err != nil {
+					// Handle error (possibly unsubscribe if connection is dead)
+					m.Unsubscribe(change.ResourceID, c)
+				}
+			}(conn)
+		}
+	}
+}
+
+// Helper function to marshal JSON without error (used in notification context)
+func mustMarshal(v interface{}) json.RawMessage {
+	data, _ := json.Marshal(v)
+	return data
+}
+
+// Helper function to match resources against query
+func matchesQuery(resource *MCPResource, query MCPResourceQuery) bool {
+	if len(query.Types) > 0 {
+		typeMatch := false
+		for _, t := range query.Types {
+			if resource.Type == t {
+				typeMatch = true
+				break
+			}
+		}
+		if !typeMatch {
+			return false
+		}
+	}
+
+	if query.Pattern != "" {
+		// Implement pattern matching logic here
+		// Could use regex or simple string matching depending on requirements
+	}
+
+	return true
 }
