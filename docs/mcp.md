@@ -1,6 +1,3 @@
-Here's the complete `mcp.md` documentation:
-
-```markdown
 # Model Context Protocol (MCP)
 
 The Model Context Protocol (MCP) enables AI models to interact with external tools 
