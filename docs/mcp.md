@@ -1,21 +1,16 @@
-# Model Context Protocol (MCP)
+# Model Context Protocol (MCP) Go Implementation
 
-The Model Context Protocol (MCP) enables AI models to interact with external tools
-and data sources in a standardized way. This document covers the Go implementation of an MCP server.
+The Model Context Protocol (MCP) enables AI models to interact with external tools and data sources in a standardized way. This document covers the Go implementation of an MCP server that follows the official MCP specification.
 
-## Build & Run MCP Server
-
-### Installation
-
-First, install the package:
+## Installation
 
 ```bash
 go get github.com/shaharia-lab/goai
 ```
 
-### Basic Implementation
+## Server Implementation
 
-Here's a minimal example of setting up an MCP server:
+### Basic Server Setup
 
 ```go
 package main
@@ -23,146 +18,124 @@ package main
 import (
     "context"
     "github.com/shaharia-lab/goai"
+    "github.com/sirupsen/logrus"
     "log"
     "net/http"
 )
 
 func main() {
-    // Create registry
-    registry := goai.NewMCPToolRegistry()
-
-    // Use default configuration
+    // Create server with default configuration
     config := goai.DefaultMCPServerConfig()
-
-    // Create server
-    server := goai.NewMCPServer(registry, config)
-
+    config.Logger = logrus.New()
+    
+    server := goai.NewMCPServer(config)
+    
+    // Register tools
+    tool := &MyTool{}
+    if err := server.RegisterTool(tool); err != nil {
+        log.Fatal(err)
+    }
+    
     // Set up HTTP handlers
     mux := http.NewServeMux()
-    server.AddMCPHandlers(context.Background(), mux)
-
+    handlers := server.GetMCPHandlers()
+    
+    // Register required endpoints
+    mux.HandleFunc("/initialize", handlers.Initialize)
+    mux.HandleFunc("/tools/list", handlers.ListTools)
+    mux.HandleFunc("/tools/call", handlers.ToolCall)
+    mux.HandleFunc("/resource/get", handlers.GetResource)
+    mux.HandleFunc("/resource/watch", handlers.WatchResource)
+    
     // Start server
     log.Fatal(http.ListenAndServe(":8080", mux))
 }
 ```
 
-### Server Configuration
-
-The MCP server can be configured in several ways:
-
-#### Basic Configuration (No Logging/Tracing)
-
-```go
-config := goai.DefaultMCPServerConfig()
-server := goai.NewMCPServer(registry, config)
-```
-
-#### With Logging
-
-```go
-config := goai.DefaultMCPServerConfig()
-config.Logger = logrus.New()
-server := goai.NewMCPServer(registry, config)
-```
-
-#### With OpenTelemetry Tracing
-
-```go
-config := goai.DefaultMCPServerConfig()
-config.Tracer = otel.Tracer("my-mcp-server")
-server := goai.NewMCPServer(registry, config)
-```
-
-#### Full Configuration
+### Server Configuration Options
 
 ```go
 config := goai.MCPServerConfig{
-    Logger:              logrus.New(),
-    Tracer:             otel.Tracer("my-mcp-server"),
-    EnableMetrics:      true,
-    MaxToolExecutionTime: 30 * time.Second,
+    Logger:               logrus.New(),                // Optional logging
+    Tracer:              otelTracer,                  // Optional OpenTelemetry tracing
+    EnableMetrics:       true,                        // Enable metrics collection
+    MaxToolExecutionTime: 30 * time.Second,           // Tool execution timeout
+    MaxRequestSize:      1024 * 1024,                // Max request size (1MB)
+    AllowedOrigins:      []string{"*"},              // CORS settings
 }
-server := goai.NewMCPServer(registry, config)
 ```
 
-### Creating Tools
+### Implementing Tools
 
-To create a tool, implement the `MCPToolExecutor` interface. Here's an example tool that performs word counting:
+Tools must implement the `MCPToolExecutor` interface:
 
 ```go
-type WordCountTool struct{}
+type MyTool struct{}
 
-func (t *WordCountTool) GetDefinition() goai.MCPTool {
+func (t *MyTool) GetDefinition() goai.MCPTool {
     return goai.MCPTool{
-        Name:        "word_count",
-        Description: "Counts words in a text",
+        Name:        "my_tool",
+        Description: "Example tool",
         Version:     "1.0.0",
         InputSchema: json.RawMessage(`{
             "type": "object",
             "properties": {
-                "text": {
-                    "type": "string",
-                    "description": "Text to analyze"
-                }
+                "input": {"type": "string"}
             },
-            "required": ["text"]
+            "required": ["input"]
+        }`),
+        Capabilities: []string{"text_processing"},
+        Metadata: json.RawMessage(`{
+            "author": "Example Author"
         }`),
     }
 }
 
-func (t *WordCountTool) Execute(ctx context.Context, input json.RawMessage) (goai.MCPToolResponse, error) {
-    // Parse input
+func (t *MyTool) Execute(ctx context.Context, input json.RawMessage) (goai.MCPToolResponse, error) {
     var params struct {
-        Text string `json:"text"`
+        Input string `json:"input"`
     }
     if err := json.Unmarshal(input, &params); err != nil {
-        return goai.MCPToolResponse{}, fmt.Errorf("invalid input: %w", err)
+        return goai.MCPToolResponse{}, err
     }
-
-    // Count words
-    words := len(strings.Fields(params.Text))
-
-    // Return response
+    
     return goai.MCPToolResponse{
         Content: []goai.MCPContentItem{{
             Type: "text",
-            Text: fmt.Sprintf("Word count: %d", words),
+            Text: "Processed: " + params.Input,
+            Metadata: json.RawMessage(`{"timestamp": "2024-01-01T00:00:00Z"}`),
         }},
     }, nil
 }
 ```
 
-### HTTP Server Integration
+### Resource Management
 
-The MCP server can be integrated with any HTTP router:
-
-#### Standard HTTP Server
+Resources can be managed using the built-in handlers:
 
 ```go
-mux := http.NewServeMux()
-server.AddMCPHandlers(context.Background(), mux)
-log.Fatal(http.ListenAndServe(":8080", mux))
+// Get a resource
+GET /resource/get?id=resource_id
+
+// Watch for resource updates
+WebSocket /resource/watch
 ```
 
-#### Chi Router
+### Error Handling
+
+The server uses standard JSON-RPC 2.0 error codes:
 
 ```go
-import "github.com/go-chi/chi/v5"
-
-r := chi.NewRouter()
-handlers := server.GetMCPHandlers()
-r.Get("/tools/list", handlers.ListTools)
-r.Post("/tools/call", handlers.ToolCall)
-log.Fatal(http.ListenAndServe(":8080", r))
+const (
+    MCPErrorCodeParseError     = -32700
+    MCPErrorCodeInvalidRequest = -32600
+    MCPErrorCodeMethodNotFound = -32601
+    MCPErrorCodeInvalidParams  = -32602
+    MCPErrorCodeInternal      = -32603
+)
 ```
 
 ### Graceful Shutdown
-
-The MCP server supports graceful shutdown in two modes:
-
-#### Basic Shutdown
-
-For simple servers, just call Shutdown:
 
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -173,152 +146,54 @@ if err := server.Shutdown(ctx); err != nil {
 }
 ```
 
-#### HTTP Server Shutdown
+## Specification Compliance
 
-For servers using `http.Server`, register it for full shutdown handling:
+| Feature                         | Status     | Notes                                               |
+|---------------------------------|------------|-----------------------------------------------------|
+| **Core Protocol**               |            |                                                     |
+| JSON-RPC 2.0 Message Format     | ✅ Full     | Implements all required message structures          |
+| Server Capabilities Negotiation | ✅ Full     | Includes version, features, and extensions          |
+| Error Handling                  | ✅ Full     | Standard JSON-RPC error codes and custom error data |
+| Connection Management           | ✅ Full     | WebSocket support with proper lifecycle             |
+| **Resource Management**         |            |                                                     |
+| Resource Retrieval              | ✅ Full     | GET endpoint with proper error handling             |
+| Resource Watching               | ✅ Full     | WebSocket-based updates                             |
+| Resource Versioning             | ✅ Full     | Version tracking and timestamps                     |
+| Resource Metadata               | ✅ Full     | Custom metadata support                             |
+| **Tool Integration**            |            |                                                     |
+| Tool Registration               | ✅ Full     | Dynamic tool registration with validation           |
+| Tool Discovery                  | ✅ Full     | List endpoint with filtering                        |
+| Tool Execution                  | ✅ Full     | Async execution with timeout control                |
+| Input Schema Validation         | ⚠️ Partial | Basic validation, complex schemas need enhancement  |
+| Tool Capabilities               | ✅ Full     | Proper capability declaration and checking          |
+| **Security**                    |            |                                                     |
+| CORS Support                    | ✅ Full     | Configurable allowed origins                        |
+| Request Size Limits             | ✅ Full     | Configurable max request size                       |
+| Rate Limiting                   | ❌ Missing  | Not implemented yet                                 |
+| Authentication                  | ⚠️ Partial | Basic auth support, needs enhancement               |
+| **Observability**               |            |                                                     |
+| Logging                         | ✅ Full     | Structured logging with levels                      |
+| Metrics                         | ⚠️ Partial | Basic metrics, needs more coverage                  |
+| Tracing                         | ✅ Full     | OpenTelemetry integration                           |
+| **Extensions**                  |            |                                                     |
+| Custom Metadata                 | ✅ Full     | Supports arbitrary JSON metadata                    |
+| Protocol Extensions             | ⚠️ Partial | Basic extension support, needs documentation        |
+| Custom Content Types            | ✅ Full     | Flexible content type handling                      |
 
-```go
-httpServer := &http.Server{
-    Addr:    ":8080",
-    Handler: mux,
-}
+### Legend
+- ✅ Full: Feature is fully implemented and compliant
+- ⚠️ Partial: Feature is partially implemented or needs enhancement
+- ❌ Missing: Feature is not implemented yet
 
-// Register HTTP server
-server.WithHTTPServer(httpServer)
+### Potential Improvements
+1. Implement rate limiting for better security
+2. Enhance input schema validation for complex schemas
+3. Strengthen authentication mechanisms
+4. Expand metrics coverage for better observability
+5. Document and formalize protocol extension mechanisms
 
-// Handle shutdown signals
-go func() {
-    sigCh := make(chan os.Signal, 1)
-    signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-    <-sigCh
-
-    // Create shutdown context with timeout
-    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-    defer cancel()
-
-    // Perform graceful shutdown
-    if err := server.Shutdown(ctx); err != nil {
-        log.Printf("Shutdown error: %v", err)
-    }
-}()
-
-// Start server
-if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
-    log.Fatalf("HTTP server error: %v", err)
-}
-```
-
-### Complete Example
-
-Here's a complete example bringing everything together:
-
-```go
-package main
-
-import (
-    "context"
-    "encoding/json"
-    "fmt"
-    "github.com/shaharia-lab/goai"
-    "github.com/sirupsen/logrus"
-    "net/http"
-    "os"
-    "os/signal"
-    "syscall"
-    "time"
-)
-
-// Define tool
-type WordCountTool struct{}
-
-// ... (WordCountTool implementation from above) ...
-
-func main() {
-    // Create registry
-    registry := goai.NewMCPToolRegistry()
-
-    // Register tool
-    if err := registry.Register(&WordCountTool{}); err != nil {
-        log.Fatal(err)
-    }
-
-    // Configure server with logging
-    config := goai.DefaultMCPServerConfig()
-    config.Logger = logrus.New()
-
-    // Create server
-    server := goai.NewMCPServer(registry, config)
-
-    // Set up HTTP server
-    mux := http.NewServeMux()
-    server.AddMCPHandlers(context.Background(), mux)
-
-    // Create HTTP server
-    httpServer := &http.Server{
-        Addr:    ":8080",
-        Handler: mux,
-    }
-
-    // Register for shutdown
-    server.WithHTTPServer(httpServer)
-
-    // Handle shutdown signals
-    go func() {
-        sigCh := make(chan os.Signal, 1)
-        signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-        <-sigCh
-
-        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-        defer cancel()
-
-        if err := server.Shutdown(ctx); err != nil {
-            log.Printf("Shutdown error: %v", err)
-        }
-    }()
-
-    // Start server
-    fmt.Println("Server starting on :8080...")
-    if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
-        log.Fatalf("HTTP server error: %v", err)
-    }
-}
-```
-
-### Testing Your Server
-
-Once your server is running, you can test it using curl:
-
-```bash
-# List available tools
-curl http://localhost:8080/tools/list
-
-# Call a tool
-curl -X POST http://localhost:8080/tools/call \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "word_count",
-    "arguments": {
-      "text": "Hello, Model Context Protocol!"
-    }
-  }'
-```
-
-### Best Practices
-
-When implementing MCP tools:
-
-1. **Input Validation**: Always validate tool inputs thoroughly
-2. **Error Handling**: Return clear, actionable error messages
-3. **Context Awareness**: Respect context cancellation for long-running operations
-4. **Thread Safety**: Ensure your tool implementation is thread-safe
-5. **Documentation**: Provide clear descriptions and input schemas
-6. **Versioning**: Include version information in your tool definition
-7. **Logging**: Use appropriate log levels when logging is enabled
-8. **Tracing**: Add meaningful spans when tracing is enabled
-9. **Shutdown**: Implement proper cleanup in your tools if needed
-10. **Testing**: Add comprehensive tests for your tools
-
-### Learn More
-
-To learn more about the Model Context Protocol and its capabilities,
-visit the official documentation at [https://modelcontextprotocol.io/](https://modelcontextprotocol.io/).
+### Notes
+- The implementation is production-ready for basic use cases
+- Security features should be enhanced before using in public-facing environments
+- All critical path features are fully implemented
+- Some optional features are partially implemented but functional

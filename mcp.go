@@ -1,368 +1,196 @@
-// Package goai provides an implementation of the Model Context Protocol (MCP)
-// for building extensible AI tool servers.
 package goai
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/trace"
 )
 
+// Common MCP error codes
+const (
+	MCPErrorCodeParseError     = -32700
+	MCPErrorCodeInvalidRequest = -32600
+	MCPErrorCodeMethodNotFound = -32601
+	MCPErrorCodeInvalidParams  = -32602
+	MCPErrorCodeInternal       = -32603
+)
+
+// MCPServer represents the main MCP server instance
+type MCPServer struct {
+	config   MCPServerConfig
+	tools    map[string]MCPToolExecutor
+	logger   *logrus.Logger
+	tracer   trace.Tracer
+	upgrader websocket.Upgrader
+	mu       sync.RWMutex
+}
+
+// MCPConnection represents an active client connection
+type MCPConnection struct {
+	ID     string
+	Conn   *websocket.Conn
+	Server *MCPServer
+	Ctx    context.Context
+	Cancel context.CancelFunc
+}
+
+// MCPMessage represents a JSON-RPC 2.0 message
+type MCPMessage struct {
+	JsonRPC string          `json:"jsonrpc"`
+	ID      interface{}     `json:"id,omitempty"`
+	Method  string          `json:"method,omitempty"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *MCPError       `json:"error,omitempty"`
+}
+
+// MCPError represents a JSON-RPC 2.0 error
+type MCPError struct {
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+// MCPServerCapabilities represents server capabilities
+type MCPServerCapabilities struct {
+	SupportedFeatures []string `json:"supportedFeatures"`
+	MaxRequestSize    int      `json:"maxRequestSize"`
+	Version           string   `json:"version"`
+	Extensions        []string `json:"extensions,omitempty"`
+}
+
+// MCPResource represents a resource in the protocol
+type MCPResource struct {
+	ID        string          `json:"id"`
+	Type      string          `json:"type"`
+	Content   string          `json:"content"`
+	Metadata  json.RawMessage `json:"metadata,omitempty"`
+	Version   string          `json:"version"`
+	UpdatedAt time.Time       `json:"updatedAt"`
+}
+
 // MCPContentItem represents a content item in a tool response
 type MCPContentItem struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type     string          `json:"type"`
+	Text     string          `json:"text"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
 // MCPTool represents a tool definition
 type MCPTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Version     string          `json:"version"`
-	InputSchema json.RawMessage `json:"inputSchema"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	Version      string          `json:"version"`
+	InputSchema  json.RawMessage `json:"inputSchema"`
+	Capabilities []string        `json:"capabilities"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
 }
 
 // MCPToolInput represents input parameters for tool execution
 type MCPToolInput struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
+	Name       string          `json:"name"`
+	Arguments  json.RawMessage `json:"arguments"`
+	ResourceID string          `json:"resourceId,omitempty"`
 }
 
 // MCPToolResponse represents the response from tool execution
 type MCPToolResponse struct {
-	Content []MCPContentItem `json:"content"`
-	IsError bool             `json:"isError,omitempty"`
+	Content  []MCPContentItem `json:"content"`
+	IsError  bool             `json:"isError,omitempty"`
+	Metadata json.RawMessage  `json:"metadata,omitempty"`
 }
 
 // MCPHandlers provides access to individual HTTP handlers
 type MCPHandlers struct {
-	ListTools http.HandlerFunc
-	ToolCall  http.HandlerFunc
+	Initialize    http.HandlerFunc
+	ListTools     http.HandlerFunc
+	ToolCall      http.HandlerFunc
+	GetResource   http.HandlerFunc
+	WatchResource http.HandlerFunc
 }
 
 // MCPServerConfig holds configuration for the MCP server
 type MCPServerConfig struct {
-	Logger               *logrus.Logger // Optional: Logger instance
-	Tracer               trace.Tracer   // Optional: OpenTelemetry tracer
+	Logger               *logrus.Logger
+	Tracer               trace.Tracer
 	EnableMetrics        bool
 	MaxToolExecutionTime time.Duration
+	MaxRequestSize       int
+	AllowedOrigins       []string
 }
 
-// DefaultMCPServerConfig returns a default configuration with no logging or tracing
-func DefaultMCPServerConfig() MCPServerConfig {
-	return MCPServerConfig{
-		MaxToolExecutionTime: 30 * time.Second,
-	}
-}
-
-// MCPToolExecutor defines the interface that all MCP tools must implement.
-// Implementations must be thread-safe and handle context cancellation.
-//
-// Example implementation:
-//
-//	type MyTool struct{}
-//
-//	func (t *MyTool) GetDefinition() MCPTool {
-//	    return MCPTool{
-//	        Name:        "my_tool",
-//	        Description: "Does something useful",
-//	        Version:     "1.0.0",
-//	        InputSchema: json.RawMessage(`{
-//	            "type": "object",
-//	            "properties": {
-//	                "param": {"type": "string"}
-//	            }
-//	        }`),
-//	    }
-//	}
-//
-//	func (t *MyTool) Execute(ctx context.Context, input json.RawMessage) (MCPToolResponse, error) {
-//	    var params struct {
-//	        Param string `json:"param"`
-//	    }
-//	    if err := json.Unmarshal(input, &params); err != nil {
-//	        return MCPToolResponse{}, err
-//	    }
-//	    return MCPToolResponse{
-//	        Content: []MCPContentItem{{
-//	            Type: "text",
-//	            Text: fmt.Sprintf("Processed: %s", params.Param),
-//	        }},
-//	    }, nil
-//	}
+// MCPToolExecutor defines the interface that all MCP tools must implement
 type MCPToolExecutor interface {
 	GetDefinition() MCPTool
 	Execute(ctx context.Context, input json.RawMessage) (MCPToolResponse, error)
 }
 
-// MCPToolRegistry manages the registration and retrieval of MCP tools
-type MCPToolRegistry struct {
-	tools map[string]MCPToolExecutor
-	mu    sync.RWMutex
-}
-
-// MCPServer represents an MCP server
-type MCPServer struct {
-	registry *MCPToolRegistry
-	config   MCPServerConfig
-	shutdown chan struct{}
-	wg       sync.WaitGroup // Track ongoing requests
-	server   *http.Server   // Optional HTTP server reference
-}
-
-// WithHTTPServer is an optional method to set HTTP server reference for shutdown
-func (s *MCPServer) WithHTTPServer(srv *http.Server) *MCPServer {
-	s.server = srv
-	return s
-}
-
-// Shutdown performs a graceful shutdown of the MCP server.
-// HTTP server shutdown is only performed if WithHTTPServer was called.
-func (s *MCPServer) Shutdown(ctx context.Context) error {
-	// Signal shutdown
-	close(s.shutdown)
-
-	// If no HTTP server is set, just wait for ongoing requests
-	if s.server == nil {
-		s.wg.Wait()
-		return nil
+// NewMCPServer creates a new MCP server instance
+func NewMCPServer(config MCPServerConfig) *MCPServer {
+	if config.Logger == nil {
+		config.Logger = logrus.New()
 	}
 
-	// If HTTP server exists, perform full shutdown
-	return s.server.Shutdown(ctx)
+	return &MCPServer{
+		config: config,
+		tools:  make(map[string]MCPToolExecutor),
+		logger: config.Logger,
+		tracer: config.Tracer,
+		upgrader: websocket.Upgrader{
+			CheckOrigin: makeOriginChecker(config.AllowedOrigins),
+		},
+	}
 }
 
-// isShuttingDown checks if server is in shutdown mode
-func (s *MCPServer) isShuttingDown() bool {
-	select {
-	case <-s.shutdown:
-		return true
-	default:
+// RegisterTool registers a new tool with the server
+func (s *MCPServer) RegisterTool(tool MCPToolExecutor) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	def := tool.GetDefinition()
+	if def.Name == "" {
+		return errors.New("tool name cannot be empty")
+	}
+
+	s.tools[def.Name] = tool
+	return nil
+}
+
+// Error implements the error interface
+func (e *MCPError) Error() string {
+	if e.Data != nil {
+		return fmt.Sprintf("MCPError %d: %s (data: %s)", e.Code, e.Message, string(e.Data))
+	}
+	return fmt.Sprintf("MCPError %d: %s", e.Code, e.Message)
+}
+
+func makeOriginChecker(allowedOrigins []string) func(r *http.Request) bool {
+	return func(r *http.Request) bool {
+		if len(allowedOrigins) == 0 {
+			return true
+		}
+		origin := r.Header.Get("Origin")
+		for _, allowed := range allowedOrigins {
+			if allowed == "*" || allowed == origin {
+				return true
+			}
+		}
 		return false
 	}
 }
 
-// wrapHandler wraps an http.HandlerFunc to track ongoing requests
-func (s *MCPServer) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		s.wg.Add(1)
-		defer s.wg.Done()
-		h(w, r)
+// DefaultMCPServerConfig returns a default configuration
+func DefaultMCPServerConfig() MCPServerConfig {
+	return MCPServerConfig{
+		MaxToolExecutionTime: 30 * time.Second,
+		MaxRequestSize:       1024 * 1024, // 1MB
 	}
-}
-
-// NewMCPToolRegistry creates a new tool registry
-//
-// Example:
-//
-//	registry := goai.NewMCPToolRegistry()
-//	myTool := &MyTool{}
-//	err := registry.Register(myTool)
-func NewMCPToolRegistry() *MCPToolRegistry {
-	return &MCPToolRegistry{
-		tools: make(map[string]MCPToolExecutor),
-	}
-}
-
-// Register adds a tool to the registry.
-//
-// Example:
-//
-//	registry := goai.NewMCPToolRegistry()
-//	myTool := &MyTool{}
-//	if err := registry.Register(myTool); err != nil {
-//	    log.Fatal(err)
-//	}
-func (r *MCPToolRegistry) Register(tool MCPToolExecutor) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	def := tool.GetDefinition()
-	if _, exists := r.tools[def.Name]; exists {
-		return fmt.Errorf("tool %s already registered", def.Name)
-	}
-
-	r.tools[def.Name] = tool
-	return nil
-}
-
-// Get retrieves a tool from the registry by name.
-//
-// Example:
-//
-//	tool, err := registry.Get(ctx, "my_tool")
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
-func (r *MCPToolRegistry) Get(ctx context.Context, name string) (MCPToolExecutor, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	tool, exists := r.tools[name]
-	if !exists {
-		return nil, fmt.Errorf("tool %s not found", name)
-	}
-
-	return tool, nil
-}
-
-// ListTools returns all registered tools' definitions.
-//
-// Example:
-//
-//	tools := registry.ListTools(ctx)
-//	for _, tool := range tools {
-//	    fmt.Printf("Tool: %s (%s)\n", tool.Name, tool.Description)
-//	}
-func (r *MCPToolRegistry) ListTools(ctx context.Context) []MCPTool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	tools := make([]MCPTool, 0, len(r.tools))
-	for _, tool := range r.tools {
-		tools = append(tools, tool.GetDefinition())
-	}
-	return tools
-}
-
-// NewMCPServer creates a new MCP server with the given registry and configuration.
-//
-// Example with minimal configuration:
-//
-//	config := goai.DefaultMCPServerConfig()
-//	server := goai.NewMCPServer(registry, config)
-//
-// Example with full configuration including logging and tracing:
-//
-//	config := goai.MCPServerConfig{
-//	    Logger:              logrus.New(),
-//	    Tracer:             otel.Tracer("my-mcp-server"),
-//	    MaxToolExecutionTime: 30 * time.Second,
-//	}
-//	server := goai.NewMCPServer(registry, config)
-func NewMCPServer(registry *MCPToolRegistry, config MCPServerConfig) *MCPServer {
-	return &MCPServer{
-		registry: registry,
-		config:   config,
-		shutdown: make(chan struct{}),
-	}
-}
-
-// HandleMCPListTools handles the tools/list endpoint.
-// It returns a JSON response containing all registered tools.
-func (s *MCPServer) HandleMCPListTools(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Optional tracing
-	if s.config.Tracer != nil {
-		var span trace.Span
-		ctx, span = s.config.Tracer.Start(ctx, "GoAI_MCP_ListTools")
-		defer span.End()
-	}
-
-	tools := s.registry.ListTools(ctx)
-
-	response := struct {
-		Tools []MCPTool `json:"tools"`
-	}{
-		Tools: tools,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		s.handleError(w, err, http.StatusInternalServerError)
-		return
-	}
-}
-
-// HandleMCPToolCall handles the tools/call endpoint.
-// It executes the requested tool and returns the response.
-func (s *MCPServer) HandleMCPToolCall(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Optional tracing
-	if s.config.Tracer != nil {
-		var span trace.Span
-		ctx, span = s.config.Tracer.Start(ctx, "GoAI_MCP_ToolCall")
-		defer span.End()
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	var input MCPToolInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		s.handleError(w, err, http.StatusBadRequest)
-		return
-	}
-
-	tool, err := s.registry.Get(ctx, input.Name)
-	if err != nil {
-		s.handleError(w, err, http.StatusNotFound)
-		return
-	}
-
-	response, err := tool.Execute(ctx, input.Arguments)
-	if err != nil {
-		// Optional logging
-		if s.config.Logger != nil {
-			s.config.Logger.WithError(err).WithField("tool", input.Name).Error("Tool execution failed")
-		}
-		response = MCPToolResponse{
-			IsError: true,
-			Content: []MCPContentItem{{
-				Type: "text",
-				Text: err.Error(),
-			}},
-		}
-	}
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		s.handleError(w, err, http.StatusInternalServerError)
-	}
-}
-
-// GetMCPHandlers returns the individual HTTP handlers that can be used with any router.
-//
-// Example with Chi router:
-//
-//	server := goai.NewMCPServer(registry, config)
-//	handlers := server.GetMCPHandlers()
-//
-//	r := chi.NewRouter()
-//	r.Get("/tools/list", handlers.ListTools)
-//	r.Post("/tools/call", handlers.ToolCall)
-func (s *MCPServer) GetMCPHandlers() MCPHandlers {
-	return MCPHandlers{
-		ListTools: s.wrapHandler(s.HandleMCPListTools),
-		ToolCall:  s.wrapHandler(s.HandleMCPToolCall),
-	}
-}
-
-// AddMCPHandlers adds MCP handlers to an existing http.ServeMux.
-//
-// Example:
-//
-//	mux := http.NewServeMux()
-//	server.AddMCPHandlers(ctx, mux)
-//	http.ListenAndServe(":8080", mux)
-func (s *MCPServer) AddMCPHandlers(ctx context.Context, mux *http.ServeMux) {
-	handlers := s.GetMCPHandlers()
-	mux.HandleFunc("/tools/list", handlers.ListTools)
-	mux.HandleFunc("/tools/call", handlers.ToolCall)
-}
-
-// handleError is an internal helper method for handling HTTP errors
-func (s *MCPServer) handleError(w http.ResponseWriter, err error, status int) {
-	// Optional logging
-	if s.config.Logger != nil {
-		s.config.Logger.WithError(err).Error("MCP error")
-	}
-	http.Error(w, err.Error(), status)
 }
