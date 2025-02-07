@@ -1,6 +1,6 @@
 # Model Context Protocol (MCP)
 
-The Model Context Protocol (MCP) enables AI models to interact with external tools 
+The Model Context Protocol (MCP) enables AI models to interact with external tools
 and data sources in a standardized way. This document covers the Go implementation of an MCP server.
 
 ## Build & Run MCP Server
@@ -8,6 +8,7 @@ and data sources in a standardized way. This document covers the Go implementati
 ### Installation
 
 First, install the package:
+
 ```bash
 go get github.com/shaharia-lab/goai
 ```
@@ -50,12 +51,14 @@ func main() {
 The MCP server can be configured in several ways:
 
 #### Basic Configuration (No Logging/Tracing)
+
 ```go
 config := goai.DefaultMCPServerConfig()
 server := goai.NewMCPServer(registry, config)
 ```
 
 #### With Logging
+
 ```go
 config := goai.DefaultMCPServerConfig()
 config.Logger = logrus.New()
@@ -63,6 +66,7 @@ server := goai.NewMCPServer(registry, config)
 ```
 
 #### With OpenTelemetry Tracing
+
 ```go
 config := goai.DefaultMCPServerConfig()
 config.Tracer = otel.Tracer("my-mcp-server")
@@ -70,6 +74,7 @@ server := goai.NewMCPServer(registry, config)
 ```
 
 #### Full Configuration
+
 ```go
 config := goai.MCPServerConfig{
     Logger:              logrus.New(),
@@ -132,6 +137,7 @@ func (t *WordCountTool) Execute(ctx context.Context, input json.RawMessage) (goa
 The MCP server can be integrated with any HTTP router:
 
 #### Standard HTTP Server
+
 ```go
 mux := http.NewServeMux()
 server.AddMCPHandlers(context.Background(), mux)
@@ -139,6 +145,7 @@ log.Fatal(http.ListenAndServe(":8080", mux))
 ```
 
 #### Chi Router
+
 ```go
 import "github.com/go-chi/chi/v5"
 
@@ -154,6 +161,7 @@ log.Fatal(http.ListenAndServe(":8080", r))
 The MCP server supports graceful shutdown in two modes:
 
 #### Basic Shutdown
+
 For simple servers, just call Shutdown:
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -165,6 +173,7 @@ if err := server.Shutdown(ctx); err != nil {
 ```
 
 #### HTTP Server Shutdown
+
 For servers using `http.Server`, register it for full shutdown handling:
 ```go
 httpServer := &http.Server{
