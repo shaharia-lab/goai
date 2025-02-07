@@ -6,11 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/sirupsen/logrus"
-	"go.opentelemetry.io/otel/trace"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // MCPContentItem represents a content item in a tool response
