@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -23,6 +25,8 @@ const (
 	MCPErrorCodeInternal       = -32603
 )
 
+type MCPMessageHandler func(MCPMessage) error
+
 // MCPServer represents the main MCP server instance
 type MCPServer struct {
 	config              MCPServerConfig
@@ -37,6 +41,7 @@ type MCPServer struct {
 	state               MCPLifecycleState
 	shutdown            chan struct{}
 	resourceManager     *MCPResourceManager
+	transports          []MCPTransport
 }
 
 // MCPProgress represents a progress update during tool execution
@@ -186,8 +191,9 @@ type MCPTool struct {
 // MCPToolInput represents input parameters for tool execution
 type MCPToolInput struct {
 	Name       string          `json:"name"`
-	Arguments  json.RawMessage `json:"arguments"`
+	Params     json.RawMessage `json:"params,omitempty"`
 	ResourceID string          `json:"resourceId,omitempty"`
+	Tool       string
 }
 
 // MCPToolResponse represents the response from tool execution
@@ -214,6 +220,9 @@ type MCPServerConfig struct {
 	MaxToolExecutionTime time.Duration
 	MaxRequestSize       int
 	AllowedOrigins       []string
+	EnableStdio          bool `json:"enableStdio"`
+	EnableSSE            bool `json:"enableSSE"`
+	EnableWebSocket      bool `json:"enableWebSocket"`
 }
 
 // MCPToolExecutor defines the interface that all MCP tools must implement
@@ -228,7 +237,7 @@ func NewMCPServer(config MCPServerConfig) *MCPServer {
 		config.Logger = logrus.New()
 	}
 
-	return &MCPServer{
+	server := &MCPServer{
 		config: config,
 		tools:  make(map[string]MCPToolExecutor),
 		logger: config.Logger,
@@ -237,6 +246,34 @@ func NewMCPServer(config MCPServerConfig) *MCPServer {
 			CheckOrigin: makeOriginChecker(config.AllowedOrigins),
 		},
 	}
+
+	// Setup message handler
+	handler := func(msg MCPMessage) error {
+		return server.handleMessage(msg)
+	}
+
+	// Setup transports
+	if config.EnableStdio {
+		stdioTransport := NewStdioTransport(handler)
+		server.AddTransport(stdioTransport)
+	}
+
+	if config.EnableSSE {
+		// Setup SSE transport
+	}
+
+	if config.EnableWebSocket {
+		// Setup WebSocket transport
+	}
+
+	return server
+}
+
+// Server method to handle transport setup
+func (s *MCPServer) AddTransport(transport MCPTransport) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transports = append(s.transports, transport)
 }
 
 // RegisterTool registers a new tool with the server
@@ -308,11 +345,27 @@ func DefaultMCPServerConfig() MCPServerConfig {
 	}
 }
 
+func (c *MCPToolExecutionContext) Deadline() (deadline time.Time, ok bool) {
+	return c.Context.Deadline()
+}
+
+func (c *MCPToolExecutionContext) Done() <-chan struct{} {
+	return c.Context.Done()
+}
+
+func (c *MCPToolExecutionContext) Err() error {
+	return c.Context.Err()
+}
+
+func (c *MCPToolExecutionContext) Value(key interface{}) interface{} {
+	return c.Context.Value(key)
+}
+
 // MCPInitializeParams represents initialization parameters from client
 type MCPInitializeParams struct {
-	ClientInfo     json.RawMessage `json:"clientInfo,omitempty"`
-	ClientFeatures []string        `json:"clientFeatures"`
-	Capabilities   json.RawMessage `json:"capabilities,omitempty"`
+	Auth         *MCPAuthConfig  `json:"authentication,omitempty"` // Use the full package path
+	ClientInfo   json.RawMessage `json:"clientInfo,omitempty"`
+	Capabilities json.RawMessage `json:"capabilities,omitempty"`
 }
 
 // MCPInitializeResult represents server response to initialization
@@ -389,15 +442,13 @@ func (s *MCPServer) ExecuteTool(ctx context.Context, input MCPToolInput) (*MCPTo
 	// Create execution context with progress and cancellation
 	execCtx := &MCPToolExecutionContext{
 		Context: ctx,
-		Progress: func(p MCPProgress) {
-			if err := s.handleProgress(nil, p); err != nil {
-				s.logger.WithError(err).Error("failed to send progress update")
-			}
+		Progress: func(progress MCPProgress) {
+			s.sendProgress(ctx, progress)
 		},
 	}
 
 	// Execute the tool
-	response, err := tool.Execute(execCtx.Context, input.Arguments)
+	response, err := tool.Execute(execCtx.Context, input.Params)
 	if err != nil {
 		return nil, &MCPError{
 			Code:    MCPErrorCodeInternal,
@@ -406,6 +457,127 @@ func (s *MCPServer) ExecuteTool(ctx context.Context, input MCPToolInput) (*MCPTo
 	}
 
 	return &response, nil
+}
+
+// Server message handling methods
+func (s *MCPServer) handleMessage(msg MCPMessage) error {
+	s.logger.WithField("method", msg.Method).Debug("Handling message")
+
+	ctx := context.Background()
+	if msg.ID != nil {
+		ctx = context.WithValue(ctx, "requestID", msg.ID)
+	}
+
+	var response MCPMessage
+	response.JsonRPC = "2.0"
+	response.ID = msg.ID
+
+	var result interface{}
+	var err error
+
+	switch msg.Method {
+	case "initialize":
+		response.Result, err = s.handleInitializeRequest(ctx, msg.Params)
+	case "shutdown":
+		response.Result, err = s.handleShutdown(ctx, msg.Params)
+	case "execute":
+		response.Result, err = s.handleToolExecution(ctx, msg.Params)
+	case "ping":
+		var pingRequest MCPPingRequest
+		if err := json.Unmarshal(msg.Params, &pingRequest); err != nil {
+			return fmt.Errorf("failed to parse ping request: %w", err)
+		}
+		result, err = s.handlePing(ctx, pingRequest)
+	default:
+		err = fmt.Errorf("unknown method: %s", msg.Method)
+	}
+
+	if err != nil {
+		response.Error = &MCPError{
+			Code:    MCPErrorCodeInternal,
+			Message: err.Error(),
+		}
+	} else {
+		// Marshal the result to json.RawMessage
+		response.Result, err = json.Marshal(result)
+		if err != nil {
+			response.Error = &MCPError{
+				Code:    MCPErrorCodeInternal,
+				Message: "failed to marshal response",
+			}
+		}
+	}
+
+	return s.sendResponse(response)
+}
+
+func (s *MCPServer) handleInitializeRequest(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
+	var initParams MCPInitializeParams
+	if err := json.Unmarshal(params, &initParams); err != nil {
+		return nil, fmt.Errorf("failed to parse initialize params: %w", err)
+	}
+
+	if initParams.Auth == nil {
+		return nil, fmt.Errorf("authentication configuration is required")
+	}
+
+	if initParams.Auth != nil {
+		if err := s.authenticate(initParams.Auth); err != nil {
+			return nil, fmt.Errorf("authentication failed: %w", err)
+		}
+	}
+
+	result := MCPInitializeResult{
+		ServerInfo: json.RawMessage(`{
+            "name": "MCP Server",
+            "version": "1.0.0"
+        }`),
+		Capabilities: MCPServerCapabilities{
+			SupportedFeatures: []string{
+				"tools",
+				"resources",
+				"cancellation",
+				"progress",
+			},
+			MaxRequestSize: 10 * 1024 * 1024, // 10MB
+			Version:        "1.0.0",
+		},
+		ProtocolVersion: "1.0",
+	}
+
+	return json.Marshal(result)
+}
+
+func (s *MCPServer) handleShutdown(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
+	s.state = MCPStateShuttingDown
+	close(s.shutdown)
+	return json.Marshal(map[string]string{"status": "shutting_down"})
+}
+
+func (s *MCPServer) handleToolExecution(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
+	var toolInput MCPToolInput
+	if err := json.Unmarshal(params, &toolInput); err != nil {
+		return nil, fmt.Errorf("failed to parse tool input: %w", err)
+	}
+
+	tool, exists := s.tools[toolInput.Tool]
+	if !exists {
+		return nil, fmt.Errorf("tool %s not found", toolInput.Tool)
+	}
+
+	execCtx := MCPToolExecutionContext{
+		Context: ctx,
+		Progress: func(progress MCPProgress) {
+			s.sendProgress(ctx, progress)
+		},
+	}
+
+	result, err := tool.Execute(execCtx.Context, toolInput.Params)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(result)
 }
 
 func (s *MCPServer) handlePing(ctx context.Context, req MCPPingRequest) (*MCPPingResponse, error) {
@@ -475,6 +647,37 @@ func (m *MCPResourceManager) AddResource(resource *MCPResource) error {
 		Timestamp:  resource.UpdatedAt,
 	})
 
+	return nil
+}
+
+func (s *MCPServer) sendResponse(response MCPMessage) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var lastErr error
+	for _, transport := range s.transports {
+		if err := transport.Send(response); err != nil {
+			lastErr = err
+			s.logger.WithError(err).Error("Failed to send response through transport")
+		}
+	}
+
+	return lastErr
+}
+
+func (s *MCPServer) sendProgress(ctx context.Context, progress MCPProgress) {
+	notification := MCPMessage{
+		JsonRPC: "2.0",
+		Method:  "$/progress",
+		Params:  mustMarshal(progress),
+	}
+
+	if err := s.sendResponse(notification); err != nil {
+		s.logger.WithError(err).Error("Failed to send progress notification")
+	}
+}
+
+func (s *MCPServer) authenticate(auth *MCPAuthConfig) error {
 	return nil
 }
 
@@ -619,4 +822,246 @@ func matchesQuery(resource *MCPResource, query MCPResourceQuery) bool {
 	}
 
 	return true
+}
+
+// MCPTransport represents different transport types
+type MCPTransport interface {
+	Start(context.Context) error
+	Stop() error
+	Send(message MCPMessage) error
+	Receive() (MCPMessage, error)
+}
+
+// MCPStdioTransport implements stdio transport
+type MCPStdioTransport struct {
+	decoder *json.Decoder
+	encoder *json.Encoder
+	ctx     context.Context
+	cancel  context.CancelFunc
+	handler MCPMessageHandler
+	errChan chan error
+	stopped chan struct{}
+}
+
+// MCPSSETransport implements Server-Sent Events transport
+type MCPSSETransport struct {
+	writer  http.ResponseWriter
+	flusher http.Flusher
+	ctx     context.Context
+	cancel  context.CancelFunc
+}
+
+// MCPLogLevel represents logging levels
+type MCPLogLevel string
+
+const (
+	MCPLogTrace   MCPLogLevel = "trace"
+	MCPLogDebug   MCPLogLevel = "debug"
+	MCPLogInfo    MCPLogLevel = "info"
+	MCPLogWarning MCPLogLevel = "warning"
+	MCPLogError   MCPLogLevel = "error"
+)
+
+// MCPLogMessage represents a log message
+type MCPLogMessage struct {
+	Level   MCPLogLevel     `json:"level"`
+	Message string          `json:"message"`
+	Details json.RawMessage `json:"details,omitempty"`
+}
+
+// MCPPaginationInfo represents pagination metadata
+type MCPPaginationInfo struct {
+	Total       int    `json:"total"`
+	PageSize    int    `json:"pageSize"`
+	CurrentPage int    `json:"currentPage"`
+	NextCursor  string `json:"nextCursor,omitempty"`
+}
+
+// MCPCompletionItem represents a completion suggestion
+type MCPCompletionItem struct {
+	Label         string          `json:"label"`
+	Kind          string          `json:"kind"`
+	Detail        string          `json:"detail,omitempty"`
+	Documentation json.RawMessage `json:"documentation,omitempty"`
+}
+
+func NewStdioTransport(handler MCPMessageHandler) *MCPStdioTransport {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &MCPStdioTransport{
+		decoder: json.NewDecoder(os.Stdin),
+		encoder: json.NewEncoder(os.Stdout),
+		ctx:     ctx,
+		cancel:  cancel,
+		handler: handler,
+		errChan: make(chan error, 1),
+		stopped: make(chan struct{}),
+	}
+}
+
+func (t *MCPStdioTransport) Start(ctx context.Context) error {
+	// Start reading from stdin
+	go func() {
+		defer close(t.stopped)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.ctx.Done():
+				return
+			default:
+				msg, err := t.Receive()
+				if err != nil {
+					if err != io.EOF {
+						t.errChan <- fmt.Errorf("receive error: %w", err)
+					}
+					continue
+				}
+
+				if err := t.handler(msg); err != nil {
+					t.errChan <- fmt.Errorf("handler error: %w", err)
+				}
+			}
+		}
+	}()
+
+	// Monitor for errors
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.ctx.Done():
+				return
+			case err := <-t.errChan:
+				// Log error (assuming we have access to logger)
+				fmt.Fprintf(os.Stderr, "Transport error: %v\n", err)
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (t *MCPStdioTransport) Send(message MCPMessage) error {
+	select {
+	case <-t.ctx.Done():
+		return errors.New("transport stopped")
+	default:
+		return t.encoder.Encode(message)
+	}
+}
+
+func (t *MCPStdioTransport) Receive() (MCPMessage, error) {
+	var msg MCPMessage
+	err := t.decoder.Decode(&msg)
+	return msg, err
+}
+
+func (t *MCPStdioTransport) Stop() error {
+	t.cancel() // Cancel the context
+
+	// Wait for graceful shutdown
+	select {
+	case <-t.stopped:
+		return nil
+	case <-time.After(5 * time.Second):
+		return errors.New("transport stop timeout")
+	}
+}
+
+// NewSSETransport SSE Transport implementation
+func NewSSETransport(w http.ResponseWriter) (*MCPSSETransport, error) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return nil, errors.New("streaming not supported")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	return &MCPSSETransport{
+		writer:  w,
+		flusher: flusher,
+		ctx:     ctx,
+		cancel:  cancel,
+	}, nil
+}
+
+func (t *MCPSSETransport) Send(message MCPMessage) error {
+	data, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(t.writer, "data: %s\n\n", data)
+	t.flusher.Flush()
+	return nil
+}
+
+// Enhanced cancellation support
+func (cm *MCPCancellationManager) Cancel(tokenID string) error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	token, exists := cm.tokens[tokenID]
+	if !exists {
+		return fmt.Errorf("cancellation token %s not found", tokenID)
+	}
+
+	token.Time = time.Now()
+	return nil
+}
+
+// Completion support
+func (s *MCPServer) handleCompletion(ctx context.Context, params json.RawMessage) ([]MCPCompletionItem, error) {
+	var completions []MCPCompletionItem
+	// Implementation depends on specific completion requirements
+	return completions, nil
+}
+
+// Enhanced pagination support
+type MCPPaginatedResponse struct {
+	Items      interface{}       `json:"items"`
+	Pagination MCPPaginationInfo `json:"pagination"`
+}
+
+func (s *MCPServer) paginateResults(items interface{}, page, pageSize int, cursor string) MCPPaginatedResponse {
+	// Implementation of cursor-based pagination
+	return MCPPaginatedResponse{
+		Items: items,
+		Pagination: MCPPaginationInfo{
+			CurrentPage: page,
+			PageSize:    pageSize,
+			// Set other pagination fields
+		},
+	}
+}
+
+// Enhanced logging support
+func (s *MCPServer) log(level MCPLogLevel, message string, details interface{}) {
+	logMsg := MCPLogMessage{
+		Level:   level,
+		Message: message,
+	}
+
+	if details != nil {
+		if data, err := json.Marshal(details); err == nil {
+			logMsg.Details = data
+		}
+	}
+
+	// Map MCP log levels to logrus levels
+	var logrusLevel logrus.Level
+	switch level {
+	case MCPLogTrace:
+		logrusLevel = logrus.TraceLevel
+	case MCPLogDebug:
+		logrusLevel = logrus.DebugLevel
+	case MCPLogInfo:
+		logrusLevel = logrus.InfoLevel
+	case MCPLogWarning:
+		logrusLevel = logrus.WarnLevel
+	case MCPLogError:
+		logrusLevel = logrus.ErrorLevel
+	}
+
+	s.logger.Log(logrusLevel, message)
 }
