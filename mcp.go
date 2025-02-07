@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"net/http"
 	"os"
@@ -805,4 +806,148 @@ func (s *MCPServer) Shutdown(ctx context.Context) error {
 	s.mu.Unlock()
 
 	return nil
+}
+
+// MCPSSETransport implements SSE transport
+type MCPSSETransport struct {
+	writer   http.ResponseWriter
+	flusher  http.Flusher
+	ctx      context.Context
+	cancel   context.CancelFunc
+	handler  MCPMessageHandler
+	errChan  chan error
+	stopped  chan struct{}
+	endpoint string
+}
+
+// NewSSETransport creates a new SSE transport
+func NewSSETransport(w http.ResponseWriter, endpoint string, handler MCPMessageHandler) (*MCPSSETransport, error) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return nil, errors.New("streaming not supported")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	return &MCPSSETransport{
+		writer:   w,
+		flusher:  flusher,
+		ctx:      ctx,
+		cancel:   cancel,
+		handler:  handler,
+		errChan:  make(chan error, 1),
+		stopped:  make(chan struct{}),
+		endpoint: endpoint,
+	}, nil
+}
+
+func (t *MCPSSETransport) Start(ctx context.Context) error {
+	// Set SSE headers
+	t.writer.Header().Set("Content-Type", "text/event-stream")
+	t.writer.Header().Set("Cache-Control", "no-cache")
+	t.writer.Header().Set("Connection", "keep-alive")
+
+	// Send initial endpoint event
+	endpointEvent := fmt.Sprintf("event: endpoint\ndata: {\"endpoint\":\"%s\"}\n\n", t.endpoint)
+	if _, err := fmt.Fprint(t.writer, endpointEvent); err != nil {
+		return fmt.Errorf("failed to send endpoint event: %w", err)
+	}
+	t.flusher.Flush()
+
+	// Keep connection alive with periodic flushes
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.ctx.Done():
+				return
+			case <-ticker.C:
+				if _, err := fmt.Fprint(t.writer, ": keepalive\n\n"); err != nil {
+					t.errChan <- fmt.Errorf("keepalive failed: %w", err)
+					return
+				}
+				t.flusher.Flush()
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (t *MCPSSETransport) Send(message MCPMessage) error {
+	select {
+	case <-t.ctx.Done():
+		return errors.New("transport stopped")
+	default:
+		data, err := json.Marshal(message)
+		if err != nil {
+			return fmt.Errorf("failed to marshal message: %w", err)
+		}
+
+		eventData := fmt.Sprintf("event: message\ndata: %s\n\n", string(data))
+		if _, err := fmt.Fprint(t.writer, eventData); err != nil {
+			return fmt.Errorf("failed to send message: %w", err)
+		}
+
+		t.flusher.Flush()
+		return nil
+	}
+}
+
+func (t *MCPSSETransport) Receive() (MCPMessage, error) {
+	// SSE is unidirectional (server to client)
+	return MCPMessage{}, errors.New("receive not supported for SSE transport")
+}
+
+func (t *MCPSSETransport) Stop() error {
+	t.cancel()
+	close(t.stopped)
+	return nil
+}
+
+// MCPSSEHandler handles SSE connections
+func (s *MCPServer) HandleSSE(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Generate unique endpoint for this connection
+	endpoint := fmt.Sprintf("/mcp/message/%s", uuid.New().String())
+
+	transport, err := NewSSETransport(w, endpoint, s.createMessageHandler())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.AddTransport(transport)
+	if err := transport.Start(r.Context()); err != nil {
+		s.logger.WithError(err).Error("Failed to start SSE transport")
+		return
+	}
+}
+
+// MCPMessageHandler handles incoming messages via POST endpoint
+func (s *MCPServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var message MCPMessage
+	if err := json.NewDecoder(r.Body).Decode(&message); err != nil {
+		http.Error(w, "Invalid message format", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.handleMessage(message); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
 }
