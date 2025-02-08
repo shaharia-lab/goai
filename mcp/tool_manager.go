@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 )
@@ -13,7 +12,6 @@ type ToolManager struct {
 }
 
 // ToolImplementation represents the actual implementation of a tool.
-type ToolImplementation func(args json.RawMessage) (CallToolResult, error)
 
 // NewToolManager creates a new ToolManager instance.
 func NewToolManager() *ToolManager {
@@ -39,45 +37,49 @@ func (tm *ToolManager) RegisterTool(tool Tool, implementation ToolImplementation
 }
 
 // ListTools returns a list of all available tools, with optional pagination.
-// ListTools returns a list of all available tools, with optional pagination.
 func (tm *ToolManager) ListTools(cursor string, limit int) ListToolsResult {
 	if limit <= 0 {
-		limit = 50 // Default limit
+		limit = 50
 	}
 
-	// Convert map to slice and sort by name for consistent ordering
-	allTools := make([]Tool, 0, len(tm.tools))
-	for _, t := range tm.tools {
-		allTools = append(allTools, t)
+	// Get all tool names and sort them
+	var names []string
+	for name := range tm.tools {
+		names = append(names, name)
 	}
-	sort.Slice(allTools, func(i, j int) bool {
-		return allTools[i].Name < allTools[j].Name
-	})
+	sort.Strings(names)
 
-	// Find start index based on cursor
+	// Find starting index based on cursor
 	startIdx := 0
 	if cursor != "" {
-		for i, t := range allTools {
-			if t.Name == cursor {
+		for i, name := range names {
+			if name == cursor {
 				startIdx = i + 1
 				break
 			}
 		}
 	}
 
-	// Get tools for current page
+	// Calculate end index
 	endIdx := startIdx + limit
-	if endIdx > len(allTools) {
-		endIdx = len(allTools)
+	if endIdx > len(names) {
+		endIdx = len(names)
 	}
 
+	// Get the slice of tools for this page
+	var pageTools []Tool
+	for i := startIdx; i < endIdx; i++ {
+		pageTools = append(pageTools, tm.tools[names[i]])
+	}
+
+	// Set next cursor
 	var nextCursor string
-	if endIdx < len(allTools) {
-		nextCursor = allTools[endIdx-1].Name
+	if endIdx < len(names) {
+		nextCursor = names[endIdx-1]
 	}
 
 	return ListToolsResult{
-		Tools:      allTools[startIdx:endIdx],
+		Tools:      pageTools,
 		NextCursor: nextCursor,
 	}
 }

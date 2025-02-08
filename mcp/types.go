@@ -187,3 +187,5 @@ type ListToolsResult struct {
 	Tools      []Tool `json:"tools"`
 	NextCursor string `json:"nextCursor,omitempty"`
 }
+
+type ToolImplementation func(args json.RawMessage) (CallToolResult, error)

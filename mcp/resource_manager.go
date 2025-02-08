@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 )
 
@@ -65,37 +66,44 @@ func (rm *ResourceManager) ListResources(cursor string, limit int) ListResources
 		limit = 50 // Default limit
 	}
 
-	var nextCursor string
-
-	// Convert map to slice for pagination
-	allResources := make([]Resource, 0, len(rm.resources))
-	for _, r := range rm.resources {
-		allResources = append(allResources, r)
+	// Get all URIs and sort them for consistent ordering
+	var uris []string
+	for uri := range rm.resources {
+		uris = append(uris, uri)
 	}
+	sort.Strings(uris)
 
 	// Find start index based on cursor
 	startIdx := 0
 	if cursor != "" {
-		for i, r := range allResources {
-			if r.URI == cursor {
+		for i, uri := range uris {
+			if uri == cursor {
 				startIdx = i + 1
 				break
 			}
 		}
 	}
 
-	// Get resources for current page
+	// Calculate end index
 	endIdx := startIdx + limit
-	if endIdx > len(allResources) {
-		endIdx = len(allResources)
+	if endIdx > len(uris) {
+		endIdx = len(uris)
 	}
 
-	if endIdx < len(allResources) {
-		nextCursor = allResources[endIdx-1].URI
+	// Get resources for current page
+	var pageResources []Resource
+	for i := startIdx; i < endIdx; i++ {
+		pageResources = append(pageResources, rm.resources[uris[i]])
+	}
+
+	// Set next cursor
+	var nextCursor string
+	if endIdx < len(uris) {
+		nextCursor = uris[endIdx-1]
 	}
 
 	return ListResourcesResult{
-		Resources:  allResources[startIdx:endIdx],
+		Resources:  pageResources,
 		NextCursor: nextCursor,
 	}
 }

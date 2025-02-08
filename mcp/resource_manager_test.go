@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
@@ -110,64 +111,34 @@ func TestGetResource(t *testing.T) {
 func TestListResources(t *testing.T) {
 	rm := NewResourceManager()
 
-	// Add test resources
+	// Add resources in non-sequential order
 	resources := []Resource{
-		{URI: "test://1.txt", Name: "1.txt", MimeType: "text/plain"},
-		{URI: "test://2.txt", Name: "2.txt", MimeType: "text/plain"},
-		{URI: "test://3.txt", Name: "3.txt", MimeType: "text/plain"},
+		{URI: "d_res", Name: "d_res", MimeType: "text/plain"},
+		{URI: "a_res", Name: "a_res", MimeType: "text/plain"},
+		{URI: "c_res", Name: "c_res", MimeType: "text/plain"},
+		{URI: "b_res", Name: "b_res", MimeType: "text/plain"},
 	}
 
 	for _, r := range resources {
-		rm.AddResource(r)
+		err := rm.AddResource(r)
+		assert.NoError(t, err)
 	}
 
-	tests := []struct {
-		name           string
-		cursor         string
-		limit          int
-		expectedCount  int
-		expectNextPage bool
-	}{
-		{
-			name:           "list all with default limit",
-			cursor:         "",
-			limit:          0,
-			expectedCount:  3,
-			expectNextPage: false,
-		},
-		{
-			name:           "list with limit 2",
-			cursor:         "",
-			limit:          2,
-			expectedCount:  2,
-			expectNextPage: true,
-		},
-		{
-			name:           "list with cursor",
-			cursor:         "test://1.txt",
-			limit:          2,
-			expectedCount:  2,
-			expectNextPage: false,
-		},
-	}
+	t.Run("list_with_cursor", func(t *testing.T) {
+		// First page
+		result := rm.ListResources("", 2)
+		assert.Len(t, result.Resources, 2, "First page should have 2 resources")
+		assert.Equal(t, "a_res", result.Resources[0].URI)
+		assert.Equal(t, "b_res", result.Resources[1].URI)
+		assert.Equal(t, "b_res", result.NextCursor)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := rm.ListResources(tt.cursor, tt.limit)
-
-			if len(result.Resources) != tt.expectedCount {
-				t.Errorf("expected %d resources, got %d", tt.expectedCount, len(result.Resources))
-			}
-
-			if tt.expectNextPage && result.NextCursor == "" {
-				t.Error("expected next cursor but got empty string")
-			}
-
-			if !tt.expectNextPage && result.NextCursor != "" {
-				t.Error("expected no next cursor but got one")
-			}
-		})
-	}
+		// Second page
+		result = rm.ListResources(result.NextCursor, 2)
+		assert.Len(t, result.Resources, 2, "Second page should have 2 resources")
+		assert.Equal(t, "c_res", result.Resources[0].URI)
+		assert.Equal(t, "d_res", result.Resources[1].URI)
+		assert.Empty(t, result.NextCursor)
+	})
 }
 
 func TestReadResource(t *testing.T) {

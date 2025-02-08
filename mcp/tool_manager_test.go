@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
@@ -74,15 +75,15 @@ func TestRegisterTool(t *testing.T) {
 func TestListTools(t *testing.T) {
 	tm := NewToolManager()
 
-	// Register test tools in specific order
+	// Register test tools in a way that would expose ordering issues
 	tools := []Tool{
-		{Name: "tool1"},
-		{Name: "tool2"},
-		{Name: "tool3"},
-		{Name: "tool4"},
+		{Name: "d_tool"},
+		{Name: "a_tool"},
+		{Name: "c_tool"},
+		{Name: "b_tool"},
 	}
 
-	// Register tools in order
+	// Register tools
 	for _, tool := range tools {
 		_ = tm.RegisterTool(tool, func(args json.RawMessage) (CallToolResult, error) {
 			return CallToolResult{}, nil
@@ -93,28 +94,35 @@ func TestListTools(t *testing.T) {
 		name       string
 		cursor     string
 		limit      int
-		wantTools  []string // Expected tool names in order
+		wantTools  []string // Expected tool names in alphabetical order
 		wantCursor string
 	}{
 		{
 			name:       "no cursor, default limit",
 			cursor:     "",
 			limit:      0,
-			wantTools:  []string{"tool1", "tool2", "tool3", "tool4"},
+			wantTools:  []string{"a_tool", "b_tool", "c_tool", "d_tool"},
 			wantCursor: "",
 		},
 		{
 			name:       "with cursor",
-			cursor:     "tool2",
+			cursor:     "b_tool",
 			limit:      2,
-			wantTools:  []string{"tool3", "tool4"},
+			wantTools:  []string{"c_tool", "d_tool"},
 			wantCursor: "",
 		},
 		{
+			name:       "with cursor and limit",
+			cursor:     "a_tool",
+			limit:      2,
+			wantTools:  []string{"b_tool", "c_tool"},
+			wantCursor: "c_tool",
+		},
+		{
 			name:       "limit larger than remaining items",
-			cursor:     "tool3",
+			cursor:     "c_tool",
 			limit:      10,
-			wantTools:  []string{"tool4"},
+			wantTools:  []string{"d_tool"},
 			wantCursor: "",
 		},
 	}
@@ -124,27 +132,20 @@ func TestListTools(t *testing.T) {
 			result := tm.ListTools(tt.cursor, tt.limit)
 
 			// Check length
-			if len(result.Tools) != len(tt.wantTools) {
-				t.Errorf("ListTools() returned %d tools, want %d",
-					len(result.Tools), len(tt.wantTools))
-			}
+			assert.Len(t, result.Tools, len(tt.wantTools),
+				"Expected %d tools, got %d", len(tt.wantTools), len(result.Tools))
 
 			// Check tool names in order
 			for i, tool := range result.Tools {
-				if i >= len(tt.wantTools) {
-					break
-				}
-				if tool.Name != tt.wantTools[i] {
-					t.Errorf("Tool at position %d: got %s, want %s",
-						i, tool.Name, tt.wantTools[i])
-				}
+				assert.Equal(t, tt.wantTools[i], tool.Name,
+					"Tool at position %d: expected %s, got %s",
+					i, tt.wantTools[i], tool.Name)
 			}
 
 			// Check cursor
-			if result.NextCursor != tt.wantCursor {
-				t.Errorf("ListTools() NextCursor = %v, want %v",
-					result.NextCursor, tt.wantCursor)
-			}
+			assert.Equal(t, tt.wantCursor, result.NextCursor,
+				"Expected next cursor to be %q, got %q",
+				tt.wantCursor, result.NextCursor)
 		})
 	}
 }
