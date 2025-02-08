@@ -2,9 +2,11 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewMCPServer(t *testing.T) {
@@ -157,5 +159,206 @@ func TestServerInitialization(t *testing.T) {
 		}
 	} else {
 		t.Error("Server info missing or invalid type in response")
+	}
+}
+
+// TestServerRun tests the server's Run method
+func TestServerRun(t *testing.T) {
+	t.Run("server starts and handles requests", func(t *testing.T) {
+		in := &bytes.Buffer{}
+		out := &bytes.Buffer{}
+		srv := NewMCPServer(in, out)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		// Write the request before starting the server
+		request := Request{
+			JSONRPC: "2.0",
+			Method:  "initialize",
+			Params: json.RawMessage(`{
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "test-client", "version": "1.0.0"}
+            }`),
+		}
+		if err := json.NewEncoder(in).Encode(request); err != nil {
+			t.Fatalf("Failed to encode request: %v", err)
+		}
+
+		// Run the server and wait for completion
+		done := make(chan struct{})
+		go func() {
+			if err := srv.Run(ctx); err != nil && err != context.Canceled {
+				t.Errorf("Server error: %v", err)
+			}
+			close(done)
+		}()
+
+		// Wait for response or timeout
+		select {
+		case <-done:
+		case <-ctx.Done():
+			t.Fatal("Test timed out")
+		}
+	})
+}
+
+// TestServerRequestHandling tests different request handling scenarios
+func TestServerRequestHandling(t *testing.T) {
+	tests := []struct {
+		name         string
+		request      Request
+		expectError  bool
+		expectedCode int
+		expectedMsg  string
+	}{
+		{
+			name: "valid initialize request",
+			request: Request{
+				JSONRPC: "2.0",
+				ID:      rawJSON("1"),
+				Method:  "initialize",
+				Params: json.RawMessage(`{
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-client", "version": "1.0.0"}
+                }`),
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid method",
+			request: Request{
+				JSONRPC: "2.0",
+				ID:      rawJSON("2"),
+				Method:  "nonexistent",
+				Params:  json.RawMessage(`{}`),
+			},
+			expectError:  true,
+			expectedCode: -32601,
+			expectedMsg:  "Method not found",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			in := &bytes.Buffer{}
+			out := &bytes.Buffer{}
+			srv := NewMCPServer(in, out)
+
+			// Write request
+			if err := json.NewEncoder(in).Encode(tc.request); err != nil {
+				t.Fatalf("Failed to encode request: %v", err)
+			}
+
+			// Handle the request directly
+			srv.handleRequest(&tc.request)
+
+			// Read and verify response
+			var resp Response
+			if err := json.NewDecoder(out).Decode(&resp); err != nil {
+				t.Fatalf("Failed to decode response: %v", err)
+			}
+
+			// Verify error conditions
+			if tc.expectError {
+				if resp.Error == nil {
+					t.Fatal("Expected error but got none")
+				}
+				if resp.Error.Code != tc.expectedCode {
+					t.Errorf("Expected error code %d, got %d", tc.expectedCode, resp.Error.Code)
+				}
+				if resp.Error.Message != tc.expectedMsg {
+					t.Errorf("Expected error message %q, got %q", tc.expectedMsg, resp.Error.Message)
+				}
+			} else {
+				if resp.Error != nil {
+					t.Errorf("Expected success but got error: %v", resp.Error)
+				}
+				if resp.Result == nil {
+					t.Error("Expected result but got nil")
+				}
+			}
+		})
+	}
+}
+
+// Helper function to create json.RawMessage
+func rawJSON(s string) *json.RawMessage {
+	raw := json.RawMessage(s)
+	return &raw
+}
+
+// TestServerConcurrency tests concurrent request handling
+func TestServerConcurrency(t *testing.T) {
+	in := &bytes.Buffer{}
+	out := &bytes.Buffer{}
+	srv := NewMCPServer(in, out)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Start the server in a goroutine
+	go func() {
+		if err := srv.Run(ctx); err != nil && err != context.Canceled {
+			t.Errorf("Server error: %v", err)
+		}
+	}()
+
+	// Create multiple concurrent requests
+	concurrentRequests := 10
+	done := make(chan bool, concurrentRequests)
+
+	for i := 0; i < concurrentRequests; i++ {
+		go func(id int) {
+			request := Request{
+				JSONRPC: "2.0",
+				Method:  "initialize",
+				Params: json.RawMessage(`{
+					"protocolVersion": "2024-11-05",
+					"capabilities": {},
+					"clientInfo": {"name": "test", "version": "1.0"}
+				}`),
+			}
+
+			if err := json.NewEncoder(in).Encode(request); err != nil {
+				t.Errorf("Failed to encode request %d: %v", id, err)
+			}
+			done <- true
+		}(i)
+	}
+
+	// Wait for all requests to complete
+	for i := 0; i < concurrentRequests; i++ {
+		<-done
+	}
+}
+
+// TestServerShutdown tests graceful shutdown behavior
+func TestServerShutdown(t *testing.T) {
+	in := &bytes.Buffer{}
+	out := &bytes.Buffer{}
+	server := NewMCPServer(in, out)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start server
+	errCh := make(chan error)
+	go func() {
+		errCh <- server.Run(ctx)
+	}()
+
+	// Trigger shutdown
+	cancel()
+
+	// Check shutdown behavior
+	select {
+	case err := <-errCh:
+		if err != nil && err != context.Canceled {
+			t.Errorf("Unexpected error during shutdown: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Error("Server failed to shut down in time")
 	}
 }

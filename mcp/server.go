@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -413,58 +414,72 @@ func (s *MCPServer) LogMessage(level LogLevel, loggerName string, data interface
 	s.sendNotification("notifications/message", params)
 }
 
-func (s *MCPServer) Run() {
+func (s *MCPServer) Run(ctx context.Context) error {
 	scanner := bufio.NewScanner(s.in)
-	buffer := make([]byte, 0, 64*1024) //  buffer
-	scanner.Buffer(buffer, 1024*1024)  //  buffer size
+	buffer := make([]byte, 0, 64*1024)
+	scanner.Buffer(buffer, 1024*1024)
 
-	initialized := false // track whether we've received 'initialized'
+	initialized := false
+	done := make(chan error, 1)
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		s.logger.Printf("Received raw input: %s", line) //  Log the raw JSON.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				done <- ctx.Err()
+				return
+			default:
+				if !scanner.Scan() {
+					if err := scanner.Err(); err != nil && err != io.EOF {
+						done <- fmt.Errorf("scanner error: %w", err)
+					} else {
+						done <- nil
+					}
+					return
+				}
 
-		var raw json.RawMessage
-		if err := json.Unmarshal([]byte(line), &raw); err != nil {
-			s.sendError(nil, -32700, "Parse error", nil)
-			continue
-		}
+				line := scanner.Text()
+				s.logger.Printf("Received raw input: %s", line)
 
-		var request Request
-		if err := json.Unmarshal(raw, &request); err == nil && request.Method != "" && request.ID != nil {
-			// It's a request
-			if request.Method != "initialize" && !initialized {
-				s.sendError(request.ID, -32000, "Server not initialized", nil) // Or other appropriate error code.
-				continue
+				var raw json.RawMessage
+				if err := json.Unmarshal([]byte(line), &raw); err != nil {
+					s.sendError(nil, -32700, "Parse error", nil)
+					continue
+				}
+
+				var request Request
+				if err := json.Unmarshal(raw, &request); err == nil && request.Method != "" && request.ID != nil {
+					if request.Method != "initialize" && !initialized {
+						s.sendError(request.ID, -32000, "Server not initialized", nil)
+						continue
+					}
+					s.handleRequest(&request)
+					continue
+				}
+
+				var notification Notification
+				if err := json.Unmarshal(raw, &notification); err == nil && notification.Method != "" {
+					if notification.Method == "notifications/initialized" {
+						initialized = true
+					} else if !initialized {
+						s.logger.Printf("Received notification before 'initialized': %s", notification.Method)
+						continue
+					}
+					s.handleNotification(&notification)
+					continue
+				}
+
+				s.sendError(nil, -32600, "Invalid Request", nil)
 			}
-			s.handleRequest(&request)
-			continue
 		}
+	}()
 
-		var notification Notification
-		if err := json.Unmarshal(raw, &notification); err == nil && notification.Method != "" {
-			// It's a notification
-			if notification.Method == "notifications/initialized" {
-				initialized = true
-			} else if !initialized {
-				// We shouldn't receive any other notifications before 'initialized'.  Log it, but don't send error.
-				s.logger.Printf("Received notification before 'initialized': %s", notification.Method)
-				continue
-			}
-
-			s.handleNotification(&notification)
-			continue
-		}
-
-		// If we reach here, it's neither a valid request nor a notification.
-		s.sendError(nil, -32600, "Invalid Request", nil)
-
+	select {
+	case <-ctx.Done():
+		s.logger.Println("Context cancelled, shutting down server...")
+		return ctx.Err()
+	case err := <-done:
+		s.logger.Println("Server shutting down.")
+		return err
 	}
-
-	if err := scanner.Err(); err != nil {
-		if err != io.EOF { // Don't log EOF, that's how we exit gracefully
-			s.logger.Printf("Error reading from stdin: %v", err)
-		}
-	}
-	s.logger.Println("Server shutting down.")
 }
