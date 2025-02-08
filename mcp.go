@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +28,9 @@ const (
 	MCPErrorCodeInvalidParams  = -32602
 	MCPErrorCodeInternal       = -32603
 )
+
+// MCPMethodHandler defines the function signature for method handlers
+type MCPMethodHandler func(conn *MCPConnection, params json.RawMessage) (interface{}, error)
 
 // MessageHandler type for processing incoming messages
 type MCPMessageHandler = func(MCPMessage) error
@@ -44,6 +49,9 @@ type MCPServer struct {
 	shutdown            chan struct{}
 	resourceManager     *MCPResourceManager
 	transports          []MCPTransport
+	capabilities        MCPServerCapabilities
+	methodHandlers      map[string]MCPMethodHandler
+	handler             MessageHandler
 }
 
 // MCPServerConfig holds configuration options for the MCP server
@@ -62,10 +70,26 @@ type MCPServerConfig struct {
 // MCPConnection represents an active client connection
 type MCPConnection struct {
 	ID     string
-	Conn   *websocket.Conn
-	Server *MCPServer
-	Ctx    context.Context
-	Cancel context.CancelFunc
+	conn   net.Conn
+	writer *json.Encoder
+	Cancel func()
+	mu     sync.Mutex
+}
+
+func (c *MCPConnection) SendMessage(msg MCPMessage) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.writer == nil {
+		return errors.New("connection writer is not initialized")
+	}
+
+	err := c.writer.Encode(msg)
+	if err != nil {
+		return fmt.Errorf("failed to encode message: %w", err)
+	}
+
+	return nil
 }
 
 // NewMCPServer creates a new MCP server instance
@@ -87,10 +111,18 @@ func NewMCPServer(config MCPServerConfig) *MCPServer {
 		cancellationManager: &MCPCancellationManager{
 			tokens: make(map[string]*MCPCancellationToken),
 		},
+		resourceManager: NewMCPResourceManager(),
+		transports:      make([]MCPTransport, 0),
+	}
+
+	server.methodHandlers = make(map[string]MCPMethodHandler)
+	server.upgrader = websocket.Upgrader{
+		CheckOrigin: makeOriginChecker(config.AllowedOrigins),
 	}
 
 	server.initializeVersion()
-	server.initResourceManager()
+	// Register method handlers
+	server.registerMethodHandlers()
 
 	// Setup message handler
 	messageHandler := server.createMessageHandler()
@@ -101,7 +133,55 @@ func NewMCPServer(config MCPServerConfig) *MCPServer {
 		server.AddTransport(stdioTransport)
 	}
 
+	if config.EnableSSE {
+		sseTransport := NewSSETransport(messageHandler)
+		server.AddTransport(sseTransport)
+	}
+
+	// Register default capabilities
+	server.capabilities = MCPServerCapabilities{
+		Resources: struct {
+			Subscribe   bool `json:"subscribe,omitempty"`
+			ListChanged bool `json:"listChanged,omitempty"`
+		}{
+			Subscribe:   true,
+			ListChanged: true,
+		},
+		Tools: struct {
+			ListChanged bool `json:"listChanged,omitempty"`
+		}{
+			ListChanged: true,
+		},
+		Prompts: struct {
+			ListChanged bool `json:"listChanged,omitempty"`
+		}{
+			ListChanged: true,
+		},
+	}
+
 	return server
+}
+
+func (s *MCPServer) registerMethodHandlers() {
+	s.methodHandlers["resources/list"] = func(conn *MCPConnection, params json.RawMessage) (interface{}, error) {
+		if s.resourceManager == nil {
+			return nil, fmt.Errorf("resource manager not initialized")
+		}
+		return s.resourceManager.List(""), nil
+	}
+
+	// Register other handlers
+	s.methodHandlers["resources/get"] = func(conn *MCPConnection, params json.RawMessage) (interface{}, error) {
+		var request struct {
+			URI string `json:"uri"`
+		}
+		if err := json.Unmarshal(params, &request); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+		return s.resourceManager.Read(request.URI)
+	}
+
+	// Add more method handlers as needed
 }
 
 // createMessageHandler returns a handler function for processing messages
@@ -401,118 +481,228 @@ func (s *MCPServer) handleCancellation(ctx context.Context, token MCPCancellatio
 
 // Transport interfaces and implementations
 type MCPTransport interface {
-	Start(context.Context) error
+	Start() error
 	Stop() error
-	Send(message MCPMessage) error
-	Receive() (MCPMessage, error)
+	Send(msg MCPMessage) error
 }
 
 // MCPStdioTransport implements stdio transport
 type MCPStdioTransport struct {
-	decoder *json.Decoder
-	encoder *json.Encoder
-	ctx     context.Context
-	cancel  context.CancelFunc
-	handler MCPMessageHandler
-	errChan chan error
-	stopped chan struct{}
+	handler   MCPMessageHandler
+	decoder   *json.Decoder
+	encoder   *json.Encoder
+	logger    *logrus.Logger
+	done      chan struct{}
+	running   bool
+	runningMu sync.RWMutex
 }
 
 func NewStdioTransport(handler MCPMessageHandler) *MCPStdioTransport {
-	ctx, cancel := context.WithCancel(context.Background())
 	return &MCPStdioTransport{
+		handler: handler,
 		decoder: json.NewDecoder(os.Stdin),
 		encoder: json.NewEncoder(os.Stdout),
-		ctx:     ctx,
-		cancel:  cancel,
-		handler: handler,
-		errChan: make(chan error, 1),
-		stopped: make(chan struct{}),
+		logger:  logrus.New(), // Add logger
+		done:    make(chan struct{}),
 	}
 }
 
-func (t *MCPStdioTransport) Start(ctx context.Context) error {
-	go func() {
-		defer close(t.stopped)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.ctx.Done():
-				return
-			default:
-				msg, err := t.Receive()
-				if err != nil {
-					if err != io.EOF {
-						t.errChan <- fmt.Errorf("receive error: %w", err)
-					}
-					continue
-				}
+func (t *MCPStdioTransport) Start() error {
+	t.runningMu.Lock()
+	if t.running {
+		t.runningMu.Unlock()
+		return errors.New("transport already running")
+	}
+	t.running = true
+	t.runningMu.Unlock()
 
-				if err := t.handler(msg); err != nil {
-					t.errChan <- fmt.Errorf("handler error: %w", err)
-				}
-			}
-		}
-	}()
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.ctx.Done():
-				return
-			case err := <-t.errChan:
-				fmt.Fprintf(os.Stderr, "Transport error: %v\n", err)
-			}
-		}
-	}()
-
+	go t.readLoop()
 	return nil
 }
 
-func (t *MCPStdioTransport) Send(message MCPMessage) error {
-	select {
-	case <-t.ctx.Done():
-		return errors.New("transport stopped")
-	default:
-		return t.encoder.Encode(message)
-	}
-}
-
-func (t *MCPStdioTransport) Receive() (MCPMessage, error) {
-	var msg MCPMessage
-	err := t.decoder.Decode(&msg)
-	return msg, err
-}
-
 func (t *MCPStdioTransport) Stop() error {
-	t.cancel()
-	select {
-	case <-t.stopped:
+	t.runningMu.Lock()
+	defer t.runningMu.Unlock()
+
+	if !t.running {
 		return nil
-	case <-time.After(5 * time.Second):
-		return errors.New("transport stop timeout")
 	}
+
+	close(t.done)
+	t.running = false
+	return nil
+}
+
+func (t *MCPStdioTransport) Send(msg MCPMessage) error {
+	t.runningMu.RLock()
+	defer t.runningMu.RUnlock()
+
+	if !t.running {
+		return errors.New("transport not running")
+	}
+
+	if err := t.encoder.Encode(msg); err != nil {
+		t.logger.WithError(err).Error("Failed to encode message")
+		return fmt.Errorf("failed to encode message: %w", err)
+	}
+	return nil
+}
+
+func (t *MCPStdioTransport) readLoop() {
+	for {
+		select {
+		case <-t.done:
+			return
+		default:
+			var msg MCPMessage
+			if err := t.decoder.Decode(&msg); err != nil {
+				if err == io.EOF {
+					t.Stop()
+					return
+				}
+				continue
+			}
+
+			if err := t.handler(msg); err != nil {
+				// Log error but continue processing
+				if t.logger != nil {
+					t.logger.WithError(err).Error("Error handling message")
+				}
+			}
+		}
+	}
+}
+
+// MCPSSEConnection represents an SSE client connection
+type MCPSSEConnection struct {
+	ID     string
+	Writer http.ResponseWriter
+	Ctx    context.Context
+	Cancel context.CancelFunc
+}
+
+// MCPSSETransport implements Server-Sent Events transport
+type MCPSSETransport struct {
+	handler MCPMessageHandler
+	clients map[string]*MCPSSEConnection
+	mu      sync.RWMutex
+	logger  *logrus.Logger
+}
+
+func NewSSETransport(handler MCPMessageHandler) *MCPSSETransport {
+	return &MCPSSETransport{
+		handler: handler,
+		clients: make(map[string]*MCPSSEConnection),
+		logger:  logrus.New(),
+	}
+}
+
+func (t *MCPSSETransport) Start() error {
+	return nil // SSE transport is passive, starts with first connection
+}
+
+func (t *MCPSSETransport) Stop() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for _, client := range t.clients {
+		client.Cancel()
+	}
+	t.clients = make(map[string]*MCPSSEConnection)
+	return nil
+}
+
+func (t *MCPSSETransport) Send(msg MCPMessage) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	for _, client := range t.clients {
+		select {
+		case <-client.Ctx.Done():
+			continue
+		default:
+			if f, ok := client.Writer.(http.Flusher); ok {
+				fmt.Fprintf(client.Writer, "data: %s\n\n", data)
+				f.Flush()
+			}
+		}
+	}
+	return nil
+}
+
+func (t *MCPSSETransport) HandleSSERequest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	ctx, cancel := context.WithCancel(r.Context())
+	connID := uuid.New().String()
+
+	conn := &MCPSSEConnection{
+		ID:     connID,
+		Writer: w,
+		Ctx:    ctx,
+		Cancel: cancel,
+	}
+
+	t.mu.Lock()
+	t.clients[connID] = conn
+	t.mu.Unlock()
+
+	<-ctx.Done()
+
+	t.mu.Lock()
+	delete(t.clients, connID)
+	t.mu.Unlock()
 }
 
 // Resource management
 type MCPResource struct {
-	URI       string          `json:"uri"`
-	Name      string          `json:"name"`
-	Type      string          `json:"type"`
-	Content   string          `json:"content"`
-	MimeType  string          `json:"mimeType,omitempty"`
-	Metadata  json.RawMessage `json:"metadata,omitempty"`
-	Version   string          `json:"version"`
-	UpdatedAt time.Time       `json:"updatedAt"`
+	URI        string          `json:"uri"`
+	Name       string          `json:"name"`
+	Type       string          `json:"type"`
+	Content    string          `json:"content"`
+	MimeType   string          `json:"mimeType,omitempty"`
+	Metadata   json.RawMessage `json:"metadata,omitempty"`
+	Version    string          `json:"version"`
+	UpdatedAt  time.Time       `json:"updatedAt"`
+	IsTemplate bool            `json:"isTemplate"`
 }
 
+// MCPResourceList represents a paginated list of resources
+type MCPResourceList struct {
+	Items      []MCPResource `json:"items"`
+	TotalCount int           `json:"totalCount"`
+	NextCursor string        `json:"nextCursor,omitempty"`
+}
+
+// MCPResourceListParams represents parameters for listing resources
+type MCPResourceListParams struct {
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+	Filter string `json:"filter,omitempty"`
+}
+
+// MCPResourceSubscription represents a resource subscription
+type MCPResourceSubscription struct {
+	ID       string   `json:"id"`
+	Resource string   `json:"resource"`
+	Events   []string `json:"events"`
+}
+
+// MCPResourceManager handles resource management operations
 type MCPResourceManager struct {
-	resources   map[string]*MCPResource
-	subscribers map[string]map[string]*MCPConnection
+	resources   map[string]MCPResource
+	contents    map[string][]byte
+	subscribers map[string]map[*MCPConnection][]string // resourceID -> connections -> events
 	mu          sync.RWMutex
+	logger      *logrus.Logger
 }
 
 type MCPResourceChange struct {
@@ -523,122 +713,244 @@ type MCPResourceChange struct {
 	Delta      json.RawMessage `json:"delta,omitempty"`
 }
 
-func (s *MCPServer) initResourceManager() {
-	s.resourceManager = &MCPResourceManager{
-		resources:   make(map[string]*MCPResource),
-		subscribers: make(map[string]map[string]*MCPConnection),
+// MCPResourceNotification represents a resource change notification
+type MCPResourceNotification struct {
+	Type     string      `json:"type"` // "created", "updated", "deleted"
+	Resource MCPResource `json:"resource"`
+}
+
+// MCPResourceValidationError represents resource validation errors
+type MCPResourceValidationError struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+}
+
+// NewMCPResourceManager creates a new resource manager
+func NewMCPResourceManager() *MCPResourceManager {
+	return &MCPResourceManager{
+		resources:   make(map[string]MCPResource),
+		contents:    make(map[string][]byte),
+		subscribers: make(map[string]map[*MCPConnection][]string),
 	}
 }
 
-// Resource Management methods
-func (m *MCPResourceManager) AddResource(resource *MCPResource) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// ValidateResource validates a resource
+func (rm *MCPResourceManager) ValidateResource(resource MCPResource) []MCPResourceValidationError {
+	var errors []MCPResourceValidationError
 
+	// Validate required fields
 	if resource.URI == "" {
-		return fmt.Errorf("resource URI cannot be empty")
+		errors = append(errors, MCPResourceValidationError{
+			Field:   "uri",
+			Message: "URI is required",
+		})
 	}
 
-	resource.UpdatedAt = time.Now()
-	m.resources[resource.URI] = resource
+	if resource.Name == "" {
+		errors = append(errors, MCPResourceValidationError{
+			Field:   "name",
+			Message: "Name is required",
+		})
+	}
 
-	m.notifyResourceChange(MCPResourceChange{
-		ResourceID: resource.URI,
-		Type:       "created",
-		Resource:   resource,
-		Timestamp:  resource.UpdatedAt,
-	})
+	if resource.Type == "" {
+		errors = append(errors, MCPResourceValidationError{
+			Field:   "type",
+			Message: "Type is required",
+		})
+	}
 
-	return nil
+	// Validate MIME type format
+	if resource.MimeType != "" {
+		if !strings.Contains(resource.MimeType, "/") {
+			errors = append(errors, MCPResourceValidationError{
+				Field:   "mimeType",
+				Message: "Invalid MIME type format",
+			})
+		}
+	}
+
+	return errors
 }
 
-func (m *MCPResourceManager) UpdateResource(uri string, updates *MCPResource) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// List returns resources matching the filter
+func (rm *MCPResourceManager) List(filter string) []MCPResource {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
 
-	existing, exists := m.resources[uri]
+	result := make([]MCPResource, 0)
+	for _, resource := range rm.resources {
+		if filter == "" || strings.Contains(resource.Name, filter) {
+			result = append(result, resource)
+		}
+	}
+	return result
+}
+
+// Read returns the content of a resource
+func (rm *MCPResourceManager) Read(id string) ([]byte, error) {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+
+	content, exists := rm.contents[id]
 	if !exists {
-		return fmt.Errorf("resource %s not found", uri)
+		return nil, fmt.Errorf("resource not found: %s", id)
 	}
-
-	delta, _ := json.Marshal(map[string]interface{}{
-		"oldContent": existing.Content,
-		"newContent": updates.Content,
-	})
-
-	updates.URI = uri
-	updates.UpdatedAt = time.Now()
-	m.resources[uri] = updates
-
-	m.notifyResourceChange(MCPResourceChange{
-		ResourceID: uri,
-		Type:       "updated",
-		Resource:   updates,
-		Timestamp:  updates.UpdatedAt,
-		Delta:      delta,
-	})
-
-	return nil
+	return content, nil
 }
 
-func (m *MCPResourceManager) DeleteResource(uri string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// UpdateResource updates an existing resource
+func (rm *MCPResourceManager) UpdateResource(resource MCPResource, content []byte) error {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 
-	if _, exists := m.resources[uri]; !exists {
-		return fmt.Errorf("resource %s not found", uri)
+	if _, exists := rm.resources[resource.URI]; !exists {
+		return fmt.Errorf("resource not found: %s", resource.URI)
 	}
 
-	delete(m.resources, uri)
+	// Validate resource
+	if errors := rm.ValidateResource(resource); len(errors) > 0 {
+		return fmt.Errorf("invalid resource: %v", errors)
+	}
 
-	m.notifyResourceChange(MCPResourceChange{
-		ResourceID: uri,
-		Type:       "deleted",
-		Timestamp:  time.Now(),
+	// Update resource and content
+	resource.UpdatedAt = time.Now()
+	rm.resources[resource.URI] = resource
+	rm.contents[resource.URI] = content
+
+	// Broadcast update notification
+	go rm.broadcastNotification(MCPResourceNotification{
+		Type:     "updated",
+		Resource: resource,
 	})
 
 	return nil
 }
 
-func (m *MCPResourceManager) Subscribe(resourceID string, conn *MCPConnection) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// CreateResource creates a new resource
+func (rm *MCPResourceManager) CreateResource(resource MCPResource, content []byte) error {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 
-	if _, exists := m.subscribers[resourceID]; !exists {
-		m.subscribers[resourceID] = make(map[string]*MCPConnection)
+	if _, exists := rm.resources[resource.URI]; exists {
+		return fmt.Errorf("resource already exists: %s", resource.URI)
 	}
-	m.subscribers[resourceID][conn.ID] = conn
+
+	// Validate resource
+	if errors := rm.ValidateResource(resource); len(errors) > 0 {
+		return fmt.Errorf("invalid resource: %v", errors)
+	}
+
+	// Store resource and content
+	resource.UpdatedAt = time.Now()
+	rm.resources[resource.URI] = resource
+	rm.contents[resource.URI] = content
+
+	// Broadcast creation notification
+	go rm.broadcastNotification(MCPResourceNotification{
+		Type:     "created",
+		Resource: resource,
+	})
+
 	return nil
 }
 
-func (m *MCPResourceManager) Unsubscribe(resourceID string, conn *MCPConnection) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// DeleteResource deletes a resource
+func (rm *MCPResourceManager) DeleteResource(id string) error {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 
-	if subs, exists := m.subscribers[resourceID]; exists {
-		delete(subs, conn.ID)
-		if len(subs) == 0 {
-			delete(m.subscribers, resourceID)
+	resource, exists := rm.resources[id]
+	if !exists {
+		return fmt.Errorf("resource not found: %s", id)
+	}
+
+	// Remove resource and content
+	delete(rm.resources, id)
+	delete(rm.contents, id)
+
+	// Broadcast deletion notification
+	go rm.broadcastNotification(MCPResourceNotification{
+		Type:     "deleted",
+		Resource: resource,
+	})
+
+	return nil
+}
+
+// CleanupConnection removes all subscriptions for a connection
+func (rm *MCPResourceManager) CleanupConnection(conn *MCPConnection) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	// Remove connection from all resource subscriptions
+	for resourceID := range rm.subscribers {
+		delete(rm.subscribers[resourceID], conn)
+
+		// If no subscribers left for this resource, clean up the map
+		if len(rm.subscribers[resourceID]) == 0 {
+			delete(rm.subscribers, resourceID)
 		}
 	}
 }
 
-func (m *MCPResourceManager) notifyResourceChange(change MCPResourceChange) {
-	if subs, exists := m.subscribers[change.ResourceID]; exists {
-		notification := MCPMessage{
-			JsonRPC: "2.0",
-			Method:  "$/resource/change",
-			Params:  mustMarshal(change),
-		}
+// broadcastNotification sends notifications to all subscribed connections
+func (rm *MCPResourceManager) broadcastNotification(notification MCPResourceNotification) {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
 
-		for _, conn := range subs {
-			go func(c *MCPConnection) {
-				if err := c.Conn.WriteJSON(notification); err != nil {
-					m.Unsubscribe(change.ResourceID, c)
+	resourceID := notification.Resource.URI
+	subscribers := rm.subscribers[resourceID]
+
+	for conn, events := range subscribers {
+		if containsEvent(events, notification.Type) {
+			// Marshal notification to json.RawMessage
+			params, err := json.Marshal(notification)
+			if err != nil {
+				rm.logger.Errorf("Failed to marshal notification: %v", err)
+				continue
+			}
+
+			msg := MCPMessage{
+				JsonRPC: "2.0",
+				Method:  "resource/notification",
+				Params:  params,
+			}
+
+			go func(c *MCPConnection, m MCPMessage) {
+				if err := c.SendMessage(m); err != nil {
+					rm.CleanupConnection(c)
 				}
-			}(conn)
+			}(conn, msg)
 		}
 	}
+}
+
+// Helper function to check if events slice contains a specific event
+func containsEvent(events []string, event string) bool {
+	for _, e := range events {
+		if e == event {
+			return true
+		}
+	}
+	return false
+}
+
+// Subscribe adds a subscription for a resource
+func (rm *MCPResourceManager) Subscribe(resourceID string, conn *MCPConnection, events []string) error {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	if _, exists := rm.resources[resourceID]; !exists {
+		return fmt.Errorf("resource not found: %s", resourceID)
+	}
+
+	if _, exists := rm.subscribers[resourceID]; !exists {
+		rm.subscribers[resourceID] = make(map[*MCPConnection][]string)
+	}
+
+	rm.subscribers[resourceID][conn] = events
+	return nil
 }
 
 // Tool related types and implementations
@@ -672,13 +984,6 @@ type MCPContentItem struct {
 	Data     string          `json:"data,omitempty"`
 	MimeType string          `json:"mimeType,omitempty"`
 	Metadata json.RawMessage `json:"metadata,omitempty"`
-}
-
-// Tool execution
-func (s *MCPServer) AddTransport(transport MCPTransport) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.transports = append(s.transports, transport)
 }
 
 func (s *MCPServer) RegisterTool(tool MCPToolExecutor) error {
@@ -750,7 +1055,7 @@ func (s *MCPServer) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	for _, transport := range s.transports {
-		if err := transport.Start(ctx); err != nil {
+		if err := transport.Start(); err != nil {
 			return fmt.Errorf("failed to start transport: %w", err)
 		}
 	}
@@ -783,127 +1088,12 @@ func (s *MCPServer) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// MCPSSETransport implements SSE transport
-type MCPSSETransport struct {
-	writer   http.ResponseWriter
-	flusher  http.Flusher
-	ctx      context.Context
-	cancel   context.CancelFunc
-	handler  MCPMessageHandler
-	errChan  chan error
-	stopped  chan struct{}
-	endpoint string
-}
+type MessageHandler func(MCPMessage) (MCPMessage, error)
 
-// NewSSETransport creates a new SSE transport
-func NewSSETransport(w http.ResponseWriter, endpoint string, handler MCPMessageHandler) (*MCPSSETransport, error) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		return nil, errors.New("streaming not supported")
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	return &MCPSSETransport{
-		writer:   w,
-		flusher:  flusher,
-		ctx:      ctx,
-		cancel:   cancel,
-		handler:  handler,
-		errChan:  make(chan error, 1),
-		stopped:  make(chan struct{}),
-		endpoint: endpoint,
-	}, nil
-}
-
-func (t *MCPSSETransport) Start(ctx context.Context) error {
-	// Set SSE headers
-	t.writer.Header().Set("Content-Type", "text/event-stream")
-	t.writer.Header().Set("Cache-Control", "no-cache")
-	t.writer.Header().Set("Connection", "keep-alive")
-
-	// Send initial endpoint event
-	endpointEvent := fmt.Sprintf("event: endpoint\ndata: {\"endpoint\":\"%s\"}\n\n", t.endpoint)
-	if _, err := fmt.Fprint(t.writer, endpointEvent); err != nil {
-		return fmt.Errorf("failed to send endpoint event: %w", err)
-	}
-	t.flusher.Flush()
-
-	// Keep connection alive with periodic flushes
-	go func() {
-		ticker := time.NewTicker(15 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.ctx.Done():
-				return
-			case <-ticker.C:
-				if _, err := fmt.Fprint(t.writer, ": keepalive\n\n"); err != nil {
-					t.errChan <- fmt.Errorf("keepalive failed: %w", err)
-					return
-				}
-				t.flusher.Flush()
-			}
-		}
-	}()
-
-	return nil
-}
-
-func (t *MCPSSETransport) Send(message MCPMessage) error {
-	select {
-	case <-t.ctx.Done():
-		return errors.New("transport stopped")
-	default:
-		data, err := json.Marshal(message)
-		if err != nil {
-			return fmt.Errorf("failed to marshal message: %w", err)
-		}
-
-		eventData := fmt.Sprintf("event: message\ndata: %s\n\n", string(data))
-		if _, err := fmt.Fprint(t.writer, eventData); err != nil {
-			return fmt.Errorf("failed to send message: %w", err)
-		}
-
-		t.flusher.Flush()
-		return nil
-	}
-}
-
-func (t *MCPSSETransport) Receive() (MCPMessage, error) {
-	// SSE is unidirectional (server to client)
-	return MCPMessage{}, errors.New("receive not supported for SSE transport")
-}
-
-func (t *MCPSSETransport) Stop() error {
-	t.cancel()
-	close(t.stopped)
-	return nil
-}
-
-// MCPSSEHandler handles SSE connections
-func (s *MCPServer) HandleSSE(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Generate unique endpoint for this connection
-	endpoint := fmt.Sprintf("/mcp/message/%s", uuid.New().String())
-
-	transport, err := NewSSETransport(w, endpoint, s.createMessageHandler())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	s.AddTransport(transport)
-	if err := transport.Start(r.Context()); err != nil {
-		s.logger.WithError(err).Error("Failed to start SSE transport")
-		return
-	}
+func (s *MCPServer) RegisterMessageHandler(handler MessageHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handler = handler
 }
 
 // HandleMessage handles incoming messages via POST endpoint
@@ -925,4 +1115,95 @@ func (s *MCPServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// ListResources handles the resources/list method
+func (s *MCPServer) ListResources(params MCPResourceListParams) (*MCPResourceList, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if params.Limit <= 0 {
+		params.Limit = 50 // default limit
+	}
+
+	resources := s.resourceManager.List(params.Filter)
+
+	start := 0
+	if params.Cursor != "" {
+		for i, r := range resources {
+			if r.URI == params.Cursor {
+				start = i + 1
+				break
+			}
+		}
+	}
+
+	end := start + params.Limit
+	if end > len(resources) {
+		end = len(resources)
+	}
+
+	var nextCursor string
+	if end < len(resources) {
+		nextCursor = resources[end-1].URI
+	}
+
+	return &MCPResourceList{
+		Items:      resources[start:end],
+		TotalCount: len(resources),
+		NextCursor: nextCursor,
+	}, nil
+}
+
+// ReadResource handles the resources/read method
+func (s *MCPServer) ReadResource(id string) ([]byte, error) {
+	return s.resourceManager.Read(id)
+}
+
+// ListResourceTemplates handles the resources/templates/list method
+func (s *MCPServer) ListResourceTemplates() ([]MCPResource, error) {
+	resources := s.resourceManager.List("")
+	templates := make([]MCPResource, 0)
+
+	for _, r := range resources {
+		if r.IsTemplate {
+			templates = append(templates, r)
+		}
+	}
+	return templates, nil
+}
+
+// SubscribeToResource handles the resources/subscribe method
+func (s *MCPServer) SubscribeToResource(conn *MCPConnection, subscription MCPResourceSubscription) error {
+	return s.resourceManager.Subscribe(subscription.Resource, conn, subscription.Events)
+}
+
+// AddResourceCleanupHandler adds resource cleanup to connection handling
+func (s *MCPServer) AddResourceCleanupHandler(conn *MCPConnection) {
+	originalCancel := conn.Cancel
+	conn.Cancel = func() {
+		s.resourceManager.CleanupConnection(conn)
+		originalCancel()
+	}
+}
+
+// HandleResourceUpdate handles resource update requests
+func (s *MCPServer) HandleResourceUpdate(resource MCPResource, content []byte) error {
+	return s.resourceManager.UpdateResource(resource, content)
+}
+
+// HandleResourceCreate handles resource creation requests
+func (s *MCPServer) HandleResourceCreate(resource MCPResource, content []byte) error {
+	return s.resourceManager.CreateResource(resource, content)
+}
+
+// HandleResourceDelete handles resource deletion requests
+func (s *MCPServer) HandleResourceDelete(id string) error {
+	return s.resourceManager.DeleteResource(id)
+}
+
+func (s *MCPServer) AddTransport(transport MCPTransport) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transports = append(s.transports, transport)
 }
