@@ -10,54 +10,6 @@ import (
 	"time"
 )
 
-// LogLevel represents the severity level of a log message.
-// The levels follow standard syslog severity levels.
-type LogLevel string
-
-const (
-	// LogLevelDebug represents debug-level messages (detailed debug information)
-	LogLevelDebug LogLevel = "debug"
-	// LogLevelInfo represents informational messages
-	LogLevelInfo LogLevel = "info"
-	// LogLevelNotice represents normal but significant conditions
-	LogLevelNotice LogLevel = "notice"
-	// LogLevelWarning represents warning conditions
-	LogLevelWarning LogLevel = "warning"
-	// LogLevelError represents error conditions
-	LogLevelError LogLevel = "error"
-	// LogLevelCritical represents critical conditions
-	LogLevelCritical LogLevel = "critical"
-	// LogLevelAlert represents conditions that should be corrected immediately
-	LogLevelAlert LogLevel = "alert"
-	// LogLevelEmergency represents system is unusable
-	LogLevelEmergency LogLevel = "emergency"
-)
-
-// logLevelSeverity maps LogLevel to their numeric severity values.
-// Lower numbers indicate higher severity (0 is most severe).
-var logLevelSeverity = map[LogLevel]int{
-	LogLevelDebug:     7,
-	LogLevelInfo:      6,
-	LogLevelNotice:    5,
-	LogLevelWarning:   4,
-	LogLevelError:     3,
-	LogLevelCritical:  2,
-	LogLevelAlert:     1,
-	LogLevelEmergency: 0,
-}
-
-// SetLogLevelParams represents the parameters for setting the log level.
-type SetLogLevelParams struct {
-	Level LogLevel `json:"level"`
-}
-
-// LogMessageParams represents the parameters for logging a message.
-type LogMessageParams struct {
-	Level  LogLevel    `json:"level"`
-	Logger string      `json:"logger,omitempty"`
-	Data   interface{} `json:"data"`
-}
-
 // LogManager handles logging operations and level management.
 type LogManager struct {
 	currentLevel LogLevel

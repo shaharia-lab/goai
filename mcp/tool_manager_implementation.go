@@ -5,37 +5,6 @@ import (
 	"fmt"
 )
 
-// Tool represents a callable tool in the MCP system.
-type Tool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema"`
-}
-
-// ToolResultContent represents the content returned by a tool.
-type ToolResultContent struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
-}
-
-// CallToolParams represents parameters for calling a tool.
-type CallToolParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
-}
-
-// CallToolResult represents the result of calling a tool.
-type CallToolResult struct {
-	Content []ToolResultContent `json:"content"`
-	IsError bool                `json:"isError"`
-}
-
-// ListToolsResult represents the result of listing available tools.
-type ListToolsResult struct {
-	Tools      []Tool `json:"tools"`
-	NextCursor string `json:"nextCursor,omitempty"`
-}
-
 // ToolManager handles tool-related operations.
 type ToolManager struct {
 	tools               map[string]Tool
