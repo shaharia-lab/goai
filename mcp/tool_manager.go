@@ -1,74 +1,85 @@
+// tool_manager.go
 package mcp
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 )
 
-// ToolExecutor defines the interface for tool execution
-type ToolExecutor interface {
-	Execute(ctx context.Context, params json.RawMessage) (interface{}, error)
-	GetMetadata() ToolMetadata
-}
-
-// ToolMetadata contains information about a tool
-type ToolMetadata struct {
+type Tool struct {
+	ID          string                 `json:"id"`
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
 	Version     string                 `json:"version"`
-	Properties  map[string]interface{} `json:"properties,omitempty"`
+	Arguments   []ToolArgument         `json:"arguments"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// ToolManager manages tool registration and execution
+type ToolArgument struct {
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`
+	Description string      `json:"description"`
+	Required    bool        `json:"required"`
+	Default     interface{} `json:"default,omitempty"`
+}
+
 type ToolManager struct {
-	tools map[string]ToolExecutor
-	mu    sync.RWMutex
+	tools    map[string]*Tool
+	handlers map[string]ToolHandler
+	mu       sync.RWMutex
 }
 
-// NewToolManager creates a new tool manager
+type ToolHandler func(args map[string]interface{}) (interface{}, error)
+
 func NewToolManager() *ToolManager {
 	return &ToolManager{
-		tools: make(map[string]ToolExecutor),
+		tools:    make(map[string]*Tool),
+		handlers: make(map[string]ToolHandler),
 	}
 }
 
-// RegisterTool registers a new tool
-func (tm *ToolManager) RegisterTool(tool ToolExecutor) error {
+func (tm *ToolManager) RegisterTool(tool *Tool, handler ToolHandler) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
-	metadata := tool.GetMetadata()
-	if _, exists := tm.tools[metadata.Name]; exists {
-		return fmt.Errorf("tool %s already registered", metadata.Name)
+	if _, exists := tm.tools[tool.ID]; exists {
+		return fmt.Errorf("tool %s already registered", tool.ID)
 	}
 
-	tm.tools[metadata.Name] = tool
+	tm.tools[tool.ID] = tool
+	tm.handlers[tool.ID] = handler
 	return nil
 }
 
-// ExecuteTool executes a tool with the given parameters
-func (tm *ToolManager) ExecuteTool(ctx context.Context, name string, params json.RawMessage) (interface{}, error) {
-	tm.mu.RLock()
-	tool, exists := tm.tools[name]
-	tm.mu.RUnlock()
-
-	if !exists {
-		return nil, fmt.Errorf("tool %s not found", name)
-	}
-
-	return tool.Execute(ctx, params)
-}
-
-// ListTools returns metadata for all registered tools
-func (tm *ToolManager) ListTools() []ToolMetadata {
+func (tm *ToolManager) ListTools() []*Tool {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
-	tools := make([]ToolMetadata, 0, len(tm.tools))
-	for _, tool := range tm.tools {
-		tools = append(tools, tool.GetMetadata())
+	tools := make([]*Tool, 0, len(tm.tools))
+	for _, t := range tm.tools {
+		tools = append(tools, t)
 	}
 	return tools
+}
+
+func (tm *ToolManager) ExecuteTool(id string, args map[string]interface{}) (interface{}, error) {
+	tm.mu.RLock()
+	handler, exists := tm.handlers[id]
+	tool := tm.tools[id]
+	tm.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("tool %s not found", id)
+	}
+
+	// Validate arguments
+	for _, arg := range tool.Arguments {
+		if arg.Required {
+			if _, ok := args[arg.Name]; !ok {
+				return nil, fmt.Errorf("required argument %s missing", arg.Name)
+			}
+		}
+	}
+
+	return handler(args)
 }

@@ -3,9 +3,10 @@ package mcp
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -128,4 +129,33 @@ func (am *AuthManager) exchangeCode(code, codeVerifier string) (*Token, error) {
 	// This would make an HTTP request to the token endpoint
 	// and handle the response
 	return nil, nil
+}
+
+// Generate a random state parameter for OAuth flow
+func generateState() string {
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// Build URL with query parameters
+func buildURL(baseURL string, params map[string]string) string {
+	values := make([]string, 0, len(params))
+	for key, value := range params {
+		values = append(values, fmt.Sprintf("%s=%s", key, url.QueryEscape(value)))
+	}
+	if len(values) > 0 {
+		return fmt.Sprintf("%s?%s", baseURL, strings.Join(values, "&"))
+	}
+	return baseURL
+}
+
+// Generate PKCE challenge from code verifier
+func generatePKCEChallenge(verifier string) string {
+	h := sha256.New()
+	h.Write([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
 }

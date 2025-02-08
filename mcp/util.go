@@ -30,3 +30,7 @@ func getCurrentTimestamp() int64 {
 func generateClientID() string {
 	return uuid.New().String()
 }
+
+func generateRequestID() string {
+	return uuid.New().String()
+}

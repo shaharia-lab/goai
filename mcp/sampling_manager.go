@@ -68,7 +68,7 @@ func (sm *SamplingManager) CreateSamplingRequest(ctx context.Context, params jso
 	sm.mu.Unlock()
 
 	// Notify client about new sampling request
-	notification := NewRequest(nil, "sampling/requested", map[string]interface{}{
+	notification, _ := NewRequest(nil, "sampling/requested", map[string]interface{}{
 		"requestId": request.ID,
 		"model":     req.Model,
 	})
@@ -110,4 +110,27 @@ func (sm *SamplingManager) GetSamplingRequest(id string) (*SamplingRequest, erro
 	}
 
 	return req, nil
+}
+
+// Add to server.go or where Server struct is defined
+func (s *Server) broadcastMessage(msg Message) error {
+	// Get all active connections
+	s.mu.RLock()
+	connections := make([]*Connection, 0, len(s.connections))
+	for conn := range s.connections {
+		connections = append(connections, conn)
+	}
+	s.mu.RUnlock()
+
+	// Send message to all connections
+	var lastErr error
+	for _, conn := range connections {
+		if err := conn.SendMessage(msg); err != nil {
+			lastErr = err
+			// Continue sending to other connections even if one fails
+			continue
+		}
+	}
+
+	return lastErr
 }

@@ -107,3 +107,16 @@ func (t *WebSocketTransport) HandleMessage(handler MessageHandler) {
 	t.handler = handler
 	t.mu.Unlock()
 }
+
+func (t *WebSocketTransport) SendMessage(msg Message) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	for conn := range t.conns {
+		if err := conn.WriteJSON(msg); err != nil {
+			// Log error but continue sending to other connections
+			continue
+		}
+	}
+	return nil
+}

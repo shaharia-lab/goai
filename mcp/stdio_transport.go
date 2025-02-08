@@ -3,7 +3,9 @@ package mcp
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
+	"strings"
 )
 
 type StdIOTransport struct {
@@ -19,6 +21,76 @@ func NewStdIOTransport() *StdIOTransport {
 		writer: bufio.NewWriter(os.Stdout),
 		done:   make(chan struct{}),
 	}
+}
+
+func (s *StdIOTransport) readLoop() {
+	for {
+		select {
+		case <-s.done:
+			return
+		default:
+			// Read the Content-Length header
+			header, err := s.reader.ReadString('\n')
+			if err != nil {
+				continue
+			}
+			header = strings.TrimSpace(header)
+			if !strings.HasPrefix(header, "Content-Length: ") {
+				continue
+			}
+
+			// Parse content length
+			var contentLength int
+			_, err = fmt.Sscanf(header, "Content-Length: %d", &contentLength)
+			if err != nil {
+				continue
+			}
+
+			// Read the empty line
+			_, err = s.reader.ReadString('\n')
+			if err != nil {
+				continue
+			}
+
+			// Read the message content
+			content := make([]byte, contentLength)
+			_, err = s.reader.Read(content)
+			if err != nil {
+				continue
+			}
+
+			// Parse the message
+			var msg Message
+			if err := json.Unmarshal(content, &msg); err != nil {
+				continue
+			}
+
+			// Handle the message if handler is set
+			if s.handler != nil {
+				s.handler(msg)
+			}
+		}
+	}
+}
+
+func (s *StdIOTransport) Send(msg Message) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	// Write the headers
+	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
+	if _, err := s.writer.WriteString(header); err != nil {
+		return err
+	}
+
+	// Write the message
+	if _, err := s.writer.Write(data); err != nil {
+		return err
+	}
+
+	return s.writer.Flush()
 }
 
 func (s *StdIOTransport) Start() error {
@@ -37,42 +109,6 @@ func (s *StdIOTransport) HandleMessage(handler MessageHandler) {
 	s.handler = handler
 }
 
-func (s *StdIOTransport) readLoop() {
-	for {
-		select {
-		case <-s.done:
-			return
-		default:
-			// Read header line containing the content length
-			line, err := s.reader.ReadString('\n')
-			if err != nil {
-				continue
-			}
-
-			// Parse the message
-			var msg Message
-			if err := json.Unmarshal([]byte(line), &msg); err != nil {
-				continue
-			}
-
-			// Handle the message if handler is set
-			if s.handler != nil {
-				s.handler(msg)
-			}
-		}
-	}
-}
-
-func (s *StdIOTransport) Send(msg Message) error {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	// Write the message followed by a newline
-	if _, err := s.writer.Write(append(data, '\n')); err != nil {
-		return err
-	}
-
-	return s.writer.Flush()
+func (t *StdIOTransport) SendMessage(msg Message) error {
+	return json.NewEncoder(os.Stdout).Encode(msg)
 }

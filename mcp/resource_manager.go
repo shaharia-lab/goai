@@ -6,91 +6,38 @@ import (
 	"sync"
 )
 
-type ResourceManager struct {
-	mu          sync.RWMutex
-	resources   map[string]Resource
-	templates   map[string]ResourceTemplate
-	subscribers map[string][]chan ResourceChange
-}
-
 type Resource struct {
-	URI          string                 `json:"uri"`
-	Type         string                 `json:"type"`
-	Name         string                 `json:"name"`
-	Properties   map[string]interface{} `json:"properties"`
-	LastModified int64                  `json:"lastModified"`
+	URI         string                 `json:"uri"`
+	Type        string                 `json:"type"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
-type ResourceTemplate struct {
-	ID          string               `json:"id"`
-	Name        string               `json:"name"`
-	Description string               `json:"description"`
-	Properties  []PropertyDefinition `json:"properties"`
-}
-
-type PropertyDefinition struct {
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Required    bool   `json:"required"`
-	Description string `json:"description"`
-}
-
-type ResourceChange struct {
-	Type     string   `json:"type"` // "created", "updated", "deleted"
-	Resource Resource `json:"resource"`
+type ResourceManager struct {
+	resources     map[string]*Resource
+	subscriptions map[string][]*Connection
+	mu            sync.RWMutex
 }
 
 func NewResourceManager() *ResourceManager {
 	return &ResourceManager{
-		resources:   make(map[string]Resource),
-		templates:   make(map[string]ResourceTemplate),
-		subscribers: make(map[string][]chan ResourceChange),
+		resources:     make(map[string]*Resource),
+		subscriptions: make(map[string][]*Connection),
 	}
 }
 
-func (rm *ResourceManager) RegisterTemplate(template ResourceTemplate) error {
+func (rm *ResourceManager) AddResource(resource *Resource) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	if _, exists := rm.templates[template.ID]; exists {
-		return fmt.Errorf("template %s already exists", template.ID)
-	}
-
-	rm.templates[template.ID] = template
-	return nil
-}
-
-func (rm *ResourceManager) CreateResource(templateID string, properties map[string]interface{}) (*Resource, error) {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
-	template, exists := rm.templates[templateID]
-	if !exists {
-		return nil, fmt.Errorf("template %s not found", templateID)
-	}
-
-	// Validate properties against template
-	if err := rm.validateProperties(template, properties); err != nil {
-		return nil, err
-	}
-
-	resource := Resource{
-		URI:          generateResourceURI(),
-		Type:         template.ID,
-		Name:         properties["name"].(string),
-		Properties:   properties,
-		LastModified: getCurrentTimestamp(),
+	if _, exists := rm.resources[resource.URI]; exists {
+		return fmt.Errorf("resource %s already exists", resource.URI)
 	}
 
 	rm.resources[resource.URI] = resource
-
-	// Notify subscribers
-	rm.notifyChange(ResourceChange{
-		Type:     "created",
-		Resource: resource,
-	})
-
-	return &resource, nil
+	rm.notifyResourceListChanged()
+	return nil
 }
 
 func (rm *ResourceManager) GetResource(uri string) (*Resource, error) {
@@ -102,73 +49,37 @@ func (rm *ResourceManager) GetResource(uri string) (*Resource, error) {
 		return nil, fmt.Errorf("resource %s not found", uri)
 	}
 
-	return &resource, nil
+	return resource, nil
 }
 
-func (rm *ResourceManager) ListResources() []Resource {
+func (rm *ResourceManager) ListResources() []*Resource {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 
-	resources := make([]Resource, 0, len(rm.resources))
-	for _, resource := range rm.resources {
-		resources = append(resources, resource)
+	resources := make([]*Resource, 0, len(rm.resources))
+	for _, r := range rm.resources {
+		resources = append(resources, r)
 	}
-
 	return resources
 }
 
-func (rm *ResourceManager) ListTemplates() []ResourceTemplate {
-	rm.mu.RLock()
-	defer rm.mu.RUnlock()
-
-	templates := make([]ResourceTemplate, 0, len(rm.templates))
-	for _, template := range rm.templates {
-		templates = append(templates, template)
-	}
-
-	return templates
-}
-
-func (rm *ResourceManager) Subscribe(subscriberID string) chan ResourceChange {
+func (rm *ResourceManager) Subscribe(uri string, conn *Connection) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	ch := make(chan ResourceChange, 100)
-	rm.subscribers[subscriberID] = append(rm.subscribers[subscriberID], ch)
-	return ch
+	rm.subscriptions[uri] = append(rm.subscriptions[uri], conn)
 }
 
-func (rm *ResourceManager) Unsubscribe(subscriberID string) {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
-	if channels, exists := rm.subscribers[subscriberID]; exists {
-		for _, ch := range channels {
-			close(ch)
-		}
-		delete(rm.subscribers, subscriberID)
+func (rm *ResourceManager) notifyResourceListChanged() {
+	notification := Message{
+		JSONRPC: "2.0",
+		Method:  "notifications/resources/list_changed",
+		Params:  nil,
 	}
-}
 
-func (rm *ResourceManager) notifyChange(change ResourceChange) {
-	for _, channels := range rm.subscribers {
-		for _, ch := range channels {
-			select {
-			case ch <- change:
-			default:
-				// Channel is full, skip notification
-			}
+	for _, conns := range rm.subscriptions {
+		for _, conn := range conns {
+			_ = conn.SendMessage(notification)
 		}
 	}
-}
-
-func (rm *ResourceManager) validateProperties(template ResourceTemplate, properties map[string]interface{}) error {
-	for _, prop := range template.Properties {
-		if prop.Required {
-			if _, exists := properties[prop.Name]; !exists {
-				return fmt.Errorf("required property %s is missing", prop.Name)
-			}
-		}
-	}
-	return nil
 }

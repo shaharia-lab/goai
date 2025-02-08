@@ -54,7 +54,7 @@ func (s *Server) handleInitialize(conn *Connection, params json.RawMessage) (int
 	}
 
 	// Send initialized notification after successful initialization
-	initializedNotification := NewRequest(nil, "initialized", nil)
+	initializedNotification, _ := NewRequest(nil, "initialized", nil)
 	if err := conn.SendMessage(*initializedNotification); err != nil {
 		s.logger.WithError(err).Error("Failed to send initialized notification")
 	}

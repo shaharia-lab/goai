@@ -7,6 +7,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v0.2.0-alpha.8
 	github.com/aws/aws-sdk-go-v2 v1.32.8
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.23.2
+	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/lib/pq v1.10.9

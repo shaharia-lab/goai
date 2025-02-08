@@ -11,7 +11,12 @@ type Message struct {
 	Method  string          `json:"method,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  interface{}     `json:"result,omitempty"`
-	Error   *Error          `json:"error,omitempty"`
+	Err     *Error          `json:"error,omitempty"` // Changed from Error to Err
+}
+
+func (m Message) Error() string {
+	//TODO implement me
+	panic("implement me")
 }
 
 // Error represents a JSON-RPC 2.0 error object
@@ -19,6 +24,10 @@ type Error struct {
 	Code    int         `json:"code"`
 	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
+}
+
+func (e *Error) Error() string {
+	return e.Message
 }
 
 // NewRequest creates a new request message
@@ -54,10 +63,29 @@ func NewErrorResponse(id interface{}, code int, message string, data interface{}
 	return &Message{
 		JSONRPC: "2.0",
 		ID:      id,
-		Error: &Error{
+		Err: &Error{
 			Code:    code,
 			Message: message,
 			Data:    data,
 		},
+	}
+}
+
+// Add this to message.go
+type MCPError struct {
+	*Message
+}
+
+func (e *MCPError) Error() string {
+	if e.Message != nil && e.Message.Err != nil {
+		return e.Message.Err.Message
+	}
+	return "unknown error"
+}
+
+// Helper function to create error
+func NewMCPError(code int, message string, data interface{}) error {
+	return &MCPError{
+		Message: NewErrorResponse(nil, code, message, data),
 	}
 }

@@ -48,6 +48,19 @@ type ServerCapabilities struct {
 	Sampling struct {
 		CreateMessage bool `json:"createMessage"`
 	} `json:"sampling"`
+	Roots struct {
+		List        bool `json:"list"`
+		ListChanged bool `json:"listChanged"`
+	} `json:"roots"`
+	Completion struct {
+		Complete bool `json:"complete"`
+	} `json:"completion"`
+	Progress struct {
+		Report bool `json:"report"`
+	} `json:"progress"`
+	Ping struct {
+		Enabled bool `json:"enabled"`
+	} `json:"ping"`
 }
 
 // LifecycleState represents the server's current state
