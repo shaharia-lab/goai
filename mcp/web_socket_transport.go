@@ -8,12 +8,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Transport defines the interface for different transport mechanisms
-type Transport interface {
-	Start() error
-	Stop() error
-	HandleMessage(handler MessageHandler)
-}
+type MessageHandler func(Message)
 
 // WebSocketTransport implements websocket-based transport
 type WebSocketTransport struct {
@@ -68,4 +63,47 @@ func (t *WebSocketTransport) handleConnection(conn *websocket.Conn) {
 			t.handler(msg)
 		}
 	}
+}
+
+// Add this function to web_socket_transport.go
+func makeOriginChecker(allowedOrigins []string) func(r *http.Request) bool {
+	return func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		for _, allowed := range allowedOrigins {
+			if allowed == "*" || allowed == origin {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+func (t *WebSocketTransport) Start() error {
+	// Nothing specific needed for websocket start
+	// The actual handling happens in ServeHTTP
+	return nil
+}
+
+func (t *WebSocketTransport) Stop() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Close all active connections
+	for conn := range t.conns {
+		if err := conn.Close(); err != nil {
+			// Continue closing others even if one fails
+			continue
+		}
+		delete(t.conns, conn)
+	}
+	return nil
+}
+
+func (t *WebSocketTransport) HandleMessage(handler MessageHandler) {
+	t.mu.Lock()
+	t.handler = handler
+	t.mu.Unlock()
 }

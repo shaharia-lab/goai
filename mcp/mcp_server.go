@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/sirupsen/logrus"
@@ -25,7 +26,15 @@ type Server struct {
 }
 
 // NewServer creates a new MCP server instance
-func NewServer(config ServerConfig) *Server {
+func NewServer(config ServerConfig) (*Server, error) {
+	// Validate config
+	if config.MaxToolExecutionTime <= 0 {
+		return nil, fmt.Errorf("invalid MaxToolExecutionTime: must be positive")
+	}
+	if config.MaxRequestSize <= 0 {
+		return nil, fmt.Errorf("invalid MaxRequestSize: must be positive")
+	}
+
 	if config.Logger == nil {
 		config.Logger = logrus.New()
 	}
@@ -37,14 +46,50 @@ func NewServer(config ServerConfig) *Server {
 		handlers:            NewRegisteredHandlers(),
 		cancellationManager: NewCancellationManager(),
 		resourceManager:     NewResourceManager(),
+		transports:          make([]Transport, 0),
 		shutdown:            make(chan struct{}),
 		state:               StateUninitialized,
 	}
 
-	s.registerDefaultHandlers()
-	s.initializeCapabilities()
+	// Initialize capabilities and version structure
+	s.capabilities = ServerCapabilities{
+		Resources: struct {
+			Subscribe   bool `json:"subscribe"`
+			ListChanged bool `json:"listChanged"`
+		}{
+			Subscribe:   true,
+			ListChanged: true,
+		},
+		Tools: struct {
+			ListChanged bool `json:"listChanged"`
+			Execute     bool `json:"execute"`
+		}{
+			ListChanged: true,
+			Execute:     true,
+		},
+	}
 
-	return s
+	// Initialize enabled transports
+	if config.EnableWebSocket {
+		wsTransport := NewWebSocketTransport(config.AllowedOrigins)
+		s.transports = append(s.transports, wsTransport)
+	}
+
+	if config.EnableStdio {
+		stdioTransport := NewStdIOTransport()
+		s.transports = append(s.transports, stdioTransport)
+	}
+
+	/*if config.EnableSSE {
+		sseTransport := NewSSETransport()
+		s.transports = append(s.transports, sseTransport)
+	}*/
+
+	if len(s.transports) == 0 {
+		return nil, fmt.Errorf("no transport enabled, at least one transport must be enabled")
+	}
+
+	return s, nil
 }
 
 func (s *Server) Start(ctx context.Context) error {
