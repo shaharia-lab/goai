@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // ToolManager handles tool-related operations.
@@ -38,18 +39,20 @@ func (tm *ToolManager) RegisterTool(tool Tool, implementation ToolImplementation
 }
 
 // ListTools returns a list of all available tools, with optional pagination.
+// ListTools returns a list of all available tools, with optional pagination.
 func (tm *ToolManager) ListTools(cursor string, limit int) ListToolsResult {
 	if limit <= 0 {
 		limit = 50 // Default limit
 	}
 
-	var nextCursor string
-
-	// Convert map to slice for pagination
+	// Convert map to slice and sort by name for consistent ordering
 	allTools := make([]Tool, 0, len(tm.tools))
 	for _, t := range tm.tools {
 		allTools = append(allTools, t)
 	}
+	sort.Slice(allTools, func(i, j int) bool {
+		return allTools[i].Name < allTools[j].Name
+	})
 
 	// Find start index based on cursor
 	startIdx := 0
@@ -68,6 +71,7 @@ func (tm *ToolManager) ListTools(cursor string, limit int) ListToolsResult {
 		endIdx = len(allTools)
 	}
 
+	var nextCursor string
 	if endIdx < len(allTools) {
 		nextCursor = allTools[endIdx-1].Name
 	}

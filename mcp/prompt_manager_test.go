@@ -1,0 +1,219 @@
+package mcp
+
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestNewPromptManager(t *testing.T) {
+	pm := NewPromptManager()
+	assert.NotNil(t, pm)
+	assert.Empty(t, pm.prompts)
+}
+
+func TestRegisterPrompt(t *testing.T) {
+	pm := NewPromptManager()
+
+	t.Run("valid prompt", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Role: "system",
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello, world!",
+					},
+				},
+			},
+		}
+
+		err := pm.RegisterPrompt(prompt)
+		assert.NoError(t, err)
+		assert.Contains(t, pm.prompts, "test-prompt")
+	})
+
+	t.Run("empty name", func(t *testing.T) {
+		prompt := Prompt{
+			Messages: []PromptMessage{
+				{
+					Role: "system",
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello, world!",
+					},
+				},
+			},
+		}
+
+		err := pm.RegisterPrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "prompt name cannot be empty")
+	})
+
+	t.Run("no messages", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+		}
+
+		err := pm.RegisterPrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "prompt must have at least one message")
+	})
+
+	t.Run("invalid content type", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Role: "system",
+					Content: PromptContent{
+						Type: "invalid",
+						Text: "Hello, world!",
+					},
+				},
+			},
+		}
+
+		err := pm.RegisterPrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "only text type is supported")
+	})
+
+	t.Run("empty message content", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Role: "system",
+					Content: PromptContent{
+						Type: "text",
+					},
+				},
+			},
+		}
+
+		err := pm.RegisterPrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "message content text cannot be empty")
+	})
+}
+
+func TestListPrompts(t *testing.T) {
+	pm := NewPromptManager()
+
+	// Register some test prompts
+	prompts := []Prompt{
+		{
+			Name: "prompt1",
+			Messages: []PromptMessage{{
+				Content: PromptContent{Type: "text", Text: "test1"},
+			}},
+		},
+		{
+			Name: "prompt2",
+			Messages: []PromptMessage{{
+				Content: PromptContent{Type: "text", Text: "test2"},
+			}},
+		},
+		{
+			Name: "prompt3",
+			Messages: []PromptMessage{{
+				Content: PromptContent{Type: "text", Text: "test3"},
+			}},
+		},
+	}
+
+	for _, p := range prompts {
+		_ = pm.RegisterPrompt(p)
+	}
+
+	t.Run("list all prompts", func(t *testing.T) {
+		result := pm.ListPrompts("", 50)
+		assert.Len(t, result.Prompts, 3)
+		assert.Empty(t, result.NextCursor)
+	})
+
+	t.Run("list with pagination", func(t *testing.T) {
+		result := pm.ListPrompts("", 2)
+		assert.Len(t, result.Prompts, 2)
+		assert.NotEmpty(t, result.NextCursor)
+
+		// Get next page
+		result = pm.ListPrompts(result.NextCursor, 2)
+		assert.Len(t, result.Prompts, 1)
+		assert.Empty(t, result.NextCursor)
+	})
+}
+
+func TestGetPrompt(t *testing.T) {
+	pm := NewPromptManager()
+
+	t.Run("get non-existent prompt", func(t *testing.T) {
+		_, err := pm.GetPrompt(GetPromptParams{Name: "non-existent"})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "prompt not found")
+	})
+
+	t.Run("get prompt with arguments", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Arguments: []PromptArgument{
+				{
+					Name:     "name",
+					Required: true,
+				},
+			},
+			Messages: []PromptMessage{
+				{
+					Role: "system",
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello, {{name}}!",
+					},
+				},
+			},
+		}
+
+		err := pm.RegisterPrompt(prompt)
+		assert.NoError(t, err)
+
+		args, _ := json.Marshal(map[string]string{"name": "John"})
+		result, err := pm.GetPrompt(GetPromptParams{
+			Name:      "test-prompt",
+			Arguments: args,
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "Hello, John!", result.Messages[0].Content.Text)
+	})
+}
+
+func TestDeletePrompt(t *testing.T) {
+	pm := NewPromptManager()
+
+	prompt := Prompt{
+		Name: "test-prompt",
+		Messages: []PromptMessage{
+			{
+				Content: PromptContent{Type: "text", Text: "test"},
+			},
+		},
+	}
+
+	_ = pm.RegisterPrompt(prompt)
+
+	t.Run("delete existing prompt", func(t *testing.T) {
+		err := pm.DeletePrompt("test-prompt")
+		assert.NoError(t, err)
+		assert.Empty(t, pm.prompts)
+	})
+
+	t.Run("delete non-existent prompt", func(t *testing.T) {
+		err := pm.DeletePrompt("non-existent")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "prompt not found")
+	})
+}
