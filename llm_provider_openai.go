@@ -3,6 +3,8 @@ package goai
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/openai/openai-go"
@@ -10,8 +12,9 @@ import (
 
 // OpenAILLMProvider implements the LLMProvider interface using OpenAI's official SDK.
 type OpenAILLMProvider struct {
-	client OpenAIClientProvider
-	model  string
+	client       OpenAIClientProvider
+	model        string
+	toolRegistry *MCPToolRegistry
 }
 
 // OpenAIProviderConfig holds configuration for OpenAI provider.
@@ -40,14 +43,15 @@ type OpenAIProviderConfig struct {
 //	    Client: client,
 //	    Model:  "gpt-4",
 //	})
-func NewOpenAILLMProvider(config OpenAIProviderConfig) *OpenAILLMProvider {
+func NewOpenAILLMProvider(config OpenAIProviderConfig, toolRegistry *MCPToolRegistry) *OpenAILLMProvider {
 	if config.Model == "" {
 		config.Model = string(openai.ChatModelGPT3_5Turbo)
 	}
 
 	return &OpenAILLMProvider{
-		client: config.Client,
-		model:  config.Model,
+		client:       config.Client,
+		model:        config.Model,
+		toolRegistry: toolRegistry,
 	}
 }
 
@@ -97,13 +101,63 @@ func (p *OpenAILLMProvider) createCompletionParams(messages []openai.ChatComplet
 //	fmt.Printf("Response: %s\n", response.Text)
 func (p *OpenAILLMProvider) GetResponse(messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
 	startTime := time.Now()
+	ctx := context.Background()
 
 	openAIMessages := p.convertToOpenAIMessages(messages)
 	params := p.createCompletionParams(openAIMessages, config)
 
-	completion, err := p.client.CreateCompletion(context.Background(), params)
+	// Add tools configuration if toolRegistry is available
+	if p.toolRegistry != nil && len(p.toolRegistry.tools) > 0 {
+		var tools []openai.ChatCompletionToolParam
+		for _, tool := range p.toolRegistry.tools {
+			// Convert tool schema to OpenAI function parameters
+			paramSchema := make(map[string]interface{})
+			if err := json.Unmarshal(tool.GetDefinition().InputSchema, &paramSchema); err != nil {
+				return LLMResponse{}, fmt.Errorf("failed to parse tool parameter schema: %w", err)
+			}
+
+			tools = append(tools, openai.ChatCompletionToolParam{
+				Type: openai.F(openai.ChatCompletionToolTypeFunction),
+				Function: openai.F(openai.FunctionDefinitionParam{
+					Name:        openai.String(tool.GetDefinition().Name),
+					Description: openai.String(tool.GetDefinition().Description),
+					Parameters:  openai.F(openai.FunctionParameters(paramSchema)),
+				}),
+			})
+		}
+		params.Tools = openai.F(tools)
+	}
+
+	// Make initial completion request
+	completion, err := p.client.CreateCompletion(ctx, params)
 	if err != nil {
 		return LLMResponse{}, err
+	}
+
+	// Handle tool calls if present
+	if len(completion.Choices) > 0 && len(completion.Choices[0].Message.ToolCalls) > 0 {
+		// Add the assistant's message with tool calls to the conversation
+		params.Messages.Value = append(params.Messages.Value, completion.Choices[0].Message)
+
+		// Process each tool call
+		for _, toolCall := range completion.Choices[0].Message.ToolCalls {
+			if tool, _ := p.toolRegistry.Get(ctx, toolCall.Function.Name); tool != nil {
+				// Execute the tool
+				result, err := tool.Execute(ctx, json.RawMessage(toolCall.Function.Arguments))
+				if err != nil {
+					return LLMResponse{}, fmt.Errorf("tool execution failed: %w", err)
+				}
+
+				// Add the tool response to the messages
+				params.Messages.Value = append(params.Messages.Value, openai.ToolMessage(toolCall.ID, result.Content[0].Text))
+			}
+		}
+
+		// Make a follow-up completion request with tool results
+		completion, err = p.client.CreateCompletion(ctx, params)
+		if err != nil {
+			return LLMResponse{}, err
+		}
 	}
 
 	if len(completion.Choices) == 0 {

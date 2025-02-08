@@ -2,8 +2,12 @@ package goai
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/stretchr/testify/assert"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,7 +92,7 @@ func TestOpenAILLMProvider_NewOpenAILLMProvider(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := NewOpenAILLMProvider(tt.config)
+			provider := NewOpenAILLMProvider(tt.config, &MCPToolRegistry{})
 
 			if provider.model != tt.expectedModel {
 				t.Errorf("expected model %q, got %q", tt.expectedModel, provider.model)
@@ -137,7 +141,7 @@ func TestOpenAILLMProvider_GetStreamingResponse(t *testing.T) {
 			provider := NewOpenAILLMProvider(OpenAIProviderConfig{
 				Client: mockClient,
 				Model:  "gpt-4",
-			})
+			}, &MCPToolRegistry{})
 
 			ctx, cancel := context.WithTimeout(context.Background(), tt.timeout)
 			defer cancel()
@@ -160,4 +164,173 @@ func TestOpenAILLMProvider_GetStreamingResponse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOpenAILLMProvider_GetResponse_WithTools(t *testing.T) {
+	tests := []struct {
+		name           string
+		messages       []LLMMessage
+		config         LLMRequestConfig
+		responses      []string
+		expectedError  error
+		expectedResult LLMResponse
+		toolExecFunc   func(ctx context.Context, input json.RawMessage) (MCPToolResponse, error)
+	}{
+		{
+			name: "successful tool execution",
+			messages: []LLMMessage{
+				{Role: UserRole, Text: "What's the weather in New York?"},
+			},
+			config: LLMRequestConfig{
+				MaxToken:    100,
+				Temperature: 0.7,
+			},
+			responses: []string{
+				`{
+					"choices": [{
+						"message": {
+							"tool_calls": [{
+								"id": "call_123",
+								"function": {
+									"name": "get_weather",
+									"arguments": "{\"location\":\"New York\"}"
+								}
+							}]
+						}
+					}],
+					"usage": {
+						"prompt_tokens": 10,
+						"completion_tokens": 20
+					}
+				}`,
+				`{
+					"choices": [{
+						"message": {
+							"content": "The weather in New York is sunny and 25°C"
+						}
+					}],
+					"usage": {
+						"prompt_tokens": 30,
+						"completion_tokens": 40
+					}
+				}`,
+			},
+			toolExecFunc: func(ctx context.Context, input json.RawMessage) (MCPToolResponse, error) {
+				return MCPToolResponse{
+					Content: []MCPContentItem{
+						{
+							Type: "text",
+							Text: "sunny, 25°C",
+						},
+					},
+				}, nil
+			},
+			expectedResult: LLMResponse{
+				Text:             "The weather in New York is sunny and 25°C",
+				TotalInputToken:  30,
+				TotalOutputToken: 40,
+			},
+		},
+		{
+			name: "no tool calls needed",
+			messages: []LLMMessage{
+				{Role: UserRole, Text: "Hello"},
+			},
+			config: LLMRequestConfig{
+				MaxToken:    100,
+				Temperature: 0.7,
+			},
+			responses: []string{
+				`{
+					"choices": [{
+						"message": {
+							"content": "Hi there!"
+						}
+					}],
+					"usage": {
+						"prompt_tokens": 5,
+						"completion_tokens": 10
+					}
+				}`,
+			},
+			expectedResult: LLMResponse{
+				Text:             "Hi there!",
+				TotalInputToken:  5,
+				TotalOutputToken: 10,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create mock transport
+			responseIndex := 0
+			mockTransport := &MockRoundTripper{
+				RoundTripFunc: func(req *http.Request) (*http.Response, error) {
+					if responseIndex >= len(tt.responses) {
+						return nil, fmt.Errorf("no more mock responses")
+					}
+
+					resp := &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(tt.responses[responseIndex])),
+						Header:     make(http.Header),
+					}
+					resp.Header.Set("Content-Type", "application/json")
+					responseIndex++
+					return resp, nil
+				},
+			}
+
+			// Create mock client with transport
+			mockClient := NewMockOpenAIClient(mockTransport)
+
+			// Create mock tool
+			mockTool := &MockTool{
+				name:        "get_weather",
+				description: "Get weather information",
+				version:     "1.0",
+				execFunc:    tt.toolExecFunc,
+			}
+
+			// Create tool registry
+			registry := NewMCPToolRegistry()
+			if mockTool != nil {
+				registry.Register(mockTool)
+			}
+
+			// Create provider
+			provider := NewOpenAILLMProvider(OpenAIProviderConfig{
+				Client: mockClient,
+				Model:  "gpt-3.5-turbo",
+			}, registry)
+
+			// Execute test
+			result, err := provider.GetResponse(tt.messages, tt.config)
+
+			// Check error
+			if tt.expectedError != nil {
+				assert.Error(t, err)
+				assert.Equal(t, tt.expectedError, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			// Check result content
+			assert.Equal(t, tt.expectedResult.Text, result.Text)
+			assert.Equal(t, tt.expectedResult.TotalInputToken, result.TotalInputToken)
+			assert.Equal(t, tt.expectedResult.TotalOutputToken, result.TotalOutputToken)
+			assert.Greater(t, result.CompletionTime, float64(0))
+		})
+	}
+}
+
+// MockRoundTripper implements http.RoundTripper for testing
+type MockRoundTripper struct {
+	RoundTripFunc func(*http.Request) (*http.Response, error)
+}
+
+func (m *MockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return m.RoundTripFunc(req)
 }
