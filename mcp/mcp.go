@@ -10,26 +10,6 @@ import (
 	"strings"
 )
 
-// --- Initialize Request/Response ---
-
-type InitializeParams struct {
-	ProtocolVersion string         `json:"protocolVersion"`
-	Capabilities    map[string]any `json:"capabilities"`
-	ClientInfo      struct {
-		Name    string `json:"name"`
-		Version string `json:"version"`
-	} `json:"clientInfo"`
-}
-
-type InitializeResult struct {
-	ProtocolVersion string         `json:"protocolVersion"`
-	Capabilities    map[string]any `json:"capabilities"`
-	ServerInfo      struct {
-		Name    string `json:"name"`
-		Version string `json:"version"`
-	} `json:"serverInfo"`
-}
-
 type Prompt struct {
 	Name        string           `json:"name"`
 	Description string           `json:"description,omitempty"`
@@ -48,7 +28,6 @@ type PromptMessage struct {
 	Content PromptContent `json:"content"`
 }
 
-// VERY IMPORTANT: At this stage, only 'text' type is supported
 type PromptContent struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
@@ -64,8 +43,6 @@ type GetPromptParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments,omitempty"` // Raw JSON for flexibility.
 }
-
-// --- Server Implementation ---
 
 type MCPServer struct {
 	protocolVersion    string
