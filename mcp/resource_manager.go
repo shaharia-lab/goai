@@ -1,3 +1,4 @@
+// resource_manager.go
 package mcp
 
 import (
@@ -5,110 +6,169 @@ import (
 	"sync"
 )
 
-// Resource represents a managed resource in the MCP system
-type Resource struct {
-	ID          string                 `json:"id"`
-	Type        string                 `json:"type"`
-	Properties  map[string]interface{} `json:"properties"`
-	Subscribers map[string]*Connection `json:"-"`
-}
-
-// ResourceManager handles resource lifecycle and subscriptions
 type ResourceManager struct {
-	resources map[string]*Resource
-	mu        sync.RWMutex
+	mu          sync.RWMutex
+	resources   map[string]Resource
+	templates   map[string]ResourceTemplate
+	subscribers map[string][]chan ResourceChange
 }
 
-// NewResourceManager creates a new resource manager instance
+type Resource struct {
+	URI          string                 `json:"uri"`
+	Type         string                 `json:"type"`
+	Name         string                 `json:"name"`
+	Properties   map[string]interface{} `json:"properties"`
+	LastModified int64                  `json:"lastModified"`
+}
+
+type ResourceTemplate struct {
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Properties  []PropertyDefinition `json:"properties"`
+}
+
+type PropertyDefinition struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Required    bool   `json:"required"`
+	Description string `json:"description"`
+}
+
+type ResourceChange struct {
+	Type     string   `json:"type"` // "created", "updated", "deleted"
+	Resource Resource `json:"resource"`
+}
+
 func NewResourceManager() *ResourceManager {
 	return &ResourceManager{
-		resources: make(map[string]*Resource),
+		resources:   make(map[string]Resource),
+		templates:   make(map[string]ResourceTemplate),
+		subscribers: make(map[string][]chan ResourceChange),
 	}
 }
 
-// AddResource registers a new resource
-func (rm *ResourceManager) AddResource(resource *Resource) error {
+func (rm *ResourceManager) RegisterTemplate(template ResourceTemplate) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	if _, exists := rm.resources[resource.ID]; exists {
-		return fmt.Errorf("resource with ID %s already exists", resource.ID)
+	if _, exists := rm.templates[template.ID]; exists {
+		return fmt.Errorf("template %s already exists", template.ID)
 	}
 
-	resource.Subscribers = make(map[string]*Connection)
-	rm.resources[resource.ID] = resource
+	rm.templates[template.ID] = template
 	return nil
 }
 
-// RemoveResource removes a resource and notifies subscribers
-func (rm *ResourceManager) RemoveResource(id string) error {
+func (rm *ResourceManager) CreateResource(templateID string, properties map[string]interface{}) (*Resource, error) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	resource, exists := rm.resources[id]
+	template, exists := rm.templates[templateID]
 	if !exists {
-		return fmt.Errorf("resource with ID %s not found", id)
+		return nil, fmt.Errorf("template %s not found", templateID)
 	}
 
-	// Notify subscribers about removal
-	for _, conn := range resource.Subscribers {
-		notification, _ := NewRequest(nil, "resource/removed", map[string]string{
-			"id": id,
-		})
-		_ = conn.SendMessage(*notification)
+	// Validate properties against template
+	if err := rm.validateProperties(template, properties); err != nil {
+		return nil, err
 	}
 
-	delete(rm.resources, id)
-	return nil
+	resource := Resource{
+		URI:          generateResourceURI(),
+		Type:         template.ID,
+		Name:         properties["name"].(string),
+		Properties:   properties,
+		LastModified: getCurrentTimestamp(),
+	}
+
+	rm.resources[resource.URI] = resource
+
+	// Notify subscribers
+	rm.notifyChange(ResourceChange{
+		Type:     "created",
+		Resource: resource,
+	})
+
+	return &resource, nil
 }
 
-// Subscribe adds a connection as a subscriber to a resource
-func (rm *ResourceManager) Subscribe(resourceID string, conn *Connection) error {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
-	resource, exists := rm.resources[resourceID]
-	if !exists {
-		return fmt.Errorf("resource with ID %s not found", resourceID)
-	}
-
-	resource.Subscribers[conn.ID] = conn
-	return nil
-}
-
-// Unsubscribe removes a connection from a resource's subscribers
-func (rm *ResourceManager) Unsubscribe(resourceID string, conn *Connection) error {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
-	resource, exists := rm.resources[resourceID]
-	if !exists {
-		return fmt.Errorf("resource with ID %s not found", resourceID)
-	}
-
-	delete(resource.Subscribers, conn.ID)
-	return nil
-}
-
-// NotifyResourceChanged notifies all subscribers about resource changes
-func (rm *ResourceManager) NotifyResourceChanged(resourceID string) error {
+func (rm *ResourceManager) GetResource(uri string) (*Resource, error) {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 
-	resource, exists := rm.resources[resourceID]
+	resource, exists := rm.resources[uri]
 	if !exists {
-		return fmt.Errorf("resource with ID %s not found", resourceID)
+		return nil, fmt.Errorf("resource %s not found", uri)
 	}
 
-	notification, _ := NewRequest(nil, "resource/changed", map[string]interface{}{
-		"id":         resourceID,
-		"type":       resource.Type,
-		"properties": resource.Properties,
-	})
+	return &resource, nil
+}
 
-	for _, conn := range resource.Subscribers {
-		_ = conn.SendMessage(*notification)
+func (rm *ResourceManager) ListResources() []Resource {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+
+	resources := make([]Resource, 0, len(rm.resources))
+	for _, resource := range rm.resources {
+		resources = append(resources, resource)
 	}
 
+	return resources
+}
+
+func (rm *ResourceManager) ListTemplates() []ResourceTemplate {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+
+	templates := make([]ResourceTemplate, 0, len(rm.templates))
+	for _, template := range rm.templates {
+		templates = append(templates, template)
+	}
+
+	return templates
+}
+
+func (rm *ResourceManager) Subscribe(subscriberID string) chan ResourceChange {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	ch := make(chan ResourceChange, 100)
+	rm.subscribers[subscriberID] = append(rm.subscribers[subscriberID], ch)
+	return ch
+}
+
+func (rm *ResourceManager) Unsubscribe(subscriberID string) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	if channels, exists := rm.subscribers[subscriberID]; exists {
+		for _, ch := range channels {
+			close(ch)
+		}
+		delete(rm.subscribers, subscriberID)
+	}
+}
+
+func (rm *ResourceManager) notifyChange(change ResourceChange) {
+	for _, channels := range rm.subscribers {
+		for _, ch := range channels {
+			select {
+			case ch <- change:
+			default:
+				// Channel is full, skip notification
+			}
+		}
+	}
+}
+
+func (rm *ResourceManager) validateProperties(template ResourceTemplate, properties map[string]interface{}) error {
+	for _, prop := range template.Properties {
+		if prop.Required {
+			if _, exists := properties[prop.Name]; !exists {
+				return fmt.Errorf("required property %s is missing", prop.Name)
+			}
+		}
+	}
 	return nil
 }
