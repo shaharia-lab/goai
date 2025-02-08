@@ -10,34 +10,6 @@ import (
 	"strings"
 )
 
-// --- JSON-RPC Structures ---
-
-type Request struct {
-	JSONRPC string           `json:"jsonrpc"`
-	ID      *json.RawMessage `json:"id"`
-	Method  string           `json:"method"`
-	Params  json.RawMessage  `json:"params"`
-}
-
-type Response struct {
-	JSONRPC string           `json:"jsonrpc"`
-	ID      *json.RawMessage `json:"id"`
-	Result  interface{}      `json:"result,omitempty"`
-	Error   *Error           `json:"error,omitempty"`
-}
-
-type Error struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
-
-type Notification struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
-}
-
 // --- Initialize Request/Response ---
 
 type InitializeParams struct {
@@ -56,96 +28,6 @@ type InitializeResult struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	} `json:"serverInfo"`
-}
-
-// --- Resource Structures ---
-type Resource struct {
-	URI         string `json:"uri"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	MimeType    string `json:"mimeType,omitempty"`
-	TextContent string `json:"-"` // Don't serialize this directly.
-}
-
-type ListResourcesResult struct {
-	Resources  []Resource `json:"resources"`
-	NextCursor string     `json:"nextCursor,omitempty"`
-}
-
-type ReadResourceParams struct {
-	URI string `json:"uri"`
-}
-type ReadResourceResult struct {
-	Contents []ResourceContent `json:"contents"`
-}
-
-type ResourceContent struct {
-	URI      string `json:"uri"`
-	MimeType string `json:"mimeType"`
-	Text     string `json:"text,omitempty"`
-	Blob     string `json:"blob,omitempty"` // Base64 encoded.
-}
-
-// --- Logging Structures ----
-type LogLevel string
-
-const (
-	LogLevelDebug     LogLevel = "debug"
-	LogLevelInfo      LogLevel = "info"
-	LogLevelNotice    LogLevel = "notice"
-	LogLevelWarning   LogLevel = "warning"
-	LogLevelError     LogLevel = "error"
-	LogLevelCritical  LogLevel = "critical"
-	LogLevelAlert     LogLevel = "alert"
-	LogLevelEmergency LogLevel = "emergency"
-)
-
-var logLevelSeverity = map[LogLevel]int{
-	LogLevelDebug:     7,
-	LogLevelInfo:      6,
-	LogLevelNotice:    5,
-	LogLevelWarning:   4,
-	LogLevelError:     3,
-	LogLevelCritical:  2,
-	LogLevelAlert:     1,
-	LogLevelEmergency: 0,
-}
-
-type SetLogLevelParams struct {
-	Level LogLevel `json:"level"`
-}
-type LogMessageParams struct {
-	Level  LogLevel    `json:"level"`
-	Logger string      `json:"logger,omitempty"`
-	Data   interface{} `json:"data"`
-}
-
-// --- Tool Structures ---
-
-type Tool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema"` //  Store schema as raw JSON.
-}
-
-type ListToolsResult struct {
-	Tools      []Tool `json:"tools"`
-	NextCursor string `json:"nextCursor,omitempty"`
-}
-
-type CallToolParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"` //  Raw JSON arguments.
-}
-type CallToolResult struct {
-	Content []ToolResultContent `json:"content"`
-	IsError bool                `json:"isError"`
-}
-
-type ToolResultContent struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
-	// You'll need to add Image, Audio, and Resource fields here when you implement those.
 }
 
 type Prompt struct {
