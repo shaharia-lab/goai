@@ -2,9 +2,10 @@
 
 The `goai` package provides a flexible interface for working with various
 Large Language Models (LLMs). This module supports multiple providers
-and offers features like streaming responses and configurable parameters.
+and offers features like streaming responses, configurable parameters,
+and tool calling capabilities.
 
-## Example
+## Basic Example
 
 Here's a complete example using OpenAI's GPT-3.5:
 
@@ -42,6 +43,86 @@ func main() {
 
     fmt.Printf("Response: %s\n", response.Text)
     fmt.Printf("Input token: %d, Output token: %d", response.TotalInputToken, response.TotalOutputToken)
+}
+```
+
+## Tool Calling
+
+The package supports tool calling capabilities, currently available with the Anthropic provider. This allows the LLM to interact with custom tools during the conversation.
+
+### Implementing Tools
+
+Tools must implement the `MCPToolExecutor` interface:
+
+```go
+type WeatherTool struct{}
+
+func (t *WeatherTool) GetDefinition() goai.MCPTool {
+    return goai.MCPTool{
+        Name:        "get_weather",
+        Description: "Get current weather for a city",
+        Version:     "1.0.0",
+        InputSchema: json.RawMessage(`{
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "Name of the city"
+                }
+            },
+            "required": ["city"]
+        }`),
+    }
+}
+
+func (t *WeatherTool) Execute(ctx context.Context, input json.RawMessage) (goai.MCPToolResponse, error) {
+    var params struct {
+        City string `json:"city"`
+    }
+    if err := json.Unmarshal(input, &params); err != nil {
+        return goai.MCPToolResponse{}, fmt.Errorf("invalid input: %w", err)
+    }
+
+    // In a real implementation, you would call a weather API here
+    return goai.MCPToolResponse{
+        Content: []goai.MCPContentItem{{
+            Type: "text",
+            Text: fmt.Sprintf("Weather in %s: 22°C, Partly Cloudy", params.City),
+        }},
+    }, nil
+}
+```
+
+### Using Tools with Anthropic Provider
+
+```go
+func main() {
+// Create tool registry
+    toolRegistry := goai.NewMCPToolRegistry()
+    toolRegistry.Register(&WeatherTool{})
+    toolRegistry.Register(&WordCountTool{})
+
+    // Create Anthropic provider with tools
+    llmProvider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{
+        Client: goai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY")),
+        Model:  anthropic.ModelClaude3_5Sonnet20241022,
+    }, toolRegistry)
+
+    // Configure LLM Request
+    llm := goai.NewLLMRequest(goai.NewRequestConfig(
+        goai.WithMaxToken(100),
+        goai.WithTemperature(0.7),
+    ), llmProvider)
+
+    // Generate response
+    response, err := llm.Generate([]goai.LLMMessage{
+        {Role: goai.UserRole, Text: "What's the weather in London and count the words in this sentence?"},
+    })
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Printf("Response: %s\n", response.Text)
 }
 ```
 
@@ -118,7 +199,7 @@ For more details about OpenAI API can be found [here](https://platform.openai.co
 llmProvider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{
     Client: goai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY")),
     Model:  anthropic.ModelClaude3_5Sonnet20241022,
-})
+}, toolRegistry) // Optional tool registry for function calling
 ```
 
 For more details about Anthropic API can be found [here](https://docs.anthropic.com/en/api/getting-started)
