@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -63,8 +64,6 @@ type Resource struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	MimeType    string `json:"mimeType,omitempty"`
-	// Note:  We store content internally as a string for simplicity.
-	//        A real implementation might handle binary data differently.
 	TextContent string `json:"-"` // Don't serialize this directly.
 }
 
@@ -84,7 +83,7 @@ type ResourceContent struct {
 	URI      string `json:"uri"`
 	MimeType string `json:"mimeType"`
 	Text     string `json:"text,omitempty"`
-	Blob     string `json:"blob,omitempty"` //  Base64 encoded.  Not used in this example.
+	Blob     string `json:"blob,omitempty"` // Base64 encoded.
 }
 
 // --- Logging Structures ----
@@ -121,27 +120,54 @@ type LogMessageParams struct {
 	Data   interface{} `json:"data"`
 }
 
+// --- Tool Structures ---
+
+type Tool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema"` //  Store schema as raw JSON.
+}
+
+type ListToolsResult struct {
+	Tools      []Tool `json:"tools"`
+	NextCursor string `json:"nextCursor,omitempty"`
+}
+
+type CallToolParams struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"` //  Raw JSON arguments.
+}
+type CallToolResult struct {
+	Content []ToolResultContent `json:"content"`
+	IsError bool                `json:"isError"`
+}
+
+type ToolResultContent struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+	// You'll need to add Image, Audio, and Resource fields here when you implement those.
+}
+
 // --- Server Implementation ---
 
 type MCPServer struct {
 	protocolVersion    string
 	clientCapabilities map[string]any
-	logger             *log.Logger // Use Go's standard logger
-	in                 io.Reader   // Input stream (stdin)
-	out                io.Writer   // Output stream (stdout)
-	ServerInfo         struct {    //  serverInfo, use an exported field
+	logger             *log.Logger
+	in                 io.Reader
+	out                io.Writer
+	ServerInfo         struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	}
-	// Server Capabilities
 	capabilities map[string]any
-	resources    map[string]Resource // Simple in-memory resource store.
+	resources    map[string]Resource
 	minLogLevel  LogLevel
+	tools        map[string]Tool // Store available tools
 }
 
 func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
-
-	logger := log.New(os.Stderr, "[MCP Server] ", log.LstdFlags|log.Lmsgprefix) // Log to stderr
+	logger := log.New(os.Stderr, "[MCP Server] ", log.LstdFlags|log.Lmsgprefix)
 
 	s := &MCPServer{
 		protocolVersion: "2024-11-05",
@@ -152,21 +178,24 @@ func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
 			Name    string `json:"name"`
 			Version string `json:"version"`
 		}{
-			Name:    "Resource-Server-Example", // Server Name
-			Version: "0.1.0",                   // Server version
+			Name:    "Resource-Server-Example",
+			Version: "0.1.0",
 		},
 		capabilities: map[string]any{
 			"resources": map[string]any{
-				"listChanged": false, // We won't implement dynamic resource changes.
-				"subscribe":   false, // Nor subscriptions.
+				"listChanged": false,
+				"subscribe":   false,
 			},
 			"logging": map[string]any{},
+			"tools": map[string]any{ // Add tools capability
+				"listChanged": false,
+			},
 		},
-		resources:   make(map[string]Resource), // Initialize the map
+		resources:   make(map[string]Resource),
 		minLogLevel: LogLevelInfo,
+		tools:       make(map[string]Tool), // Initialize tools map
 	}
 
-	// Pre-populate with some example resources.
 	s.addResource(Resource{
 		URI:         "file:///example/resource1.txt",
 		Name:        "Example Resource 1",
@@ -182,11 +211,30 @@ func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
 		TextContent: `{"key": "value"}`,
 	})
 
+	// Add a sample tool
+	s.addTool(Tool{
+		Name:        "get_weather",
+		Description: "Get the current weather for a given location.",
+		InputSchema: json.RawMessage(`{
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "The city and state, e.g. San Francisco, CA"
+                }
+            },
+            "required": ["location"]
+        }`),
+	})
+
 	return s
 }
 
 func (s *MCPServer) addResource(resource Resource) {
 	s.resources[resource.URI] = resource
+}
+func (s *MCPServer) addTool(tool Tool) {
+	s.tools[tool.Name] = tool
 }
 
 func (s *MCPServer) sendResponse(id *json.RawMessage, result interface{}, err *Error) {
@@ -200,22 +248,17 @@ func (s *MCPServer) sendResponse(id *json.RawMessage, result interface{}, err *E
 	jsonResponse, marshalErr := json.Marshal(response)
 	if marshalErr != nil {
 		s.logger.Printf("Error marshalling response: %v", marshalErr)
-		//  Attempt to send an error response about the marshalling failure.
 		s.sendError(id, -32603, "Internal error: failed to marshal response", nil)
 		return
 	}
 
-	// Add newline delimiter.
 	jsonResponse = append(jsonResponse, '\n')
-
 	_, writeErr := s.out.Write(jsonResponse)
 	if writeErr != nil {
 		s.logger.Printf("Error writing response to stdout: %v", writeErr)
-		// At this point, we can't really communicate back to the client.  Just log.
 	}
 }
 
-// sendError sends a JSON-RPC error response.  Handles the boilerplate.
 func (s *MCPServer) sendError(id *json.RawMessage, code int, message string, data interface{}) {
 	errorResponse := Response{
 		JSONRPC: "2.0",
@@ -228,18 +271,14 @@ func (s *MCPServer) sendError(id *json.RawMessage, code int, message string, dat
 	}
 	jsonErrorResponse, err := json.Marshal(errorResponse)
 	if err != nil {
-		s.logger.Printf("Error marshaling error response: %v", err) //  Log, not much else we can do.
-		return                                                      // Give up.
+		s.logger.Printf("Error marshaling error response: %v", err)
+		return
 	}
-
-	// Add newline delimiter.
 	jsonErrorResponse = append(jsonErrorResponse, '\n')
-
 	_, writeErr := s.out.Write(jsonErrorResponse)
 	if writeErr != nil {
-		s.logger.Printf("Failed to write error response: %v", writeErr) // Log write error
+		s.logger.Printf("Failed to write error response: %v", writeErr)
 	}
-
 }
 
 func (s *MCPServer) sendNotification(method string, params interface{}) {
@@ -247,15 +286,13 @@ func (s *MCPServer) sendNotification(method string, params interface{}) {
 		JSONRPC: "2.0",
 		Method:  method,
 	}
-
 	if params != nil {
 		paramsBytes, err := json.Marshal(params)
 		if err != nil {
 			s.logger.Printf("Error marshaling notification parameters: %v", err)
-			return //  Can't send the notification.
+			return
 		}
 		notification.Params = json.RawMessage(paramsBytes)
-
 	}
 
 	jsonNotification, err := json.Marshal(notification)
@@ -263,7 +300,6 @@ func (s *MCPServer) sendNotification(method string, params interface{}) {
 		s.logger.Printf("Error marshaling notification message: %v", err)
 		return
 	}
-
 	jsonNotification = append(jsonNotification, '\n')
 	_, writeErr := s.out.Write(jsonNotification)
 	if writeErr != nil {
@@ -282,8 +318,8 @@ func (s *MCPServer) handleRequest(request *Request) {
 			return
 		}
 
-		if !strings.HasPrefix(params.ProtocolVersion, "2024-11") { // Check for any "2024-11" version, not just -05
-			s.sendError(request.ID, -32602, "Unsupported protocol version", map[string][]string{"supported": {"2024-11-05"}}) // Send supported versions.
+		if !strings.HasPrefix(params.ProtocolVersion, "2024-11") {
+			s.sendError(request.ID, -32602, "Unsupported protocol version", map[string][]string{"supported": {"2024-11-05"}})
 			return
 		}
 
@@ -291,22 +327,16 @@ func (s *MCPServer) handleRequest(request *Request) {
 		result := InitializeResult{
 			ProtocolVersion: s.protocolVersion,
 			Capabilities:    s.capabilities,
-			ServerInfo:      s.ServerInfo, // Use the exported field
+			ServerInfo:      s.ServerInfo,
 		}
-
 		s.sendResponse(request.ID, result, nil)
-		//  The spec requires an "initialized" *notification* after the initialize response.
-		//  We can't send it *here* because we might be handling other requests concurrently.
-		//  The main loop will have to track whether the 'initialized' notification has been received.
 
 	case "ping":
-		// Respond with an empty result.
 		s.sendResponse(request.ID, map[string]interface{}{}, nil)
+
 	case "resources/list":
-		//  Basic implementation, no pagination.
 		var resourceList []Resource
 		for _, res := range s.resources {
-			// Create a copy without TextContent for the list operation.
 			resourceList = append(resourceList, Resource{
 				URI:         res.URI,
 				Name:        res.Name,
@@ -334,7 +364,7 @@ func (s *MCPServer) handleRequest(request *Request) {
 			Contents: []ResourceContent{{
 				URI:      resource.URI,
 				MimeType: resource.MimeType,
-				Text:     resource.TextContent, //  Include content here.
+				Text:     resource.TextContent,
 			}},
 		}
 		s.sendResponse(request.ID, result, nil)
@@ -351,9 +381,63 @@ func (s *MCPServer) handleRequest(request *Request) {
 		}
 
 		s.minLogLevel = params.Level
-		s.sendResponse(request.ID, struct{}{}, nil) // Empty result for success.
+		s.sendResponse(request.ID, struct{}{}, nil)
 
-	// Add other request handlers here (resources/list, resources/read, etc.)
+	case "tools/list":
+		var toolList []Tool
+		for _, tool := range s.tools {
+			toolList = append(toolList, tool) // Append the tool directly.
+		}
+		result := ListToolsResult{Tools: toolList}
+		s.sendResponse(request.ID, result, nil)
+	case "tools/call":
+		var params CallToolParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			s.sendError(request.ID, -32602, "Invalid params", nil)
+			return
+		}
+		tool, ok := s.tools[params.Name]
+		if !ok {
+			s.sendError(request.ID, -32602, "Unknown tool", map[string]string{"tool": params.Name})
+			return
+		}
+		// VERY basic argument validation, just checking required fields.
+		var input map[string]interface{}
+		if err := json.Unmarshal(params.Arguments, &input); err != nil {
+			s.sendError(request.ID, -32602, "Invalid tool arguments", nil)
+			return
+		}
+		var schema map[string]interface{}
+		if err := json.Unmarshal(tool.InputSchema, &schema); err != nil {
+			s.sendError(request.ID, -32603, "Internal error: invalid tool schema", nil)
+			return
+		}
+
+		required, hasRequired := schema["required"].([]interface{}) // Use type assertion
+		if hasRequired {
+			for _, reqField := range required {
+				reqFieldName, ok := reqField.(string)
+				if !ok {
+					continue
+				}
+				if _, present := input[reqFieldName]; !present {
+					s.sendError(request.ID, -32602, "Missing required argument", map[string]string{"argument": reqFieldName})
+					return
+				}
+			}
+		}
+
+		// Very basic tool execution.
+		result := CallToolResult{IsError: false}
+		if params.Name == "get_weather" {
+			location, _ := input["location"].(string) //  We checked presence above
+			result.Content = []ToolResultContent{{
+				Type: "text",
+				Text: fmt.Sprintf("Weather in %s: Sunny, 72°F", location), //  Fake data
+			}}
+
+		}
+		s.sendResponse(request.ID, result, nil)
 
 	default:
 		s.sendError(request.ID, -32601, "Method not found", nil)
@@ -364,20 +448,15 @@ func (s *MCPServer) handleNotification(notification *Notification) {
 	s.logger.Printf("Received notification: method=%s", notification.Method)
 	switch notification.Method {
 	case "notifications/initialized":
-		// The server is now initialized. This is currently a noop but important for lifecycle management.
+		// The server is now initialized.
 	case "notifications/cancelled":
-		// Handle cancellation, likely need a way to map request IDs to running operations
 		var cancelParams struct {
 			RequestID json.RawMessage `json:"requestId"`
 			Reason    string          `json:"reason"`
 		}
 		if err := json.Unmarshal(notification.Params, &cancelParams); err == nil {
-			//  Here, you'd need a mechanism to find and cancel the operation
-			//  associated with cancelParams.RequestID.  This might involve
-			//  context.Context and goroutine management, which is beyond a simple example.
 			s.logger.Printf("Cancellation requested for ID %s: %s", string(cancelParams.RequestID), cancelParams.Reason)
 		}
-	// ... handle other notifications ...
 
 	default:
 		s.logger.Printf("Unhandled notification: %s", notification.Method) // Log but don't send error.
@@ -385,9 +464,8 @@ func (s *MCPServer) handleNotification(notification *Notification) {
 }
 
 func (s *MCPServer) logMessage(level LogLevel, loggerName string, data interface{}) {
-
 	if logLevelSeverity[level] > logLevelSeverity[s.minLogLevel] {
-		return // Don't send if below minimum log level
+		return
 	}
 
 	params := LogMessageParams{
@@ -395,9 +473,7 @@ func (s *MCPServer) logMessage(level LogLevel, loggerName string, data interface
 		Logger: loggerName,
 		Data:   data,
 	}
-
 	s.sendNotification("notifications/message", params)
-
 }
 
 func (s *MCPServer) Run() {
