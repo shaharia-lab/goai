@@ -9,8 +9,7 @@ import (
 	"strings"
 )
 
-// Define the core JSON-RPC types.  We don't use a library to be absolutely
-// explicit about adhering to the spec, and to avoid unnecessary dependencies.
+// --- JSON-RPC Structures ---
 
 type Request struct {
 	JSONRPC string           `json:"jsonrpc"`
@@ -38,7 +37,7 @@ type Notification struct {
 	Params  json.RawMessage `json:"params"`
 }
 
-// Initialize Request and Response Params
+// --- Initialize Request/Response ---
 
 type InitializeParams struct {
 	ProtocolVersion string         `json:"protocolVersion"`
@@ -58,6 +57,70 @@ type InitializeResult struct {
 	} `json:"serverInfo"`
 }
 
+// --- Resource Structures ---
+type Resource struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+	// Note:  We store content internally as a string for simplicity.
+	//        A real implementation might handle binary data differently.
+	TextContent string `json:"-"` // Don't serialize this directly.
+}
+
+type ListResourcesResult struct {
+	Resources  []Resource `json:"resources"`
+	NextCursor string     `json:"nextCursor,omitempty"`
+}
+
+type ReadResourceParams struct {
+	URI string `json:"uri"`
+}
+type ReadResourceResult struct {
+	Contents []ResourceContent `json:"contents"`
+}
+
+type ResourceContent struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType"`
+	Text     string `json:"text,omitempty"`
+	Blob     string `json:"blob,omitempty"` //  Base64 encoded.  Not used in this example.
+}
+
+// --- Logging Structures ----
+type LogLevel string
+
+const (
+	LogLevelDebug     LogLevel = "debug"
+	LogLevelInfo      LogLevel = "info"
+	LogLevelNotice    LogLevel = "notice"
+	LogLevelWarning   LogLevel = "warning"
+	LogLevelError     LogLevel = "error"
+	LogLevelCritical  LogLevel = "critical"
+	LogLevelAlert     LogLevel = "alert"
+	LogLevelEmergency LogLevel = "emergency"
+)
+
+var logLevelSeverity = map[LogLevel]int{
+	LogLevelDebug:     7,
+	LogLevelInfo:      6,
+	LogLevelNotice:    5,
+	LogLevelWarning:   4,
+	LogLevelError:     3,
+	LogLevelCritical:  2,
+	LogLevelAlert:     1,
+	LogLevelEmergency: 0,
+}
+
+type SetLogLevelParams struct {
+	Level LogLevel `json:"level"`
+}
+type LogMessageParams struct {
+	Level  LogLevel    `json:"level"`
+	Logger string      `json:"logger,omitempty"`
+	Data   interface{} `json:"data"`
+}
+
 // --- Server Implementation ---
 
 type MCPServer struct {
@@ -72,6 +135,8 @@ type MCPServer struct {
 	}
 	// Server Capabilities
 	capabilities map[string]any
+	resources    map[string]Resource // Simple in-memory resource store.
+	minLogLevel  LogLevel
 }
 
 func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
@@ -87,16 +152,41 @@ func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
 			Name    string `json:"name"`
 			Version string `json:"version"`
 		}{
-			Name:    "Generic-MCP-Server", // Server Name
-			Version: "0.1.0",              // Server version
+			Name:    "Resource-Server-Example", // Server Name
+			Version: "0.1.0",                   // Server version
 		},
 		capabilities: map[string]any{
-			"logging": map[string]any{}, // Example:  Enable logging capability.
-			// Add other server capabilities here, e.g., "resources", "prompts", "tools".
+			"resources": map[string]any{
+				"listChanged": false, // We won't implement dynamic resource changes.
+				"subscribe":   false, // Nor subscriptions.
+			},
+			"logging": map[string]any{},
 		},
+		resources:   make(map[string]Resource), // Initialize the map
+		minLogLevel: LogLevelInfo,
 	}
 
+	// Pre-populate with some example resources.
+	s.addResource(Resource{
+		URI:         "file:///example/resource1.txt",
+		Name:        "Example Resource 1",
+		Description: "This is the first example resource.",
+		MimeType:    "text/plain",
+		TextContent: "Content of resource 1.",
+	})
+	s.addResource(Resource{
+		URI:         "file:///example/resource2.json",
+		Name:        "Example Resource 2",
+		Description: "This is the second example resource.",
+		MimeType:    "application/json",
+		TextContent: `{"key": "value"}`,
+	})
+
 	return s
+}
+
+func (s *MCPServer) addResource(resource Resource) {
+	s.resources[resource.URI] = resource
 }
 
 func (s *MCPServer) sendResponse(id *json.RawMessage, result interface{}, err *Error) {
@@ -152,6 +242,35 @@ func (s *MCPServer) sendError(id *json.RawMessage, code int, message string, dat
 
 }
 
+func (s *MCPServer) sendNotification(method string, params interface{}) {
+	notification := Notification{
+		JSONRPC: "2.0",
+		Method:  method,
+	}
+
+	if params != nil {
+		paramsBytes, err := json.Marshal(params)
+		if err != nil {
+			s.logger.Printf("Error marshaling notification parameters: %v", err)
+			return //  Can't send the notification.
+		}
+		notification.Params = json.RawMessage(paramsBytes)
+
+	}
+
+	jsonNotification, err := json.Marshal(notification)
+	if err != nil {
+		s.logger.Printf("Error marshaling notification message: %v", err)
+		return
+	}
+
+	jsonNotification = append(jsonNotification, '\n')
+	_, writeErr := s.out.Write(jsonNotification)
+	if writeErr != nil {
+		s.logger.Printf("Failed to write notification message: %v", writeErr)
+	}
+}
+
 func (s *MCPServer) handleRequest(request *Request) {
 	s.logger.Printf("Received request: method=%s, id=%v", request.Method, request.ID)
 
@@ -183,6 +302,56 @@ func (s *MCPServer) handleRequest(request *Request) {
 	case "ping":
 		// Respond with an empty result.
 		s.sendResponse(request.ID, map[string]interface{}{}, nil)
+	case "resources/list":
+		//  Basic implementation, no pagination.
+		var resourceList []Resource
+		for _, res := range s.resources {
+			// Create a copy without TextContent for the list operation.
+			resourceList = append(resourceList, Resource{
+				URI:         res.URI,
+				Name:        res.Name,
+				Description: res.Description,
+				MimeType:    res.MimeType,
+			})
+		}
+		result := ListResourcesResult{Resources: resourceList}
+		s.sendResponse(request.ID, result, nil)
+
+	case "resources/read":
+		var params ReadResourceParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			s.sendError(request.ID, -32602, "Invalid params", nil)
+			return
+		}
+
+		resource, ok := s.resources[params.URI]
+		if !ok {
+			s.sendError(request.ID, -32002, "Resource not found", map[string]string{"uri": params.URI})
+			return
+		}
+
+		result := ReadResourceResult{
+			Contents: []ResourceContent{{
+				URI:      resource.URI,
+				MimeType: resource.MimeType,
+				Text:     resource.TextContent, //  Include content here.
+			}},
+		}
+		s.sendResponse(request.ID, result, nil)
+
+	case "logging/setLevel":
+		var params SetLogLevelParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			s.sendError(request.ID, -32602, "Invalid Params", nil)
+			return
+		}
+		if _, ok := logLevelSeverity[params.Level]; !ok {
+			s.sendError(request.ID, -32602, "Invalid log level", nil)
+			return
+		}
+
+		s.minLogLevel = params.Level
+		s.sendResponse(request.ID, struct{}{}, nil) // Empty result for success.
 
 	// Add other request handlers here (resources/list, resources/read, etc.)
 
@@ -213,6 +382,22 @@ func (s *MCPServer) handleNotification(notification *Notification) {
 	default:
 		s.logger.Printf("Unhandled notification: %s", notification.Method) // Log but don't send error.
 	}
+}
+
+func (s *MCPServer) logMessage(level LogLevel, loggerName string, data interface{}) {
+
+	if logLevelSeverity[level] > logLevelSeverity[s.minLogLevel] {
+		return // Don't send if below minimum log level
+	}
+
+	params := LogMessageParams{
+		Level:  level,
+		Logger: loggerName,
+		Data:   data,
+	}
+
+	s.sendNotification("notifications/message", params)
+
 }
 
 func (s *MCPServer) Run() {
@@ -273,5 +458,11 @@ func (s *MCPServer) Run() {
 
 func main() {
 	server := NewMCPServer(os.Stdin, os.Stdout)
-	server.Run()
+
+	// Example usage of logging:
+	server.logMessage(LogLevelInfo, "main", "Starting MCP server...")
+
+	server.Run() // This will block and run the server.
+
+	server.logMessage(LogLevelInfo, "main", "MCP server shutting down.")
 }
