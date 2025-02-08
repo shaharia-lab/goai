@@ -132,3 +132,41 @@ func (s *Server) Stop() error {
 
 	return nil
 }
+
+func (s *Server) registerDefaultHandlers() {
+	s.handlers.Register("initialize", s.handleInitialize)
+	s.handlers.Register("ping", s.handlePing)
+	s.handlers.Register("resources/list", s.handleResourcesList)
+	s.handlers.Register("resources/read", s.handleResourcesRead)
+	s.handlers.Register("resources/subscribe", s.handleResourcesSubscribe)
+	s.handlers.Register("tools/list", s.handleToolsList)
+	s.handlers.Register("tools/call", s.handleToolsCall)
+	s.handlers.Register("prompts/list", s.handlePromptsList)
+	s.handlers.Register("logging/setLevel", s.handleLoggingSetLevel)
+	s.handlers.Register("sampling/createMessage", s.handleSamplingCreateMessage)
+}
+
+func (s *Server) handleMessage(conn *Connection, msg Message) {
+	if msg.Method == "" {
+		conn.SendMessage(*NewErrorResponse(msg.ID, ErrorCodeInvalidRequest, "Method is required", nil))
+		return
+	}
+
+	handler, exists := s.handlers.Get(msg.Method)
+	if !exists {
+		conn.SendMessage(*NewErrorResponse(msg.ID, ErrorCodeMethodNotFound, "Method not found", nil))
+		return
+	}
+
+	result, err := handler(conn, msg.Params)
+	if err != nil {
+		if jsonRPCErr, ok := err.(*Error); ok {
+			conn.SendMessage(*NewErrorResponse(msg.ID, jsonRPCErr.Code, jsonRPCErr.Message, jsonRPCErr.Data))
+		} else {
+			conn.SendMessage(*NewErrorResponse(msg.ID, ErrorCodeInternal, err.Error(), nil))
+		}
+		return
+	}
+
+	conn.SendMessage(*NewResponse(msg.ID, result))
+}

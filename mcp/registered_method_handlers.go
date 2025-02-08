@@ -33,24 +33,31 @@ func (h *RegisteredHandlers) Get(method string) (MethodHandler, bool) {
 	return handler, ok
 }
 
-// Standard method handlers
 func (s *Server) handleInitialize(conn *Connection, params json.RawMessage) (interface{}, error) {
-	var initParams struct {
-		ClientInfo struct {
-			Name    string `json:"name"`
-			Version string `json:"version"`
-		} `json:"clientInfo"`
-	}
-
+	var initParams InitializeParams
 	if err := json.Unmarshal(params, &initParams); err != nil {
-		return nil, err
+		return nil, NewErrorResponse(nil, ErrorCodeInvalidParams, "Invalid initialization parameters", nil)
 	}
 
-	return map[string]interface{}{
+	// Version compatibility check
+	if initParams.ProtocolVersion != "1.0" {
+		return nil, NewErrorResponse(nil, ErrorCodeInvalidParams, "Unsupported protocol version", nil)
+	}
+
+	response := map[string]interface{}{
 		"serverInfo": map[string]string{
-			"name":    "goai-mcp",
-			"version": s.version.String(),
+			"name":            "goai-mcp",
+			"version":         s.version.String(),
+			"protocolVersion": "1.0",
 		},
 		"capabilities": s.capabilities,
-	}, nil
+	}
+
+	// Send initialized notification after successful initialization
+	initializedNotification := NewRequest(nil, "initialized", nil)
+	if err := conn.SendMessage(*initializedNotification); err != nil {
+		s.logger.WithError(err).Error("Failed to send initialized notification")
+	}
+
+	return response, nil
 }

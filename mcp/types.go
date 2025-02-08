@@ -33,11 +33,21 @@ type ServerCapabilities struct {
 	Resources struct {
 		Subscribe   bool `json:"subscribe"`
 		ListChanged bool `json:"listChanged"`
-	}
+	} `json:"resources"`
 	Tools struct {
 		ListChanged bool `json:"listChanged"`
 		Execute     bool `json:"execute"`
-	}
+	} `json:"tools"`
+	Prompts struct {
+		List        bool `json:"list"`
+		ListChanged bool `json:"listChanged"`
+	} `json:"prompts"`
+	Logging struct {
+		SetLevel bool `json:"setLevel"`
+	} `json:"logging"`
+	Sampling struct {
+		CreateMessage bool `json:"createMessage"`
+	} `json:"sampling"`
 }
 
 // LifecycleState represents the server's current state
@@ -50,3 +60,14 @@ const (
 	StateShuttingDown
 	StateStopped
 )
+
+type InitializeParams struct {
+	ProtocolVersion string                 `json:"protocolVersion"`
+	ClientInfo      ClientInfo             `json:"clientInfo"`
+	Capabilities    map[string]interface{} `json:"capabilities"`
+}
+
+type ClientInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
