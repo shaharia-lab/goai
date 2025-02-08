@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -53,39 +54,47 @@ func (pm *PromptManager) RegisterPrompt(prompt Prompt) error {
 // ListPrompts returns a paginated list of prompts
 func (pm *PromptManager) ListPrompts(cursor string, limit int) ListPromptsResult {
 	if limit <= 0 {
-		limit = 50 // Default limit
+		limit = 50
 	}
 
-	// Convert map to slice for pagination
-	allPrompts := make([]Prompt, 0, len(pm.prompts))
-	for _, p := range pm.prompts {
-		allPrompts = append(allPrompts, p)
+	// Get all prompt names and sort them
+	var names []string
+	for name := range pm.prompts {
+		names = append(names, name)
 	}
+	sort.Strings(names)
 
-	// Find start index based on cursor
+	// Find starting index based on cursor
 	startIdx := 0
 	if cursor != "" {
-		for i, p := range allPrompts {
-			if p.Name == cursor {
+		for i, name := range names {
+			if name == cursor {
 				startIdx = i + 1
 				break
 			}
 		}
 	}
 
-	// Get prompts for current page
+	// Calculate end index
 	endIdx := startIdx + limit
-	if endIdx > len(allPrompts) {
-		endIdx = len(allPrompts)
+	if endIdx > len(names) {
+		endIdx = len(names)
 	}
 
+	// Get the slice of prompts for this page
+	var pagePrompts []Prompt
+	for i := startIdx; i < endIdx; i++ {
+		pagePrompts = append(pagePrompts, pm.prompts[names[i]])
+	}
+
+	// Set next cursor
 	var nextCursor string
-	if endIdx < len(allPrompts) {
-		nextCursor = allPrompts[endIdx-1].Name
+	if endIdx < len(names) {
+		nextCursor = names[endIdx-1]
 	}
 
 	return ListPromptsResult{
-		Prompts:    allPrompts[startIdx:endIdx],
+		Prompts:    pagePrompts,
 		NextCursor: nextCursor,
 	}
 }
