@@ -148,6 +148,41 @@ type ToolResultContent struct {
 	// You'll need to add Image, Audio, and Resource fields here when you implement those.
 }
 
+type Prompt struct {
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Arguments   []PromptArgument `json:"arguments,omitempty"` // Keep arguments
+	Messages    []PromptMessage  `json:"messages,omitempty"`  // For prompts/get
+}
+
+type PromptArgument struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required"`
+}
+
+type PromptMessage struct {
+	Role    string        `json:"role"`
+	Content PromptContent `json:"content"`
+}
+
+// VERY IMPORTANT: At this stage, only 'text' type is supported
+type PromptContent struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+	// Add Image, Audio, Resource content types later.
+}
+
+type ListPromptsResult struct {
+	Prompts    []Prompt `json:"prompts"`
+	NextCursor string   `json:"nextCursor,omitempty"` // For pagination (optional, but good practice).
+}
+
+type GetPromptParams struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"` // Raw JSON for flexibility.
+}
+
 // --- Server Implementation ---
 
 type MCPServer struct {
@@ -164,6 +199,7 @@ type MCPServer struct {
 	resources    map[string]Resource
 	minLogLevel  LogLevel
 	tools        map[string]Tool // Store available tools
+	prompts      map[string]Prompt
 }
 
 func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
@@ -190,10 +226,12 @@ func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
 			"tools": map[string]any{ // Add tools capability
 				"listChanged": false,
 			},
+			"prompts": map[string]any{"listChanged": false},
 		},
 		resources:   make(map[string]Resource),
 		minLogLevel: LogLevelInfo,
 		tools:       make(map[string]Tool), // Initialize tools map
+		prompts:     make(map[string]Prompt),
 	}
 
 	s.addResource(Resource{
@@ -227,6 +265,40 @@ func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
         }`),
 	})
 
+	s.addPrompt(Prompt{
+		Name:        "code_review",
+		Description: "Asks the LLM to analyze code quality and suggest improvements",
+		Arguments: []PromptArgument{
+			{Name: "code", Description: "The code to review", Required: true},
+		},
+		Messages: []PromptMessage{ //Added messages
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: "Please review the following code:\n{code}",
+				},
+			},
+		},
+	})
+
+	s.addPrompt(Prompt{
+		Name:        "summarize_text",
+		Description: "Summarizes the given text",
+		Arguments: []PromptArgument{
+			{Name: "text", Description: "Text for summarize", Required: true},
+		},
+		Messages: []PromptMessage{ //Added messages
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: "Summarize the following text:\n{text}",
+				},
+			},
+		},
+	})
+
 	return s
 }
 
@@ -235,6 +307,10 @@ func (s *MCPServer) addResource(resource Resource) {
 }
 func (s *MCPServer) addTool(tool Tool) {
 	s.tools[tool.Name] = tool
+}
+
+func (s *MCPServer) addPrompt(prompt Prompt) {
+	s.prompts[prompt.Name] = prompt
 }
 
 func (s *MCPServer) sendResponse(id *json.RawMessage, result interface{}, err *Error) {
@@ -366,6 +442,42 @@ func (s *MCPServer) handleRequest(request *Request) {
 				MimeType: resource.MimeType,
 				Text:     resource.TextContent,
 			}},
+		}
+		s.sendResponse(request.ID, result, nil)
+	case "prompts/list":
+		var promptList []Prompt
+		for _, prompt := range s.prompts {
+			// Create a copy *without* the Messages field for the list response.
+			promptList = append(promptList, Prompt{
+				Name:        prompt.Name,
+				Description: prompt.Description,
+				Arguments:   prompt.Arguments, // Include arguments
+				// Messages is *not* included in the list response.
+			})
+		}
+		result := ListPromptsResult{Prompts: promptList}
+		s.sendResponse(request.ID, result, nil)
+	case "prompts/get":
+		var params GetPromptParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			s.sendError(request.ID, -32602, "Invalid params", nil)
+			return
+		}
+
+		prompt, ok := s.prompts[params.Name]
+		if !ok {
+			s.sendError(request.ID, -32602, "Prompt not found", map[string]string{"prompt": params.Name})
+			return
+		}
+
+		// For simplicity, this example doesn't process arguments.
+		// A full implementation would substitute arguments into the prompt messages.
+
+		result := Prompt{
+			Name:        prompt.Name,
+			Description: prompt.Description,
+			Messages:    prompt.Messages, // Include messages in get response
+
 		}
 		s.sendResponse(request.ID, result, nil)
 
