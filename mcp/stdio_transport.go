@@ -110,5 +110,18 @@ func (s *StdIOTransport) HandleMessage(handler MessageHandler) {
 }
 
 func (t *StdIOTransport) SendMessage(msg Message) error {
-	return json.NewEncoder(os.Stdout).Encode(msg)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
+	if _, err := t.writer.WriteString(header); err != nil {
+		return err
+	}
+
+	if _, err := t.writer.Write(data); err != nil {
+		return err
+	}
+	return t.writer.Flush()
 }

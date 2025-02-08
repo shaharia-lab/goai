@@ -36,12 +36,11 @@ func (h *RegisteredHandlers) Get(method string) (MethodHandler, bool) {
 func (s *Server) handleInitialize(conn *Connection, params json.RawMessage) (interface{}, error) {
 	var initParams InitializeParams
 	if err := json.Unmarshal(params, &initParams); err != nil {
-		return nil, NewErrorResponse(nil, ErrorCodeInvalidParams, "Invalid initialization parameters", nil)
+		return nil, NewMCPError(ErrorCodeInvalidParams, "Invalid initialization parameters", nil)
 	}
 
-	// Version compatibility check
 	if initParams.ProtocolVersion != "1.0" {
-		return nil, NewErrorResponse(nil, ErrorCodeInvalidParams, "Unsupported protocol version", nil)
+		return nil, NewMCPError(ErrorCodeInvalidParams, "Unsupported protocol version", nil)
 	}
 
 	response := map[string]interface{}{
@@ -53,11 +52,13 @@ func (s *Server) handleInitialize(conn *Connection, params json.RawMessage) (int
 		"capabilities": s.capabilities,
 	}
 
-	// Send initialized notification after successful initialization
-	initializedNotification, _ := NewRequest(nil, "initialized", nil)
-	if err := conn.SendMessage(*initializedNotification); err != nil {
-		s.logger.WithError(err).Error("Failed to send initialized notification")
-	}
+	// Send initialized notification AFTER response
+	go func() {
+		initializedNotification, _ := NewRequest(nil, "initialized", nil)
+		if err := conn.SendMessage(*initializedNotification); err != nil {
+			s.logger.WithError(err).Error("Failed to send initialized notification")
+		}
+	}()
 
 	return response, nil
 }

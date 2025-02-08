@@ -11,7 +11,7 @@ type Message struct {
 	Method  string          `json:"method,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  interface{}     `json:"result,omitempty"`
-	Err     *Error          `json:"error,omitempty"` // Changed from Error to Err
+	Err     *Error          `json:"error,omitempty"`
 }
 
 func (m Message) Error() string {

@@ -52,15 +52,36 @@ func (rm *ResourceManager) GetResource(uri string) (*Resource, error) {
 	return resource, nil
 }
 
-func (rm *ResourceManager) ListResources() []*Resource {
+func (rm *ResourceManager) ListResources(limit int, cursor string) ([]*Resource, string) {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 
-	resources := make([]*Resource, 0, len(rm.resources))
+	allResources := make([]*Resource, 0, len(rm.resources))
 	for _, r := range rm.resources {
-		resources = append(resources, r)
+		allResources = append(allResources, r)
 	}
-	return resources
+
+	// Simple cursor implementation
+	start := 0
+	if cursor != "" {
+		// In real implementation, decode and validate cursor
+		start = parseCursor(cursor)
+	}
+
+	end := start + limit
+	if end > len(allResources) {
+		end = len(allResources)
+	}
+
+	return allResources[start:end], generateCursor(end)
+}
+
+// Helper functions for cursor handling
+func parseCursor(cursor string) int {
+	return 0
+}
+func generateCursor(pos int) string {
+	return ""
 }
 
 func (rm *ResourceManager) Subscribe(uri string, conn *Connection) {

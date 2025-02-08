@@ -19,8 +19,21 @@ func (s *Server) registerCapabilityHandlers() {
 }
 
 func (s *Server) handleResourcesList(conn *Connection, params json.RawMessage) (interface{}, error) {
-	resources := s.resourceMgr.ListResources()
-	return resources, nil
+	var request struct {
+		Limit  int    `json:"limit"`
+		Cursor string `json:"cursor"`
+	}
+
+	if err := json.Unmarshal(params, &request); err != nil {
+		return nil, NewMCPError(ErrorCodeInvalidParams, "Invalid parameters", nil)
+	}
+
+	resources, nextCursor := s.resourceMgr.ListResources(request.Limit, request.Cursor)
+	return map[string]interface{}{
+		"items":      resources,
+		"nextCursor": nextCursor,
+		"total":      len(resources),
+	}, nil
 }
 
 func (s *Server) handleResourcesRead(conn *Connection, params json.RawMessage) (interface{}, error) {
