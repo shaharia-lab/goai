@@ -198,7 +198,7 @@ func (s *MCPServer) handleInitialize(ctx context.Context, params MCPInitializePa
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.state != MCPStateUninitialized {
+	if s.state != MCPStateUninitialized && s.state != MCPStateInitializing {
 		return nil, &MCPError{
 			Code:    MCPErrorCodeInvalidRequest,
 			Message: "server already initialized",
@@ -733,41 +733,20 @@ type MCPResourceQuery struct {
 	Cursor   string   `json:"cursor,omitempty"`
 }
 
-func matchesQuery(resource *MCPResource, query MCPResourceQuery) bool {
-	if len(query.Types) > 0 {
-		typeMatch := false
-		for _, t := range query.Types {
-			if resource.Type == t {
-				typeMatch = true
-				break
-			}
-		}
-		if !typeMatch {
-			return false
-		}
-	}
-
-	if query.Pattern != "" {
-		// TODO: Implement pattern matching if needed
-	}
-
-	return true
-}
-
-// Pagination support
+// MCPPaginationInfo support
 type MCPPaginationInfo struct {
 	HasMore    bool   `json:"hasMore"`
 	NextCursor string `json:"nextCursor,omitempty"`
 }
 
-// Server lifecycle
+// Start Server lifecycle
 func (s *MCPServer) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.state != MCPStateUninitialized {
 		s.mu.Unlock()
 		return fmt.Errorf("server already started")
 	}
-	s.state = MCPStateInitializing
+	s.state = MCPStateInitializing // Only set to Initializing here
 	s.mu.Unlock()
 
 	for _, transport := range s.transports {
@@ -775,10 +754,6 @@ func (s *MCPServer) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to start transport: %w", err)
 		}
 	}
-
-	s.mu.Lock()
-	s.state = MCPStateRunning
-	s.mu.Unlock()
 
 	return nil
 }
@@ -931,7 +906,7 @@ func (s *MCPServer) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// MCPMessageHandler handles incoming messages via POST endpoint
+// HandleMessage handles incoming messages via POST endpoint
 func (s *MCPServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
