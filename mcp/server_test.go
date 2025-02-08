@@ -362,3 +362,92 @@ func TestServerShutdown(t *testing.T) {
 		t.Error("Server failed to shut down in time")
 	}
 }
+
+func TestLogMessage(t *testing.T) {
+	tests := []struct {
+		name       string
+		level      LogLevel
+		minLevel   LogLevel
+		loggerName string
+		data       interface{}
+		expectLog  bool
+	}{
+		{
+			name:       "debug message above min level",
+			level:      LogLevelDebug,
+			minLevel:   LogLevelError,
+			loggerName: "test",
+			data:       "debug info",
+			expectLog:  false,
+		},
+		{
+			name:       "error message at min level",
+			level:      LogLevelError,
+			minLevel:   LogLevelError,
+			loggerName: "test",
+			data:       "error occurred",
+			expectLog:  true,
+		},
+		{
+			name:       "info message below min level",
+			level:      LogLevelInfo,
+			minLevel:   LogLevelDebug,
+			loggerName: "system",
+			data:       map[string]string{"status": "running"},
+			expectLog:  true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out := &bytes.Buffer{}
+			srv := NewMCPServer(strings.NewReader(""), out)
+			srv.minLogLevel = tc.minLevel
+
+			// Call LogMessage
+			srv.LogMessage(tc.level, tc.loggerName, tc.data)
+
+			// Check if notification was sent
+			if tc.expectLog {
+				// Try to decode the notification
+				var notification struct {
+					JSONRPC string           `json:"jsonrpc"`
+					Method  string           `json:"method"`
+					Params  LogMessageParams `json:"params"`
+				}
+
+				if err := json.NewDecoder(out).Decode(&notification); err != nil {
+					t.Fatalf("Failed to decode notification: %v", err)
+				}
+
+				// Verify notification format
+				if notification.JSONRPC != "2.0" {
+					t.Errorf("Expected JSONRPC 2.0, got %s", notification.JSONRPC)
+				}
+
+				if notification.Method != "notifications/message" {
+					t.Errorf("Expected method notifications/message, got %s", notification.Method)
+				}
+
+				// Verify params
+				if notification.Params.Level != tc.level {
+					t.Errorf("Expected level %s, got %s", tc.level, notification.Params.Level)
+				}
+
+				if notification.Params.Logger != tc.loggerName {
+					t.Errorf("Expected logger %s, got %s", tc.loggerName, notification.Params.Logger)
+				}
+
+				// Verify data was included
+				if notification.Params.Data == nil {
+					t.Error("Expected data in notification, got nil")
+				}
+			} else {
+				// Verify no notification was sent
+				if out.Len() > 0 {
+					t.Error("Expected no notification, but got output")
+				}
+			}
+		})
+	}
+}
