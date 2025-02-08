@@ -93,7 +93,7 @@ func (t *WeatherTool) Execute(ctx context.Context, input json.RawMessage) (goai.
 }
 ```
 
-### Using Tools with Anthropic Provider
+### Using Tools with LLM Provider
 
 ```go
 func main() {
@@ -107,22 +107,8 @@ func main() {
         Client: goai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY")),
         Model:  anthropic.ModelClaude3_5Sonnet20241022,
     }, toolRegistry)
-
-    // Configure LLM Request
-    llm := goai.NewLLMRequest(goai.NewRequestConfig(
-        goai.WithMaxToken(100),
-        goai.WithTemperature(0.7),
-    ), llmProvider)
-
-    // Generate response
-    response, err := llm.Generate([]goai.LLMMessage{
-        {Role: goai.UserRole, Text: "What's the weather in London and count the words in this sentence?"},
-    })
-    if err != nil {
-        panic(err)
-    }
-
-    fmt.Printf("Response: %s\n", response.Text)
+    // rest of the code
+    // ....
 }
 ```
 
