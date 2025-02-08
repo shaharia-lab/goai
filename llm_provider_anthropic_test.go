@@ -3,6 +3,7 @@ package goai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -113,7 +114,7 @@ func TestAnthropicLLMProvider_NewAnthropicLLMProvider(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := NewAnthropicLLMProvider(tt.config)
+			provider := NewAnthropicLLMProvider(tt.config, &MCPToolRegistry{})
 
 			assert.Equal(t, tt.expectedModel, provider.model, "unexpected model")
 			assert.NotNil(t, provider.client, "expected client to be initialized")
@@ -180,7 +181,7 @@ func TestAnthropicLLMProvider_GetResponse(t *testing.T) {
 			provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 				Client: mockClient,
 				Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
-			})
+			}, &MCPToolRegistry{})
 
 			result, err := provider.GetResponse(tt.messages, tt.config)
 
@@ -266,7 +267,7 @@ func TestAnthropicLLMProvider_GetStreamingResponse(t *testing.T) {
 			provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 				Client: mockClient,
 				Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
-			})
+			}, &MCPToolRegistry{})
 
 			ctx := context.Background()
 			stream, err := provider.GetStreamingResponse(ctx, tt.messages, tt.config)
@@ -327,4 +328,172 @@ func createStreamEvent(eventType string, index int64, text string) anthropic.Mes
 	}
 
 	return event
+}
+
+func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
+	// Create mock tool registry
+	registry := NewMCPToolRegistry()
+	mockTool := &MockTool{
+		name:        "test_tool",
+		description: "Test tool for unit testing",
+		version:     "1.0.0",
+		execFunc: func(ctx context.Context, input json.RawMessage) (MCPToolResponse, error) {
+			return MCPToolResponse{
+				Content: []MCPContentItem{{
+					Type: "text",
+					Text: "Tool execution result",
+				}},
+			}, nil
+		},
+	}
+	registry.Register(mockTool)
+
+	// Helper function to create a tool use block
+	createToolUseBlock := func() []byte {
+		return []byte(`{
+            "type": "tool_use",
+            "id": "tool_call_1",
+            "name": "test_tool",
+            "input": {"input": "test input"}
+        }`)
+	}
+
+	// Helper function to create a text block
+	createTextBlock := func(text string) []byte {
+		return []byte(fmt.Sprintf(`{
+            "type": "text",
+            "text": %q
+        }`, text))
+	}
+
+	tests := []struct {
+		name           string
+		messages       []LLMMessage
+		config         LLMRequestConfig
+		mockResponses  []*anthropic.Message
+		expectedResult LLMResponse
+		expectError    bool
+	}{
+		{
+			name: "successful tool use and response",
+			messages: []LLMMessage{
+				{Role: UserRole, Text: "Use the test tool"},
+			},
+			config: LLMRequestConfig{
+				MaxToken:    100,
+				TopP:        0.9,
+				Temperature: 0.7,
+			},
+			mockResponses: []*anthropic.Message{
+				{
+					Role:  anthropic.MessageRoleAssistant,
+					Model: anthropic.ModelClaude_3_5_Sonnet_20240620,
+					Content: func() []anthropic.ContentBlock {
+						var block anthropic.ContentBlock
+						if err := block.UnmarshalJSON(createToolUseBlock()); err != nil {
+							t.Fatal(err)
+						}
+						return []anthropic.ContentBlock{block}
+					}(),
+					Usage: anthropic.Usage{
+						InputTokens:  10,
+						OutputTokens: 5,
+					},
+					StopReason: anthropic.MessageStopReasonToolUse,
+				},
+				{
+					Role:  anthropic.MessageRoleAssistant,
+					Model: anthropic.ModelClaude_3_5_Sonnet_20240620,
+					Content: func() []anthropic.ContentBlock {
+						var block anthropic.ContentBlock
+						if err := block.UnmarshalJSON(createTextBlock("Tool execution completed successfully")); err != nil {
+							t.Fatal(err)
+						}
+						return []anthropic.ContentBlock{block}
+					}(),
+					Usage: anthropic.Usage{
+						InputTokens:  15,
+						OutputTokens: 8,
+					},
+					StopReason: anthropic.MessageStopReasonEndTurn,
+				},
+			},
+			expectedResult: LLMResponse{
+				Text:             "Tool execution completed successfully",
+				TotalInputToken:  25,
+				TotalOutputToken: 13,
+			},
+			expectError: false,
+		},
+		{
+			name: "tool not found error",
+			messages: []LLMMessage{
+				{Role: UserRole, Text: "Use a tool"},
+			},
+			config: LLMRequestConfig{
+				MaxToken:    100,
+				TopP:        0.9,
+				Temperature: 0.7,
+			},
+			mockResponses: []*anthropic.Message{
+				{
+					Role:  anthropic.MessageRoleAssistant,
+					Model: anthropic.ModelClaude_3_5_Sonnet_20240620,
+					Content: func() []anthropic.ContentBlock {
+						toolUseBlock := []byte(`{
+                            "type": "tool_use",
+                            "id": "tool_call_1",
+                            "name": "nonexistent_tool",
+                            "input": {"input": "test"}
+                        }`)
+						var block anthropic.ContentBlock
+						if err := block.UnmarshalJSON(toolUseBlock); err != nil {
+							t.Fatal(err)
+						}
+						return []anthropic.ContentBlock{block}
+					}(),
+					Usage: anthropic.Usage{
+						InputTokens:  10,
+						OutputTokens: 5,
+					},
+					StopReason: anthropic.MessageStopReasonToolUse,
+				},
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			responseIndex := 0
+			mockClient := &MockAnthropicClient{
+				createMessageFunc: func(_ context.Context, params anthropic.MessageNewParams) (*anthropic.Message, error) {
+					if responseIndex >= len(tt.mockResponses) {
+						t.Fatal("more responses requested than provided in test case")
+					}
+					response := tt.mockResponses[responseIndex]
+					responseIndex++
+					return response, nil
+				},
+			}
+
+			provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
+				Client: mockClient,
+				Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
+			}, registry)
+
+			result, err := provider.GetResponse(tt.messages, tt.config)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedResult.Text, result.Text)
+			assert.Equal(t, tt.expectedResult.TotalInputToken, result.TotalInputToken)
+			assert.Equal(t, tt.expectedResult.TotalOutputToken, result.TotalOutputToken)
+			assert.Greater(t, result.CompletionTime, float64(0))
+		})
+	}
 }

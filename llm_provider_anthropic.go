@@ -3,6 +3,9 @@ package goai
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -11,8 +14,9 @@ import (
 // AnthropicLLMProvider implements the LLMProvider interface using Anthropic's official Go SDK.
 // It provides access to Claude models through Anthropic's API.
 type AnthropicLLMProvider struct {
-	client AnthropicClientProvider
-	model  anthropic.Model
+	client       AnthropicClientProvider
+	model        anthropic.Model
+	toolRegistry *MCPToolRegistry
 }
 
 // AnthropicProviderConfig holds the configuration options for creating an Anthropic provider.
@@ -39,14 +43,15 @@ type AnthropicProviderConfig struct {
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
-func NewAnthropicLLMProvider(config AnthropicProviderConfig) *AnthropicLLMProvider {
+func NewAnthropicLLMProvider(config AnthropicProviderConfig, toolRegistry *MCPToolRegistry) *AnthropicLLMProvider {
 	if config.Model == "" {
 		config.Model = anthropic.ModelClaude_3_5_Sonnet_20240620
 	}
 
 	return &AnthropicLLMProvider{
-		client: config.Client,
-		model:  config.Model,
+		client:       config.Client,
+		model:        config.Model,
+		toolRegistry: toolRegistry,
 	}
 }
 
@@ -93,25 +98,101 @@ func (p *AnthropicLLMProvider) prepareMessageParams(messages []LLMMessage, confi
 // System messages are handled separately through Anthropic's system parameter.
 func (p *AnthropicLLMProvider) GetResponse(messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
 	startTime := time.Now()
+	ctx := context.Background()
 
-	params := p.prepareMessageParams(messages, config)
-	message, err := p.client.CreateMessage(context.Background(), params)
-	if err != nil {
-		return LLMResponse{}, err
-	}
+	// Initialize token counters
+	var totalInputTokens, totalOutputTokens int64
 
-	var responseText string
-	for _, block := range message.Content {
-		switch block := block.AsUnion().(type) {
-		case anthropic.TextBlock:
-			responseText += block.Text
+	// Convert our messages to Anthropic messages
+	anthropicMessages := []anthropic.MessageParam{}
+	for _, msg := range messages {
+		switch msg.Role {
+		case UserRole:
+			anthropicMessages = append(anthropicMessages,
+				anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Text)))
+		case AssistantRole:
+			anthropicMessages = append(anthropicMessages,
+				anthropic.NewAssistantMessage(anthropic.NewTextBlock(msg.Text)))
 		}
 	}
 
+	// Prepare tools if registry exists
+	var tools []anthropic.ToolParam
+	if p.toolRegistry != nil {
+		mcpTools := p.toolRegistry.ListTools(ctx)
+		for _, tool := range mcpTools {
+			tools = append(tools, anthropic.ToolParam{
+				Name:        anthropic.F(tool.Name),
+				Description: anthropic.F(tool.Description),
+				InputSchema: anthropic.F[interface{}](json.RawMessage(tool.InputSchema)),
+			})
+		}
+	}
+
+	var finalResponse string
+
+	// Start conversation loop
+	// Start conversation loop
+	for {
+		message, err := p.client.CreateMessage(ctx, anthropic.MessageNewParams{
+			Model:     anthropic.F(p.model),
+			MaxTokens: anthropic.F(config.MaxToken),
+			Messages:  anthropic.F(anthropicMessages),
+			Tools:     anthropic.F(tools),
+		})
+		if err != nil {
+			return LLMResponse{}, err
+		}
+
+		// Update token counts
+		totalInputTokens += message.Usage.InputTokens
+		totalOutputTokens += message.Usage.OutputTokens
+
+		// Process message content and collect tool uses
+		var toolResults []anthropic.ContentBlockParamUnion
+
+		for _, block := range message.Content {
+			switch block := block.AsUnion().(type) {
+			case anthropic.TextBlock:
+				finalResponse += block.Text + "\n"
+
+			case anthropic.ToolUseBlock:
+				// Get the tool executor
+				tool, err := p.toolRegistry.Get(ctx, block.Name)
+				if err != nil {
+					return LLMResponse{}, fmt.Errorf("tool '%s' not found: %w", block.Name, err)
+				}
+
+				// Execute the tool
+				toolResponse, err := tool.Execute(ctx, block.Input)
+				if err != nil {
+					return LLMResponse{}, fmt.Errorf("error executing tool '%s': %w", block.Name, err)
+				}
+
+				// Add tool result to collection
+				toolResults = append(toolResults,
+					anthropic.NewToolResultBlock(block.ID, toolResponse.Content[0].Text, false))
+			default:
+			}
+		}
+
+		// Add the assistant's message to the conversation
+		anthropicMessages = append(anthropicMessages, message.ToParam())
+
+		// If no tool results, we're done
+		if len(toolResults) == 0 {
+			break
+		}
+
+		// Add tool results as user message and continue the loop
+		anthropicMessages = append(anthropicMessages,
+			anthropic.NewUserMessage(toolResults...))
+	}
+
 	return LLMResponse{
-		Text:             responseText,
-		TotalInputToken:  int(message.Usage.InputTokens),
-		TotalOutputToken: int(message.Usage.OutputTokens),
+		Text:             strings.TrimSpace(finalResponse),
+		TotalInputToken:  int(totalInputTokens),
+		TotalOutputToken: int(totalOutputTokens),
 		CompletionTime:   time.Since(startTime).Seconds(),
 	}, nil
 }
