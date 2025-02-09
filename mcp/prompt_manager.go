@@ -57,14 +57,12 @@ func (pm *PromptManager) ListPrompts(cursor string, limit int) ListPromptsResult
 		limit = 50
 	}
 
-	// Get all prompt names and sort them
 	var names []string
 	for name := range pm.prompts {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	// Find starting index based on cursor
 	startIdx := 0
 	if cursor != "" {
 		for i, name := range names {
@@ -75,19 +73,16 @@ func (pm *PromptManager) ListPrompts(cursor string, limit int) ListPromptsResult
 		}
 	}
 
-	// Calculate end index
 	endIdx := startIdx + limit
 	if endIdx > len(names) {
 		endIdx = len(names)
 	}
 
-	// Get the slice of prompts for this page
 	var pagePrompts []Prompt
 	for i := startIdx; i < endIdx; i++ {
 		pagePrompts = append(pagePrompts, pm.prompts[names[i]])
 	}
 
-	// Set next cursor
 	var nextCursor string
 	if endIdx < len(names) {
 		nextCursor = names[endIdx-1]

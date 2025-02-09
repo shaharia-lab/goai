@@ -10,7 +10,7 @@ The protocol supports various features including:
 
 Example usage:
 
-	import "github.com/yourusername/mcp"
+	import "github.com/shaharia-lab/goai/mcp"
 
 	// Initialize the protocol
 	params := &mcp.InitializeParams{

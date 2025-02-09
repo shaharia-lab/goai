@@ -140,7 +140,6 @@ func TestLogManager_Log(t *testing.T) {
 		t.Errorf("Log() error = %v", err)
 	}
 
-	// Verify the output is valid JSON
 	var loggedMsg struct {
 		Timestamp string      `json:"timestamp"`
 		Level     LogLevel    `json:"level"`
@@ -164,7 +163,6 @@ func TestLogManager_Log(t *testing.T) {
 		t.Errorf("Wrong data in output: got %v, want %v", loggedMsg.Data, testData)
 	}
 
-	// Verify timestamp format
 	_, err = time.Parse(time.RFC3339, loggedMsg.Timestamp)
 	if err != nil {
 		t.Errorf("Invalid timestamp format: %v", err)
@@ -176,7 +174,6 @@ func TestLogManager_LogLevelFiltering(t *testing.T) {
 	lm := NewLogManager(buf)
 	lm.SetLevel(LogLevelError)
 
-	// This shouldn't log anything because INFO < ERROR
 	err := lm.Log(LogMessageParams{
 		Level: LogLevelInfo,
 		Data:  "should not be logged",
@@ -190,7 +187,6 @@ func TestLogManager_LogLevelFiltering(t *testing.T) {
 		t.Error("Expected no output for filtered log level")
 	}
 
-	// This should log because ERROR == ERROR
 	err = lm.Log(LogMessageParams{
 		Level: LogLevelError,
 		Data:  "should be logged",

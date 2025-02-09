@@ -66,14 +66,12 @@ func (rm *ResourceManager) ListResources(cursor string, limit int) ListResources
 		limit = 50 // Default limit
 	}
 
-	// Get all URIs and sort them for consistent ordering
 	var uris []string
 	for uri := range rm.resources {
 		uris = append(uris, uri)
 	}
 	sort.Strings(uris)
 
-	// Find start index based on cursor
 	startIdx := 0
 	if cursor != "" {
 		for i, uri := range uris {
@@ -84,19 +82,16 @@ func (rm *ResourceManager) ListResources(cursor string, limit int) ListResources
 		}
 	}
 
-	// Calculate end index
 	endIdx := startIdx + limit
 	if endIdx > len(uris) {
 		endIdx = len(uris)
 	}
 
-	// Get resources for current page
 	var pageResources []Resource
 	for i := startIdx; i < endIdx; i++ {
 		pageResources = append(pageResources, rm.resources[uris[i]])
 	}
 
-	// Set next cursor
 	var nextCursor string
 	if endIdx < len(uris) {
 		nextCursor = uris[endIdx-1]
@@ -120,7 +115,6 @@ func (rm *ResourceManager) ReadResource(params ReadResourceParams) (ReadResource
 		MimeType: resource.MimeType,
 	}
 
-	// Handle different content types
 	if strings.HasPrefix(resource.MimeType, "text/") {
 		content.Text = resource.TextContent
 	} else {

@@ -104,7 +104,6 @@ func TestRegisterPrompt(t *testing.T) {
 func TestListPrompts(t *testing.T) {
 	pm := NewPromptManager()
 
-	// Register test prompts with predictable names
 	prompts := []Prompt{
 		{
 			Name: "a_prompt1",
@@ -138,29 +137,24 @@ func TestListPrompts(t *testing.T) {
 	})
 
 	t.Run("list with pagination", func(t *testing.T) {
-		// First page
 		result := pm.ListPrompts("", 2)
 		assert.Len(t, result.Prompts, 2, "First page should have 2 prompts")
 		assert.NotEmpty(t, result.NextCursor, "First page should have a next cursor")
 
-		// Store names from first page
 		firstPageNames := make(map[string]bool)
 		for _, p := range result.Prompts {
 			firstPageNames[p.Name] = true
 		}
 
-		// Get next page
 		nextResult := pm.ListPrompts(result.NextCursor, 2)
 		assert.Len(t, nextResult.Prompts, 1, "Second page should have 1 prompt")
 		assert.Empty(t, nextResult.NextCursor, "Second page should not have a next cursor")
 
-		// Verify the prompt in second page is not in first page
 		for _, p := range nextResult.Prompts {
 			assert.False(t, firstPageNames[p.Name],
 				"Prompt %s from second page should not be in first page", p.Name)
 		}
 
-		// Verify total unique prompts
 		allPrompts := make(map[string]bool)
 		for _, p := range result.Prompts {
 			allPrompts[p.Name] = true

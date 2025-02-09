@@ -1,8 +1,11 @@
 package mcp
 
 import (
+	"encoding/json"
 	"fmt"
+	"github.com/xeipuuv/gojsonschema"
 	"sort"
+	"strings"
 )
 
 // ToolManager handles tool-related operations.
@@ -10,8 +13,6 @@ type ToolManager struct {
 	tools               map[string]Tool
 	toolImplementations map[string]ToolImplementation
 }
-
-// ToolImplementation represents the actual implementation of a tool.
 
 // NewToolManager creates a new ToolManager instance.
 func NewToolManager() *ToolManager {
@@ -42,14 +43,12 @@ func (tm *ToolManager) ListTools(cursor string, limit int) ListToolsResult {
 		limit = 50
 	}
 
-	// Get all tool names and sort them
 	var names []string
 	for name := range tm.tools {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	// Find starting index based on cursor
 	startIdx := 0
 	if cursor != "" {
 		for i, name := range names {
@@ -60,19 +59,16 @@ func (tm *ToolManager) ListTools(cursor string, limit int) ListToolsResult {
 		}
 	}
 
-	// Calculate end index
 	endIdx := startIdx + limit
 	if endIdx > len(names) {
 		endIdx = len(names)
 	}
 
-	// Get the slice of tools for this page
 	var pageTools []Tool
 	for i := startIdx; i < endIdx; i++ {
 		pageTools = append(pageTools, tm.tools[names[i]])
 	}
 
-	// Set next cursor
 	var nextCursor string
 	if endIdx < len(names) {
 		nextCursor = names[endIdx-1]
@@ -91,18 +87,46 @@ func (tm *ToolManager) CallTool(params CallToolParams) (CallToolResult, error) {
 		return CallToolResult{}, fmt.Errorf("tool not found: %s", params.Name)
 	}
 
-	// Validate tool exists
 	tool, exists := tm.tools[params.Name]
 	if !exists {
 		return CallToolResult{}, fmt.Errorf("tool metadata not found: %s", params.Name)
 	}
 
-	// Validate arguments against schema if provided
 	if tool.InputSchema != nil && len(params.Arguments) > 0 {
-		// Note: Implement schema validation here if needed
+		// Create schema loader
+		schemaLoader := gojsonschema.NewStringLoader(string(tool.InputSchema))
+
+		// Convert arguments to JSON string
+		argsJSON, err := json.Marshal(params.Arguments)
+		if err != nil {
+			return CallToolResult{}, fmt.Errorf("failed to marshal arguments: %v", err)
+		}
+
+		// Create document loader for the arguments
+		documentLoader := gojsonschema.NewStringLoader(string(argsJSON))
+
+		// Perform validation
+		result, err := gojsonschema.Validate(schemaLoader, documentLoader)
+		if err != nil {
+			return CallToolResult{}, fmt.Errorf("validation error: %v", err)
+		}
+
+		if !result.Valid() {
+			// Collect all validation errors
+			var errMsgs []string
+			for _, desc := range result.Errors() {
+				errMsgs = append(errMsgs, desc.String())
+			}
+			return CallToolResult{
+				IsError: true,
+				Content: []ToolResultContent{{
+					Type: "text",
+					Text: fmt.Sprintf("Schema validation failed: %s", strings.Join(errMsgs, "; ")),
+				}},
+			}, nil
+		}
 	}
 
-	// Call the tool implementation
 	result, err := implementation(params.Arguments)
 	if err != nil {
 		return CallToolResult{

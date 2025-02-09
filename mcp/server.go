@@ -11,14 +11,20 @@ import (
 	"strings"
 )
 
-type MCPServer struct {
+// Server represents the main Message Control Protocol server that handles communication
+// and manages resources, tools, and prompts.
+type Server struct {
+	// ServerInfo contains basic information about the server
 	protocolVersion    string
 	clientCapabilities map[string]any
 	logger             *log.Logger
 	in                 io.Reader
 	out                io.Writer
 	ServerInfo         struct {
-		Name    string `json:"name"`
+		// Name is the name of the server
+		Name string `json:"name"`
+
+		// Version is the version of the server
 		Version string `json:"version"`
 	}
 	capabilities map[string]any
@@ -28,10 +34,16 @@ type MCPServer struct {
 	prompts      map[string]Prompt
 }
 
-func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
+// NewMCPServer creates and initializes a new MCP server instance with the specified input and output streams.
+//
+// Example:
+//
+//	server := NewMCPServer(os.Stdin, os.Stdout)
+//	// server is ready to use with default configuration and sample resources
+func NewMCPServer(in io.Reader, out io.Writer) *Server {
 	logger := log.New(os.Stderr, "[MCP Server] ", log.LstdFlags|log.Lmsgprefix)
 
-	s := &MCPServer{
+	s := &Server{
 		protocolVersion: "2024-11-05",
 		logger:          logger,
 		in:              in,
@@ -60,14 +72,14 @@ func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
 		prompts:     make(map[string]Prompt),
 	}
 
-	s.addResource(Resource{
+	s.AddResource(Resource{
 		URI:         "file:///example/resource1.txt",
 		Name:        "Example Resource 1",
 		Description: "This is the first example resource.",
 		MimeType:    "text/plain",
 		TextContent: "Content of resource 1.",
 	})
-	s.addResource(Resource{
+	s.AddResource(Resource{
 		URI:         "file:///example/resource2.json",
 		Name:        "Example Resource 2",
 		Description: "This is the second example resource.",
@@ -76,7 +88,7 @@ func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
 	})
 
 	// Add a sample tool
-	s.addTool(Tool{
+	s.AddTool(Tool{
 		Name:        "get_weather",
 		Description: "Get the current weather for a given location.",
 		InputSchema: json.RawMessage(`{
@@ -91,7 +103,7 @@ func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
         }`),
 	})
 
-	s.addPrompt(Prompt{
+	s.AddPrompt(Prompt{
 		Name:        "code_review",
 		Description: "Asks the LLM to analyze code quality and suggest improvements",
 		Arguments: []PromptArgument{
@@ -108,7 +120,7 @@ func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
 		},
 	})
 
-	s.addPrompt(Prompt{
+	s.AddPrompt(Prompt{
 		Name:        "summarize_text",
 		Description: "Summarizes the given text",
 		Arguments: []PromptArgument{
@@ -128,18 +140,66 @@ func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
 	return s
 }
 
-func (s *MCPServer) addResource(resource Resource) {
+// AddResource adds a new resource to the server's resource collection.
+//
+// Example:
+//
+//	server.AddResource(Resource{
+//	    URI: "file:///example/doc.txt",
+//	    Name: "Documentation",
+//	    Description: "API documentation",
+//	    MimeType: "text/plain",
+//	    TextContent: "API documentation content",
+//	})
+func (s *Server) AddResource(resource Resource) {
 	s.resources[resource.URI] = resource
 }
-func (s *MCPServer) addTool(tool Tool) {
+
+// AddTool registers a new tool with the server's tool collection.
+//
+// Example:
+//
+//	server.AddTool(Tool{
+//	    Name: "calculator",
+//	    Description: "Performs basic arithmetic",
+//	    InputSchema: json.RawMessage(`{
+//	        "type": "object",
+//	        "properties": {
+//	            "operation": {"type": "string"},
+//	            "operands": {"type": "array"}
+//	        }
+//	    }`),
+//	})
+func (s *Server) AddTool(tool Tool) {
 	s.tools[tool.Name] = tool
 }
 
-func (s *MCPServer) addPrompt(prompt Prompt) {
+// AddPrompt registers a new prompt template with the server.
+//
+// Example:
+//
+//	server.AddPrompt(Prompt{
+//	    Name: "translate",
+//	    Description: "Translates text to specified language",
+//	    Arguments: []PromptArgument{
+//	        {Name: "text", Description: "Text to translate", Required: true},
+//	        {Name: "targetLang", Description: "Target language", Required: true},
+//	    },
+//	    Messages: []PromptMessage{
+//	        {
+//	            Role: "user",
+//	            Content: PromptContent{
+//	                Type: "text",
+//	                Text: "Translate this text: {text} to {targetLang}",
+//	            },
+//	        },
+//	    },
+//	})
+func (s *Server) AddPrompt(prompt Prompt) {
 	s.prompts[prompt.Name] = prompt
 }
 
-func (s *MCPServer) sendResponse(id *json.RawMessage, result interface{}, err *Error) {
+func (s *Server) sendResponse(id *json.RawMessage, result interface{}, err *Error) {
 	response := Response{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -161,7 +221,7 @@ func (s *MCPServer) sendResponse(id *json.RawMessage, result interface{}, err *E
 	}
 }
 
-func (s *MCPServer) sendError(id *json.RawMessage, code int, message string, data interface{}) {
+func (s *Server) sendError(id *json.RawMessage, code int, message string, data interface{}) {
 	errorResponse := Response{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -183,7 +243,7 @@ func (s *MCPServer) sendError(id *json.RawMessage, code int, message string, dat
 	}
 }
 
-func (s *MCPServer) sendNotification(method string, params interface{}) {
+func (s *Server) sendNotification(method string, params interface{}) {
 	notification := Notification{
 		JSONRPC: "2.0",
 		Method:  method,
@@ -209,7 +269,7 @@ func (s *MCPServer) sendNotification(method string, params interface{}) {
 	}
 }
 
-func (s *MCPServer) handleRequest(request *Request) {
+func (s *Server) handleRequest(request *Request) {
 	s.logger.Printf("Received request: method=%s, id=%v", request.Method, request.ID)
 
 	switch request.Method {
@@ -296,9 +356,6 @@ func (s *MCPServer) handleRequest(request *Request) {
 			return
 		}
 
-		// For simplicity, this example doesn't process arguments.
-		// A full implementation would substitute arguments into the prompt messages.
-
 		result := Prompt{
 			Name:        prompt.Name,
 			Description: prompt.Description,
@@ -365,7 +422,6 @@ func (s *MCPServer) handleRequest(request *Request) {
 			}
 		}
 
-		// Very basic tool execution.
 		result := CallToolResult{IsError: false}
 		if params.Name == "get_weather" {
 			location, _ := input["location"].(string) //  We checked presence above
@@ -382,11 +438,10 @@ func (s *MCPServer) handleRequest(request *Request) {
 	}
 }
 
-func (s *MCPServer) handleNotification(notification *Notification) {
+func (s *Server) handleNotification(notification *Notification) {
 	s.logger.Printf("Received notification: method=%s", notification.Method)
 	switch notification.Method {
 	case "notifications/initialized":
-		// The server is now initialized.
 	case "notifications/cancelled":
 		var cancelParams struct {
 			RequestID json.RawMessage `json:"requestId"`
@@ -401,7 +456,7 @@ func (s *MCPServer) handleNotification(notification *Notification) {
 	}
 }
 
-func (s *MCPServer) LogMessage(level LogLevel, loggerName string, data interface{}) {
+func (s *Server) LogMessage(level LogLevel, loggerName string, data interface{}) {
 	if logLevelSeverity[level] > logLevelSeverity[s.minLogLevel] {
 		return
 	}
@@ -414,7 +469,7 @@ func (s *MCPServer) LogMessage(level LogLevel, loggerName string, data interface
 	s.sendNotification("notifications/message", params)
 }
 
-func (s *MCPServer) Run(ctx context.Context) error {
+func (s *Server) Run(ctx context.Context) error {
 	scanner := bufio.NewScanner(s.in)
 	buffer := make([]byte, 0, 64*1024)
 	scanner.Buffer(buffer, 1024*1024)
