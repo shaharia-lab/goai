@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"io"
@@ -33,6 +32,7 @@ type SSEServer struct {
 	clientsMu  sync.RWMutex
 	logger     *log.Logger
 	httpServer *http.Server
+	mcpServer  *StdIOServer
 }
 
 type sseClient struct {
@@ -41,12 +41,24 @@ type sseClient struct {
 	messages chan []byte
 }
 
-func NewSSEServer(mcpServer *StdIOServer, addr string, logger *log.Logger) *SSEServer {
+func NewSSEServer(addr string, logger *log.Logger) *SSEServer {
+	// Create a pipe for internal communication
+	pr, pw := io.Pipe()
+
+	mcpServer := NewStdIOServer(pr, pw)
+
 	s := &SSEServer{
-		server:  mcpServer,
-		clients: make(map[string]*sseClient),
-		logger:  logger,
+		mcpServer: mcpServer,
+		clients:   make(map[string]*sseClient),
+		logger:    logger,
 	}
+
+	// Start the MCP server in its own goroutine
+	go func() {
+		if err := mcpServer.Run(context.Background()); err != nil {
+			s.logger.Printf("MCP server error: %v", err)
+		}
+	}()
 
 	mux := http.NewServeMux()
 
@@ -61,6 +73,80 @@ func NewSSEServer(mcpServer *StdIOServer, addr string, logger *log.Logger) *SSES
 		Handler: mux,
 	}
 	return s
+}
+func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) {
+	// Add CORS headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	// Handle preflight OPTIONS request
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Validate the request path
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) != 4 || parts[1] != "client" || parts[3] != "messages" {
+		http.NotFound(w, r)
+		return
+	}
+	clientID := parts[2]
+
+	// Find the client
+	s.clientsMu.RLock()
+	client, exists := s.clients[clientID]
+	s.clientsMu.RUnlock()
+
+	if !exists {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Read the request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Error reading body", http.StatusBadRequest)
+		return
+	}
+
+	// Create pipes for request and response
+	requestReader, requestWriter := io.Pipe()
+	responseReader, responseWriter := io.Pipe()
+
+	// Set up temporary IO for the server
+	s.mcpServer.in = requestReader
+	s.mcpServer.out = responseWriter
+
+	// Start a goroutine to write the request
+	go func() {
+		defer requestWriter.Close()
+		if _, err := requestWriter.Write(body); err != nil {
+			s.logger.Printf("Error writing request: %v", err)
+		}
+	}()
+
+	// Start a goroutine to read the response
+	go func() {
+		defer responseReader.Close()
+		buf := make([]byte, 1024)
+		for {
+			n, err := responseReader.Read(buf)
+			if n > 0 {
+				// Send the response through the SSE channel
+				client.messages <- buf[:n]
+			}
+			if err != nil {
+				if err != io.EOF {
+					s.logger.Printf("Error reading response: %v", err)
+				}
+				break
+			}
+		}
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // Add this new method to SSEServer
@@ -142,57 +228,6 @@ func (s *SSEServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 	s.clientsMu.Unlock()
 }
 
-func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) != 4 || parts[1] != "client" || parts[3] != "messages" {
-		http.NotFound(w, r)
-		return
-	}
-	clientID := parts[2]
-
-	s.clientsMu.RLock()
-	client, exists := s.clients[clientID]
-	s.clientsMu.RUnlock()
-
-	if !exists {
-		http.NotFound(w, r)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Error reading body", http.StatusBadRequest)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	go func() {
-		defer wg.Done()
-		defer cancel()
-
-		writer := &SSEWriter{client: client}
-		reader := NewReader(body)
-		requestServer := NewStdIOServer(reader, writer)
-		if err := requestServer.Run(ctx); err != nil {
-			if !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
-				s.logger.Printf("Error processing message: %v", err)
-			}
-		}
-	}()
-
-	// Wait for processing to complete or timeout
-	go func() {
-		wg.Wait()
-		cancel()
-	}()
-
-	w.WriteHeader(http.StatusAccepted)
-}
-
 type SSEWriter struct {
 	client *sseClient
 }
@@ -200,30 +235,6 @@ type SSEWriter struct {
 func (w *SSEWriter) Write(p []byte) (n int, err error) {
 	w.client.messages <- p
 	return len(p), nil
-}
-
-func (s *SSEServer) handleClientMessageWrapper(w http.ResponseWriter, r *http.Request) {
-	// Extract clientID from the URL path.  MUST match the endpoint URL format.
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) != 4 || parts[1] != "client" || parts[3] != "messages" {
-		s.logger.Printf("Invalid URL path: %s", r.URL.Path)
-		http.NotFound(w, r)
-		return
-	}
-	clientID := parts[2]
-
-	// Verify the client exists (using Read Lock for concurrency safety).
-	s.clientsMu.RLock()
-	_, exists := s.clients[clientID]
-	s.clientsMu.RUnlock()
-
-	if !exists {
-		s.logger.Printf("Client not found: %s", clientID)
-		http.NotFound(w, r)
-		return
-	}
-
-	s.handleClientMessage(w, r)
 }
 
 func (r *reader) Read(p []byte) (n int, err error) {
