@@ -11,9 +11,9 @@ import (
 	"strings"
 )
 
-// Server represents the main Message Control Protocol server that handles communication
+// StdIOServer represents the main Message Control Protocol server that handles communication
 // and manages resources, tools, and prompts.
-type Server struct {
+type StdIOServer struct {
 	// ServerInfo contains basic information about the server
 	protocolVersion    string
 	clientCapabilities map[string]any
@@ -36,16 +36,16 @@ type Server struct {
 	supportsToolListChanged   bool
 }
 
-// NewMCPServer creates and initializes a new MCP server instance with the specified input and output streams.
+// NewStdIOServer creates and initializes a new MCP server instance with the specified input and output streams.
 //
 // Example:
 //
-//	server := NewMCPServer(os.Stdin, os.Stdout)
+//	server := NewStdIOServer(os.Stdin, os.Stdout)
 //	// server is ready to use with default configuration and sample resources
-func NewMCPServer(in io.Reader, out io.Writer) *Server {
-	logger := log.New(os.Stderr, "[MCP Server] ", log.LstdFlags|log.Lmsgprefix)
+func NewStdIOServer(in io.Reader, out io.Writer) *StdIOServer {
+	logger := log.New(os.Stderr, "[MCP StdIOServer] ", log.LstdFlags|log.Lmsgprefix)
 
-	s := &Server{
+	s := &StdIOServer{
 		protocolVersion: "2024-11-05",
 		logger:          logger,
 		in:              in,
@@ -54,7 +54,7 @@ func NewMCPServer(in io.Reader, out io.Writer) *Server {
 			Name    string `json:"name"`
 			Version string `json:"version"`
 		}{
-			Name:    "Resource-Server-Example",
+			Name:    "Resource-StdIOServer-Example",
 			Version: "0.1.0",
 		},
 		capabilities: map[string]any{
@@ -155,7 +155,7 @@ func NewMCPServer(in io.Reader, out io.Writer) *Server {
 //	    MimeType: "text/plain",
 //	    TextContent: "API documentation content",
 //	})
-func (s *Server) AddResource(resource Resource) {
+func (s *StdIOServer) AddResource(resource Resource) {
 	s.resources[resource.URI] = resource
 }
 
@@ -174,7 +174,7 @@ func (s *Server) AddResource(resource Resource) {
 //	        }
 //	    }`),
 //	})
-func (s *Server) AddTool(tool Tool) {
+func (s *StdIOServer) AddTool(tool Tool) {
 	s.tools[tool.Name] = tool
 
 	if s.supportsToolListChanged {
@@ -203,7 +203,7 @@ func (s *Server) AddTool(tool Tool) {
 //	        },
 //	    },
 //	})
-func (s *Server) AddPrompt(prompt Prompt) {
+func (s *StdIOServer) AddPrompt(prompt Prompt) {
 	s.prompts[prompt.Name] = prompt
 
 	if s.supportsPromptListChanged {
@@ -211,7 +211,7 @@ func (s *Server) AddPrompt(prompt Prompt) {
 	}
 }
 
-func (s *Server) DeletePrompt(name string) error {
+func (s *StdIOServer) DeletePrompt(name string) error {
 	if _, exists := s.prompts[name]; !exists {
 		return fmt.Errorf("prompt not found: %s", name)
 	}
@@ -222,7 +222,7 @@ func (s *Server) DeletePrompt(name string) error {
 	return nil
 }
 
-func (s *Server) sendResponse(id *json.RawMessage, result interface{}, err *Error) {
+func (s *StdIOServer) sendResponse(id *json.RawMessage, result interface{}, err *Error) {
 	response := Response{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -244,7 +244,7 @@ func (s *Server) sendResponse(id *json.RawMessage, result interface{}, err *Erro
 	}
 }
 
-func (s *Server) sendError(id *json.RawMessage, code int, message string, data interface{}) {
+func (s *StdIOServer) sendError(id *json.RawMessage, code int, message string, data interface{}) {
 	errorResponse := Response{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -266,7 +266,7 @@ func (s *Server) sendError(id *json.RawMessage, code int, message string, data i
 	}
 }
 
-func (s *Server) sendNotification(method string, params interface{}) {
+func (s *StdIOServer) sendNotification(method string, params interface{}) {
 	notification := Notification{
 		JSONRPC: "2.0",
 		Method:  method,
@@ -292,7 +292,7 @@ func (s *Server) sendNotification(method string, params interface{}) {
 	}
 }
 
-func (s *Server) handleRequest(request *Request) {
+func (s *StdIOServer) handleRequest(request *Request) {
 	s.logger.Printf("Received request: method=%s, id=%v", request.Method, request.ID)
 
 	switch request.Method {
@@ -476,7 +476,7 @@ func (s *Server) handleRequest(request *Request) {
 	}
 }
 
-func (s *Server) handleNotification(notification *Notification) {
+func (s *StdIOServer) handleNotification(notification *Notification) {
 	s.logger.Printf("Received notification: method=%s", notification.Method)
 	switch notification.Method {
 	case "notifications/initialized":
@@ -494,7 +494,7 @@ func (s *Server) handleNotification(notification *Notification) {
 	}
 }
 
-func (s *Server) LogMessage(level LogLevel, loggerName string, data interface{}) {
+func (s *StdIOServer) LogMessage(level LogLevel, loggerName string, data interface{}) {
 	if logLevelSeverity[level] > logLevelSeverity[s.minLogLevel] {
 		return
 	}
@@ -507,15 +507,15 @@ func (s *Server) LogMessage(level LogLevel, loggerName string, data interface{})
 	s.sendNotification("notifications/message", params)
 }
 
-func (s *Server) SendPromptListChangedNotification() {
+func (s *StdIOServer) SendPromptListChangedNotification() {
 	s.sendNotification("notifications/prompts/list_changed", nil)
 }
 
-func (s *Server) SendToolListChangedNotification() {
+func (s *StdIOServer) SendToolListChangedNotification() {
 	s.sendNotification("notifications/tools/list_changed", nil)
 }
 
-func (s *Server) Run(ctx context.Context) error {
+func (s *StdIOServer) Run(ctx context.Context) error {
 	scanner := bufio.NewScanner(s.in)
 	buffer := make([]byte, 0, 64*1024)
 	scanner.Buffer(buffer, 1024*1024)
@@ -551,7 +551,7 @@ func (s *Server) Run(ctx context.Context) error {
 				var request Request
 				if err := json.Unmarshal(raw, &request); err == nil && request.Method != "" && request.ID != nil {
 					if request.Method != "initialize" && !initialized {
-						s.sendError(request.ID, -32000, "Server not initialized", nil)
+						s.sendError(request.ID, -32000, "StdIOServer not initialized", nil)
 						continue
 					}
 					s.handleRequest(&request)
@@ -580,7 +580,7 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.Println("Context cancelled, shutting down server...")
 		return ctx.Err()
 	case err := <-done:
-		s.logger.Println("Server shutting down.")
+		s.logger.Println("StdIOServer shutting down.")
 		return err
 	}
 }

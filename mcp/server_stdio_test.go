@@ -13,10 +13,10 @@ func TestNewMCPServer(t *testing.T) {
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	server := NewMCPServer(in, out)
+	server := NewStdIOServer(in, out)
 
 	if server == nil {
-		t.Fatal("NewMCPServer returned nil")
+		t.Fatal("NewStdIOServer returned nil")
 	}
 
 	// Verify initial state
@@ -24,8 +24,8 @@ func TestNewMCPServer(t *testing.T) {
 		t.Errorf("Expected protocol version 2024-11-05, got %s", server.protocolVersion)
 	}
 
-	if server.ServerInfo.Name != "Resource-Server-Example" {
-		t.Errorf("Expected server name Resource-Server-Example, got %s", server.ServerInfo.Name)
+	if server.ServerInfo.Name != "Resource-StdIOServer-Example" {
+		t.Errorf("Expected server name Resource-StdIOServer-Example, got %s", server.ServerInfo.Name)
 	}
 
 	// Verify maps are initialized
@@ -45,7 +45,7 @@ func TestNewMCPServer(t *testing.T) {
 func TestServerCommunication(t *testing.T) {
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
-	server := NewMCPServer(in, out)
+	server := NewStdIOServer(in, out)
 
 	// Test sending a response
 	id := json.RawMessage(`1`)
@@ -71,7 +71,7 @@ func TestServerCommunication(t *testing.T) {
 func TestServerErrorHandling(t *testing.T) {
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
-	server := NewMCPServer(in, out)
+	server := NewStdIOServer(in, out)
 
 	// Test sending an error
 	id := json.RawMessage(`1`)
@@ -111,7 +111,7 @@ func TestServerInitialization(t *testing.T) {
 
 	in := strings.NewReader(initRequest)
 	out := &bytes.Buffer{}
-	server := NewMCPServer(in, out)
+	server := NewStdIOServer(in, out)
 
 	// Process the request through the server
 	var request Request
@@ -151,14 +151,14 @@ func TestServerInitialization(t *testing.T) {
 	// Verify server info in the response
 	if serverInfo, ok := result["serverInfo"].(map[string]interface{}); ok {
 		if name, ok := serverInfo["name"].(string); ok {
-			if name != "Resource-Server-Example" {
-				t.Errorf("Expected server name Resource-Server-Example, got %s", name)
+			if name != "Resource-StdIOServer-Example" {
+				t.Errorf("Expected server name Resource-StdIOServer-Example, got %s", name)
 			}
 		} else {
-			t.Error("Server name missing or invalid type in response")
+			t.Error("StdIOServer name missing or invalid type in response")
 		}
 	} else {
-		t.Error("Server info missing or invalid type in response")
+		t.Error("StdIOServer info missing or invalid type in response")
 	}
 }
 
@@ -167,7 +167,7 @@ func TestServerRun(t *testing.T) {
 	t.Run("server starts and handles requests", func(t *testing.T) {
 		in := &bytes.Buffer{}
 		out := &bytes.Buffer{}
-		srv := NewMCPServer(in, out)
+		srv := NewStdIOServer(in, out)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -190,7 +190,7 @@ func TestServerRun(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			if err := srv.Run(ctx); err != nil && err != context.Canceled {
-				t.Errorf("Server error: %v", err)
+				t.Errorf("StdIOServer error: %v", err)
 			}
 			close(done)
 		}()
@@ -245,7 +245,7 @@ func TestServerRequestHandling(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			in := &bytes.Buffer{}
 			out := &bytes.Buffer{}
-			srv := NewMCPServer(in, out)
+			srv := NewStdIOServer(in, out)
 
 			// Write request
 			if err := json.NewEncoder(in).Encode(tc.request); err != nil {
@@ -294,7 +294,7 @@ func rawJSON(s string) *json.RawMessage {
 func TestServerConcurrency(t *testing.T) {
 	in := &bytes.Buffer{}
 	out := &bytes.Buffer{}
-	srv := NewMCPServer(in, out)
+	srv := NewStdIOServer(in, out)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -302,7 +302,7 @@ func TestServerConcurrency(t *testing.T) {
 	// Start the server in a goroutine
 	go func() {
 		if err := srv.Run(ctx); err != nil && err != context.Canceled {
-			t.Errorf("Server error: %v", err)
+			t.Errorf("StdIOServer error: %v", err)
 		}
 	}()
 
@@ -339,7 +339,7 @@ func TestServerConcurrency(t *testing.T) {
 func TestServerShutdown(t *testing.T) {
 	in := &bytes.Buffer{}
 	out := &bytes.Buffer{}
-	server := NewMCPServer(in, out)
+	server := NewStdIOServer(in, out)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -359,7 +359,7 @@ func TestServerShutdown(t *testing.T) {
 			t.Errorf("Unexpected error during shutdown: %v", err)
 		}
 	case <-time.After(time.Second):
-		t.Error("Server failed to shut down in time")
+		t.Error("StdIOServer failed to shut down in time")
 	}
 }
 
@@ -401,7 +401,7 @@ func TestLogMessage(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			out := &bytes.Buffer{}
-			srv := NewMCPServer(strings.NewReader(""), out)
+			srv := NewStdIOServer(strings.NewReader(""), out)
 			srv.minLogLevel = tc.minLevel
 
 			// Call LogMessage
