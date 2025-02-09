@@ -371,3 +371,79 @@ func TestResourceHandling(t *testing.T) {
 		t.Errorf("Expected 0 resources, got %d", len(resources))
 	}
 }
+
+func TestStdIOServerRequests(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedOutput string
+	}{
+		{
+			name: "ping request",
+			input: `{
+				"method": "ping"
+			}`,
+			expectedOutput: `{"jsonrpc":"2.0","id":null,"result":{}}`,
+		},
+		{
+			name: "tools list request",
+			input: `{
+				"method": "tools/list",
+				"params": {}
+			}`,
+			expectedOutput: `{"jsonrpc":"2.0","id":null,"result":{"tools":[]}}`,
+		},
+		{
+			name: "prompts list request",
+			input: `{
+				"method": "prompts/list",
+				"params": {}
+			}`,
+			expectedOutput: `{"jsonrpc":"2.0","id":null,"result":{"prompts":[]}}`,
+		},
+		{
+			name: "resources list request",
+			input: `{
+				"method": "resources/list",
+				"params": {}
+			}`,
+			expectedOutput: `{"jsonrpc":"2.0","id":null,"result":{"resources":[]}}`,
+		},
+		{
+			name: "method not found request",
+			input: `{
+				"method": "resources/templates/list",
+				"params": {}
+			}`,
+			expectedOutput: `{"jsonrpc":"2.0","id":null,"error":{"code":-32601,"message":"Method not found"}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a buffer to capture output
+			var out bytes.Buffer
+
+			// Create server with input and output buffers
+			in := strings.NewReader(tt.input + "\n")
+			server := NewStdIOServer(in, &out)
+
+			// Process the request
+			var request Request
+			if err := json.Unmarshal([]byte(tt.input), &request); err != nil {
+				t.Fatalf("Failed to unmarshal request: %v", err)
+			}
+
+			// Handle the request
+			server.handleRequest("test-client", &request)
+
+			// Get output and clean it up (remove newline)
+			got := strings.TrimSpace(out.String())
+
+			// Compare with expected output
+			if got != tt.expectedOutput {
+				t.Errorf("Expected output %s, got %s", tt.expectedOutput, got)
+			}
+		})
+	}
+}
