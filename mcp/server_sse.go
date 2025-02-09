@@ -2,38 +2,60 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 )
 
-// SSEServer handles MCP communication over HTTP with StdIOServer-Sent Events (SSE).
+type reader struct {
+	data []byte
+	pos  int
+	done bool
+}
+
+func NewReader(data []byte) *reader {
+	return &reader{
+		data: data,
+		pos:  0,
+		done: false,
+	}
+}
+
 type SSEServer struct {
-	server     *StdIOServer            // The core MCP server
-	clients    map[string]*http.Client // Store http clients.
+	server     *StdIOServer
+	clients    map[string]*sseClient // Changed client type
 	clientsMu  sync.RWMutex
 	logger     *log.Logger
 	httpServer *http.Server
 }
 
-// NewSSEServer creates a new SSEServer.
+type sseClient struct {
+	writer   http.ResponseWriter
+	flusher  http.Flusher
+	messages chan []byte
+}
+
 func NewSSEServer(mcpServer *StdIOServer, addr string, logger *log.Logger) *SSEServer {
-	if logger == nil {
-		logger = log.New(io.Discard, "", 0) // Default to no-op logger
-	}
 	s := &SSEServer{
 		server:  mcpServer,
-		clients: make(map[string]*http.Client),
+		clients: make(map[string]*sseClient),
 		logger:  logger,
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/events", s.handleEvents)
+
+	// Handle /sse endpoint explicitly
+	mux.HandleFunc("/sse", s.handleEvents)
+
+	// Handle /client/ endpoints
+	mux.HandleFunc("/client/", s.handleClientMessage)
+
 	s.httpServer = &http.Server{
 		Addr:    addr,
 		Handler: mux,
@@ -41,62 +63,99 @@ func NewSSEServer(mcpServer *StdIOServer, addr string, logger *log.Logger) *SSES
 	return s
 }
 
-// handleEvents is the StdIOServer-Sent Events endpoint.
+// Add this new method to SSEServer
+func (s *SSEServer) Start(ctx context.Context) error {
+	// Start the HTTP server in a goroutine
+	go func() {
+		s.logger.Printf("Starting SSE server on %s", s.httpServer.Addr)
+		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.Printf("HTTP server error: %v", err)
+		}
+	}()
+
+	// Wait for context cancellation
+	<-ctx.Done()
+
+	// Create shutdown context with timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	// Cleanup all clients
+	s.clientsMu.Lock()
+	for id, client := range s.clients {
+		close(client.messages)
+		delete(s.clients, id)
+	}
+	s.clientsMu.Unlock()
+
+	// Gracefully shutdown the server
+	return s.httpServer.Shutdown(shutdownCtx)
+}
+
 func (s *SSEServer) handleEvents(w http.ResponseWriter, r *http.Request) {
+	// Add CORS headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	// Handle preflight OPTIONS request
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*") // Consider restricting in production
 
 	clientID := uuid.NewString()
+	client := &sseClient{
+		writer:   w,
+		flusher:  flusher,
+		messages: make(chan []byte, 100),
+	}
+
 	s.clientsMu.Lock()
-	s.clients[clientID] = &http.Client{} // You can customize client as needed.
+	s.clients[clientID] = client
 	s.clientsMu.Unlock()
 
-	// Send the endpoint event immediately.
 	endpointURL := fmt.Sprintf("/client/%s/messages", clientID)
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", endpointURL)
 	flusher.Flush()
 
-	s.httpServer.Handler.(*http.ServeMux).HandleFunc(endpointURL, func(w http.ResponseWriter, r *http.Request) {
-		s.handleClientMessage(w, r, clientID) // Pass clientID
-	})
+	ctx := r.Context()
+	go s.messagePump(ctx, client)
 
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
+	<-ctx.Done()
 
-	// Clean up when the connection closes.
-	defer func() {
-		s.clientsMu.Lock()
-		delete(s.clients, clientID) // Remove the client.
-		s.clientsMu.Unlock()
-		s.httpServer.Handler.(*http.ServeMux).Handle(endpointURL, http.NotFoundHandler()) // Remove handler
-		s.logger.Printf("Client disconnected: %s", clientID)
-	}()
-
-	s.logger.Printf("Client connected: %s, endpoint: %s", clientID, endpointURL)
-
-	for { // Keep the connection alive, sending pings.
-		select {
-		case <-ctx.Done():
-			return // Client disconnected.
-		case <-time.After(30 * time.Second): // Adjust interval as needed.
-			fmt.Fprintf(w, "event: ping\ndata: {}\n\n") // Send a ping event.
-			flusher.Flush()
-		}
+	s.clientsMu.Lock()
+	if client, ok := s.clients[clientID]; ok {
+		close(client.messages)
+		delete(s.clients, clientID)
 	}
+	s.clientsMu.Unlock()
 }
 
-// handleClientMessage handles POST requests from the client.
-func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request, clientID string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) != 4 || parts[1] != "client" || parts[3] != "messages" {
+		http.NotFound(w, r)
+		return
+	}
+	clientID := parts[2]
+
+	s.clientsMu.RLock()
+	client, exists := s.clients[clientID]
+	s.clientsMu.RUnlock()
+
+	if !exists {
+		http.NotFound(w, r)
 		return
 	}
 
@@ -106,88 +165,133 @@ func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	s.logger.Printf("Received message from client %s: %s", clientID, string(body))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
-	// Create a reader for the message
-	reader := NewReader(body)
+	var wg sync.WaitGroup
+	wg.Add(1)
 
-	// Create a new response writer
-	writer := &HTTPResponseWriter{
-		httpWriter: w,
-		logger:     s.logger,
-	}
-
-	// Create a server instance for this request
-	requestServer := NewStdIOServer(reader, writer)
-
-	// Process the message using server's Run method
-	ctx := r.Context()
-	if err := requestServer.Run(ctx); err != nil {
-		s.logger.Printf("Error processing message: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-}
-
-// HTTPResponseWriter implements necessary interfaces to write responses
-type HTTPResponseWriter struct {
-	httpWriter http.ResponseWriter
-	logger     *log.Logger
-}
-
-func (w *HTTPResponseWriter) Write(p []byte) (n int, err error) {
-	return w.httpWriter.Write(p)
-}
-
-// Run starts the HTTP server.  This should be run in a goroutine.
-func (s *SSEServer) Run(ctx context.Context) error {
 	go func() {
-		<-ctx.Done()
-		s.logger.Println("Shutting down HTTP server...")
-		s.clientsMu.Lock()
-		for clientID, client := range s.clients {
-			s.logger.Printf("Closing client: %s", clientID)
-			client.CloseIdleConnections() // Close the client connection.
-			delete(s.clients, clientID)
-		}
-		s.clientsMu.Unlock()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer wg.Done()
 		defer cancel()
-		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-			s.logger.Printf("HTTP server shutdown error: %v", err)
+
+		writer := &SSEWriter{client: client}
+		reader := NewReader(body)
+		requestServer := NewStdIOServer(reader, writer)
+		if err := requestServer.Run(ctx); err != nil {
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
+				s.logger.Printf("Error processing message: %v", err)
+			}
 		}
 	}()
 
-	s.logger.Printf("HTTP server listening on %s", s.httpServer.Addr)
-	if err := s.httpServer.ListenAndServe(); err != http.ErrServerClosed {
-		return fmt.Errorf("http server listen error: %w", err)
-	}
-	return nil
+	// Wait for processing to complete or timeout
+	go func() {
+		wg.Wait()
+		cancel()
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
 }
 
-type reader struct {
-	data []byte
-	pos  int
+type SSEWriter struct {
+	client *sseClient
 }
 
-// NewReader creates a new reader instance.
-func NewReader(data []byte) io.Reader {
-	return &reader{
-		data: data,
-		pos:  0,
+func (w *SSEWriter) Write(p []byte) (n int, err error) {
+	w.client.messages <- p
+	return len(p), nil
+}
+
+func (s *SSEServer) handleClientMessageWrapper(w http.ResponseWriter, r *http.Request) {
+	// Extract clientID from the URL path.  MUST match the endpoint URL format.
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) != 4 || parts[1] != "client" || parts[3] != "messages" {
+		s.logger.Printf("Invalid URL path: %s", r.URL.Path)
+		http.NotFound(w, r)
+		return
 	}
+	clientID := parts[2]
+
+	// Verify the client exists (using Read Lock for concurrency safety).
+	s.clientsMu.RLock()
+	_, exists := s.clients[clientID]
+	s.clientsMu.RUnlock()
+
+	if !exists {
+		s.logger.Printf("Client not found: %s", clientID)
+		http.NotFound(w, r)
+		return
+	}
+
+	s.handleClientMessage(w, r)
 }
 
 func (r *reader) Read(p []byte) (n int, err error) {
-	if r.pos >= len(r.data) {
+	if r.done {
 		return 0, io.EOF
 	}
+
+	if r.pos >= len(r.data) {
+		r.done = true
+		return 0, io.EOF
+	}
+
 	n = copy(p, r.data[r.pos:])
 	r.pos += n
-	// If the last byte read is '\n', we act like bufio.Scanner
-	if r.data[r.pos-1] == '\n' {
-		return n, nil
+
+	if r.pos >= len(r.data) {
+		r.done = true
 	}
 
 	return n, nil
+}
+
+// Add this method to your SSEServer type
+// Add to sse_server.go
+
+func (s *SSEServer) Run(ctx context.Context) error {
+	// Create a server shutdown context
+	serverCtx, serverCancel := context.WithCancel(ctx)
+	defer serverCancel()
+
+	// Start the HTTP server in a goroutine
+	go func() {
+		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.Printf("HTTP server error: %v", err)
+			serverCancel()
+		}
+	}()
+
+	// Wait for context cancellation
+	<-serverCtx.Done()
+
+	// Create shutdown context with timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	// Cleanup all clients
+	s.clientsMu.Lock()
+	for id, client := range s.clients {
+		close(client.messages)
+		delete(s.clients, id)
+	}
+	s.clientsMu.Unlock()
+
+	// Gracefully shutdown the server
+	return s.httpServer.Shutdown(shutdownCtx)
+}
+
+func (s *SSEServer) messagePump(ctx context.Context, client *sseClient) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-client.messages:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(client.writer, "data: %s\n\n", msg)
+			client.flusher.Flush()
+		}
+	}
 }
