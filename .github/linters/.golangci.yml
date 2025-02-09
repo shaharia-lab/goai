@@ -12,5 +12,9 @@ linters:
 linters-settings:
   gofmt:
     simplify: false
+  revive:
+    rules:
+      - name: package-comments
+        disabled: true
 issues:
   exclude-use-default: false

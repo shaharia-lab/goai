@@ -1,5 +1,3 @@
-// logging.go
-
 package mcp
 
 import (

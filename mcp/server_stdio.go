@@ -211,6 +211,8 @@ func (s *StdIOServer) AddPrompt(prompt Prompt) {
 	}
 }
 
+// DeletePrompt removes a prompt template identified by its name from the server's collection.
+// Returns an error if the prompt does not exist. Sends a notification if prompt list change support is enabled.
 func (s *StdIOServer) DeletePrompt(name string) error {
 	if _, exists := s.prompts[name]; !exists {
 		return fmt.Errorf("prompt not found: %s", name)
@@ -494,6 +496,8 @@ func (s *StdIOServer) handleNotification(notification *Notification) {
 	}
 }
 
+// LogMessage sends a log message notification with the specified severity level, logger name, and associated data.
+// The message is only logged if its severity level satisfies the server's minimum log level.
 func (s *StdIOServer) LogMessage(level LogLevel, loggerName string, data interface{}) {
 	if logLevelSeverity[level] > logLevelSeverity[s.minLogLevel] {
 		return
@@ -507,14 +511,17 @@ func (s *StdIOServer) LogMessage(level LogLevel, loggerName string, data interfa
 	s.sendNotification("notifications/message", params)
 }
 
+// SendPromptListChangedNotification sends a notification indicating the prompt list has been changed.
 func (s *StdIOServer) SendPromptListChangedNotification() {
 	s.sendNotification("notifications/prompts/list_changed", nil)
 }
 
+// SendToolListChangedNotification sends a notification to indicate that the tool list has been updated.
 func (s *StdIOServer) SendToolListChangedNotification() {
 	s.sendNotification("notifications/tools/list_changed", nil)
 }
 
+// Run starts the processing loop of the StdIOServer, handling incoming input, requests, and notifications.
 func (s *StdIOServer) Run(ctx context.Context) error {
 	scanner := bufio.NewScanner(s.in)
 	buffer := make([]byte, 0, 64*1024)
