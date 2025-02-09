@@ -25,7 +25,9 @@ type SSEServer struct {
 // NewSSEServer creates a new SSEServer.
 func NewSSEServer() *SSEServer {
 	logger := log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)
-	commonServer := NewCommonServer(logger)
+	commonServer := NewCommonServer(
+		UseLogger(logger),
+	)
 	s := &SSEServer{
 		CommonServer: commonServer,
 		clients:      make(map[string]chan []byte),

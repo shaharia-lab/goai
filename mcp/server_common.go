@@ -27,6 +27,66 @@ type Server interface {
 	sendNotification(clientID string, method string, params interface{}) // clientID is needed, as both will send it, but SSE may send to many
 }
 
+// CommonServerConfig holds all configuration for CommonServer
+type CommonServerConfig struct {
+	logger           *log.Logger
+	protocolVersion  string
+	serverName       string
+	serverVersion    string
+	minLogLevel      LogLevel
+	generateClientID func() string
+	capabilities     map[string]any
+	initialResources []Resource
+	initialTools     []Tool
+	initialPrompts   []Prompt
+}
+
+// CommonServerOption is a function that modifies CommonServerConfig
+type CommonServerOption func(*CommonServerConfig)
+
+// UseLogger sets a custom logger
+func UseLogger(logger *log.Logger) CommonServerOption {
+	return func(c *CommonServerConfig) {
+		c.logger = logger
+	}
+}
+
+// UseServerInfo sets server name and version
+func UseServerInfo(name, version string) CommonServerOption {
+	return func(c *CommonServerConfig) {
+		c.serverName = name
+		c.serverVersion = version
+	}
+}
+
+// UseLogLevel sets minimum log level
+func UseLogLevel(level LogLevel) CommonServerOption {
+	return func(c *CommonServerConfig) {
+		c.minLogLevel = level
+	}
+}
+
+// UseResources sets initial resources
+func UseResources(resources ...Resource) CommonServerOption {
+	return func(c *CommonServerConfig) {
+		c.initialResources = resources
+	}
+}
+
+// UseTools sets initial tools
+func UseTools(tools ...Tool) CommonServerOption {
+	return func(c *CommonServerConfig) {
+		c.initialTools = tools
+	}
+}
+
+// UsePrompts sets initial prompts
+func UsePrompts(prompts ...Prompt) CommonServerOption {
+	return func(c *CommonServerConfig) {
+		c.initialPrompts = prompts
+	}
+}
+
 // CommonServer contains the common fields and methods for all MCP server implementations.
 type CommonServer struct {
 	protocolVersion    string
@@ -40,6 +100,7 @@ type CommonServer struct {
 	resources                 map[string]Resource
 	minLogLevel               LogLevel
 	tools                     map[string]Tool
+	toolManager               ToolManager
 	prompts                   map[string]Prompt
 	supportsPromptListChanged bool
 	supportsToolListChanged   bool
@@ -56,17 +117,17 @@ type CommonServer struct {
 	sendNoti func(clientID string, method string, params interface{})
 }
 
-// NewCommonServer creates a new CommonServer instance, initialized with default values.
-func NewCommonServer(logger *log.Logger) *CommonServer {
-	s := &CommonServer{
+// NewCommonServer creates a new CommonServer instance Use the given options
+func NewCommonServer(opts ...CommonServerOption) *CommonServer {
+	// Default configuration
+	cfg := &CommonServerConfig{
+		logger:          log.Default(),
 		protocolVersion: "2024-11-05",
-		logger:          logger,
-		ServerInfo: struct {
-			Name    string `json:"name"`
-			Version string `json:"version"`
-		}{
-			Name:    "goai-server", // Default, can be overridden
-			Version: "0.1.0",       // Default, can be overridden
+		serverName:      "goai-server",
+		serverVersion:   "0.1.0",
+		minLogLevel:     LogLevelInfo,
+		generateClientID: func() string {
+			return uuid.NewString()
 		},
 		capabilities: map[string]any{
 			"resources": map[string]any{
@@ -77,15 +138,47 @@ func NewCommonServer(logger *log.Logger) *CommonServer {
 			"tools": map[string]any{
 				"listChanged": true,
 			},
-			"prompts": map[string]any{"listChanged": true},
+			"prompts": map[string]any{
+				"listChanged": true,
+			},
 		},
+	}
+
+	// Apply all options
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	// Create server instance
+	s := &CommonServer{
+		protocolVersion: cfg.protocolVersion,
+		logger:          cfg.logger,
+		ServerInfo: struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		}{
+			Name:    cfg.serverName,
+			Version: cfg.serverVersion,
+		},
+		capabilities:              cfg.capabilities,
 		resources:                 make(map[string]Resource),
-		minLogLevel:               LogLevelInfo,
+		minLogLevel:               cfg.minLogLevel,
 		tools:                     make(map[string]Tool),
 		prompts:                   make(map[string]Prompt),
 		supportsPromptListChanged: false,
 		supportsToolListChanged:   false,
-		generateClientID:          func() string { return uuid.NewString() }, // Default generator.  SSE can use this.
+		generateClientID:          cfg.generateClientID,
+	}
+
+	// Initialize Use provided resources, tools, and prompts
+	for _, resource := range cfg.initialResources {
+		s.AddResource(resource)
+	}
+	for _, tool := range cfg.initialTools {
+		s.AddTool(tool)
+	}
+	for _, prompt := range cfg.initialPrompts {
+		s.AddPrompt(prompt)
 	}
 
 	return s

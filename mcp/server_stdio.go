@@ -20,7 +20,9 @@ type StdIOServer struct {
 // NewStdIOServer creates a new StdIOServer.
 func NewStdIOServer(in io.Reader, out io.Writer) *StdIOServer {
 	logger := log.New(os.Stderr, "[MCP StdIOServer] ", log.LstdFlags|log.Lmsgprefix)
-	commonServer := NewCommonServer(logger)
+	commonServer := NewCommonServer(
+		UseLogger(logger),
+	)
 
 	s := &StdIOServer{
 		CommonServer: commonServer,
