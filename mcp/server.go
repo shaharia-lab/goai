@@ -27,11 +27,13 @@ type Server struct {
 		// Version is the version of the server
 		Version string `json:"version"`
 	}
-	capabilities map[string]any
-	resources    map[string]Resource
-	minLogLevel  LogLevel
-	tools        map[string]Tool // Store available tools
-	prompts      map[string]Prompt
+	capabilities              map[string]any
+	resources                 map[string]Resource
+	minLogLevel               LogLevel
+	tools                     map[string]Tool // Store available tools
+	prompts                   map[string]Prompt
+	supportsPromptListChanged bool
+	supportsToolListChanged   bool
 }
 
 // NewMCPServer creates and initializes a new MCP server instance with the specified input and output streams.
@@ -57,19 +59,21 @@ func NewMCPServer(in io.Reader, out io.Writer) *Server {
 		},
 		capabilities: map[string]any{
 			"resources": map[string]any{
-				"listChanged": false,
-				"subscribe":   false,
+				"listChanged": true,
+				"subscribe":   true,
 			},
 			"logging": map[string]any{},
 			"tools": map[string]any{ // Add tools capability
-				"listChanged": false,
+				"listChanged": true,
 			},
-			"prompts": map[string]any{"listChanged": false},
+			"prompts": map[string]any{"listChanged": true},
 		},
-		resources:   make(map[string]Resource),
-		minLogLevel: LogLevelInfo,
-		tools:       make(map[string]Tool), // Initialize tools map
-		prompts:     make(map[string]Prompt),
+		resources:                 make(map[string]Resource),
+		minLogLevel:               LogLevelInfo,
+		tools:                     make(map[string]Tool), // Initialize tools map
+		prompts:                   make(map[string]Prompt),
+		supportsPromptListChanged: false,
+		supportsToolListChanged:   false,
 	}
 
 	s.AddResource(Resource{
@@ -172,6 +176,10 @@ func (s *Server) AddResource(resource Resource) {
 //	})
 func (s *Server) AddTool(tool Tool) {
 	s.tools[tool.Name] = tool
+
+	if s.supportsToolListChanged {
+		s.SendToolListChangedNotification()
+	}
 }
 
 // AddPrompt registers a new prompt template with the server.
@@ -197,6 +205,21 @@ func (s *Server) AddTool(tool Tool) {
 //	})
 func (s *Server) AddPrompt(prompt Prompt) {
 	s.prompts[prompt.Name] = prompt
+
+	if s.supportsPromptListChanged {
+		s.SendPromptListChangedNotification()
+	}
+}
+
+func (s *Server) DeletePrompt(name string) error {
+	if _, exists := s.prompts[name]; !exists {
+		return fmt.Errorf("prompt not found: %s", name)
+	}
+	delete(s.prompts, name)
+	if s.supportsPromptListChanged {
+		s.SendPromptListChangedNotification()
+	}
+	return nil
 }
 
 func (s *Server) sendResponse(id *json.RawMessage, result interface{}, err *Error) {
@@ -291,6 +314,21 @@ func (s *Server) handleRequest(request *Request) {
 			Capabilities:    s.capabilities,
 			ServerInfo:      s.ServerInfo,
 		}
+
+		// Check and set if server supports prompt list changed.
+		if promptCaps, ok := s.capabilities["prompts"].(map[string]any); ok {
+			if listChanged, ok := promptCaps["listChanged"].(bool); ok && listChanged {
+				s.supportsPromptListChanged = true
+			}
+		}
+
+		// Check and set if server supports tool list changed
+		if toolCaps, ok := s.capabilities["tools"].(map[string]any); ok {
+			if listChanged, ok := toolCaps["listChanged"].(bool); ok && listChanged {
+				s.supportsToolListChanged = true
+			}
+		}
+
 		s.sendResponse(request.ID, result, nil)
 
 	case "ping":
@@ -467,6 +505,14 @@ func (s *Server) LogMessage(level LogLevel, loggerName string, data interface{})
 		Data:   data,
 	}
 	s.sendNotification("notifications/message", params)
+}
+
+func (s *Server) SendPromptListChangedNotification() {
+	s.sendNotification("notifications/prompts/list_changed", nil)
+}
+
+func (s *Server) SendToolListChangedNotification() {
+	s.sendNotification("notifications/tools/list_changed", nil)
 }
 
 func (s *Server) Run(ctx context.Context) error {
