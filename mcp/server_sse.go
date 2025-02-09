@@ -8,183 +8,44 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// SSEServer represents an MCP server that communicates via Server-Sent Events (SSE).
+// SSEServer is the MCP server implementation using Server-Sent Events.
 type SSEServer struct {
-	protocolVersion    string
-	clientCapabilities map[string]any
-	logger             *log.Logger
-	ServerInfo         struct {
-		Name    string `json:"name"`
-		Version string `json:"version"`
-	}
-	capabilities              map[string]any
-	resources                 map[string]Resource // Added resources
-	minLogLevel               LogLevel            // Added minLogLevel
-	tools                     map[string]Tool
-	prompts                   map[string]Prompt // Added prompts
-	supportsPromptListChanged bool              // Added support flag
-	supportsToolListChanged   bool
-	address                   string
-
-	clients      map[string]chan []byte // Map client IDs to their message channels.
-	clientsMutex sync.RWMutex           // Protects access to the clients map.
+	*CommonServer                        // Embed the common server
+	clients       map[string]chan []byte // Map client IDs to message channels.
+	clientsMutex  sync.RWMutex           // Protect client map access.
+	address       string
 }
 
-// NewSSEServer creates and initializes a new MCP server instance for SSE communication.
+// NewSSEServer creates a new SSEServer.
 func NewSSEServer() *SSEServer {
 	logger := log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)
-
-	return &SSEServer{
-		protocolVersion: "2024-11-05",
-		logger:          logger,
-		ServerInfo: struct {
-			Name    string `json:"name"`
-			Version string `json:"version"`
-		}{
-			Name:    "Resource-SSEServer-Example",
-			Version: "0.1.0",
-		},
-		capabilities: map[string]any{
-			"resources": map[string]any{ // Added resources capability
-				"listChanged": true,
-				"subscribe":   true,
-			},
-			"logging": map[string]any{},
-			"tools": map[string]any{
-				"listChanged": true,
-			},
-			"prompts": map[string]any{"listChanged": true}, // Added prompts capability
-		},
-		tools:                     make(map[string]Tool),
-		resources:                 make(map[string]Resource), // Initialize resources
-		prompts:                   make(map[string]Prompt),   // Initialize prompts
-		minLogLevel:               LogLevelInfo,              // Initialize log level
-		supportsToolListChanged:   false,
-		supportsPromptListChanged: false,
-		address:                   ":8080",
-
+	commonServer := NewCommonServer(logger)
+	s := &SSEServer{
+		CommonServer: commonServer,
 		clients:      make(map[string]chan []byte),
 		clientsMutex: sync.RWMutex{},
+		address:      ":8080", // Default address
 	}
-}
+	// Override the client ID generator, as it is used in the /message path
+	s.generateClientID = func() string { return uuid.NewString() }
 
-// AddTool adds a tool to the server, mirroring the StdIOServer implementation.
-func (s *SSEServer) AddTool(tool Tool) {
-	s.tools[tool.Name] = tool
-	if s.supportsToolListChanged {
-		s.SendToolListChangedNotification()
-	}
+	// Set the concrete send methods for SSEServer
+	s.sendResp = s.sendResponse
+	s.sendErr = s.sendError
+	s.sendNoti = s.sendNotification
+
+	return s
 }
 
 // SetAddress allows setting the server's listening address.
 func (s *SSEServer) SetAddress(address string) {
 	s.address = address
-}
-
-// SendToolListChangedNotification broadcasts the tool list changed notification.
-func (s *SSEServer) SendToolListChangedNotification() {
-	s.broadcastNotification("notifications/tools/list_changed", nil) // Broadcast to all clients
-}
-
-// AddResource adds a new resource to the server's resource collection.
-func (s *SSEServer) AddResource(resource Resource) {
-	s.resources[resource.URI] = resource
-	s.broadcastNotification("notifications/resources/list_changed", nil) //broad cast to all clients
-}
-
-// AddPrompt registers a new prompt template with the server.
-func (s *SSEServer) AddPrompt(prompt Prompt) {
-	s.prompts[prompt.Name] = prompt
-
-	if s.supportsPromptListChanged {
-		s.SendPromptListChangedNotification()
-	}
-}
-
-// DeletePrompt removes a prompt template identified by its name.
-func (s *SSEServer) DeletePrompt(name string) error {
-	if _, exists := s.prompts[name]; !exists {
-		return fmt.Errorf("prompt not found: %s", name)
-	}
-	delete(s.prompts, name)
-	if s.supportsPromptListChanged {
-		s.SendPromptListChangedNotification()
-	}
-	return nil
-}
-
-// SendPromptListChangedNotification sends a notification indicating the prompt list has been changed.
-func (s *SSEServer) SendPromptListChangedNotification() {
-	s.broadcastNotification("notifications/prompts/list_changed", nil)
-}
-
-// sendResponse sends a JSON-RPC response to a specific client.
-func (s *SSEServer) sendResponse(clientID string, id *json.RawMessage, result interface{}, err *Error) {
-	response := Response{
-		JSONRPC: "2.0",
-		ID:      id,
-		Result:  result,
-		Error:   err,
-	}
-
-	jsonResponse, marshalErr := json.Marshal(response)
-	if marshalErr != nil {
-		s.logger.Printf("Error marshalling response: %v", marshalErr)
-		s.sendError(clientID, id, -32603, "Internal error: failed to marshal response", nil)
-		return
-	}
-
-	s.sendMessageToClient(clientID, jsonResponse)
-}
-
-// sendError sends a JSON-RPC error response to a specific client.
-func (s *SSEServer) sendError(clientID string, id *json.RawMessage, code int, message string, data interface{}) {
-	errorResponse := Response{
-		JSONRPC: "2.0",
-		ID:      id,
-		Error: &Error{
-			Code:    code,
-			Message: message,
-			Data:    data,
-		},
-	}
-	jsonErrorResponse, err := json.Marshal(errorResponse)
-	if err != nil {
-		s.logger.Printf("Error marshaling error response: %v", err)
-		return
-	}
-	s.sendMessageToClient(clientID, jsonErrorResponse)
-}
-
-// sendNotification sends a JSON-RPC notification to a specific client.  Note the clientID.
-func (s *SSEServer) sendNotification(clientID string, method string, params interface{}) {
-	notification := Notification{
-		JSONRPC: "2.0",
-		Method:  method,
-	}
-	if params != nil {
-		paramsBytes, err := json.Marshal(params)
-		if err != nil {
-			s.logger.Printf("Error marshaling notification parameters: %v", err)
-			return
-		}
-		notification.Params = json.RawMessage(paramsBytes)
-	}
-
-	jsonNotification, err := json.Marshal(notification)
-	if err != nil {
-		s.logger.Printf("Error marshaling notification message: %v", err)
-		return
-	}
-
-	s.sendMessageToClient(clientID, jsonNotification)
 }
 
 // broadcastNotification sends a notification to all connected clients.
@@ -211,26 +72,100 @@ func (s *SSEServer) broadcastNotification(method string, params interface{}) {
 	s.clientsMutex.RLock()
 	defer s.clientsMutex.RUnlock()
 	for _, clientChan := range s.clients {
-		clientChan <- jsonNotification // Send without blocking; clients should buffer
+		// Non-blocking send.  If a client's buffer is full, we drop the message.
+		select {
+		case clientChan <- jsonNotification:
+		default:
+			s.logger.Printf("Client message buffer full, dropping notification")
+		}
 	}
 }
 
-// LogMessage sends a log message notification.  Similar to StdIOServer but broadcasts.
-func (s *SSEServer) LogMessage(level LogLevel, loggerName string, data interface{}) {
-	// For simplicity, we log to stderr *and* send as a notification.  A real implementation
-	// might have configurable log routing.
-	if logLevelSeverity[level] <= logLevelSeverity[s.minLogLevel] { //  Basic filtering.
-		s.logger.Printf("[%s] %s: %+v", level, loggerName, data) // Log to server's stderr
+// sendResponse sends a JSON-RPC response (SSE implementation).
+func (s *SSEServer) sendResponse(clientID string, id *json.RawMessage, result interface{}, err *Error) {
+	response := Response{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result:  result,
+		Error:   err,
 	}
-	params := LogMessageParams{
-		Level:  level,
-		Logger: loggerName,
-		Data:   data,
+
+	jsonResponse, marshalErr := json.Marshal(response)
+	if marshalErr != nil {
+		s.logger.Printf("Error marshalling response: %v", marshalErr)
+		s.sendError(clientID, id, -32603, "Internal error: failed to marshal response", nil)
+		return
 	}
-	s.broadcastNotification("notifications/message", params) // Broadcast to *all* clients.
+
+	s.sendMessageToClient(clientID, jsonResponse)
 }
 
-// handleHTTPRequest handles incoming HTTP requests, including SSE setup and message posting.
+// sendError sends a JSON-RPC error response (SSE implementation).
+func (s *SSEServer) sendError(clientID string, id *json.RawMessage, code int, message string, data interface{}) {
+	errorResponse := Response{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error: &Error{
+			Code:    code,
+			Message: message,
+			Data:    data,
+		},
+	}
+	jsonErrorResponse, err := json.Marshal(errorResponse)
+	if err != nil {
+		s.logger.Printf("Error marshaling error response: %v", err)
+		return
+	}
+	s.sendMessageToClient(clientID, jsonErrorResponse)
+}
+
+// sendNotification sends a JSON-RPC notification (SSE implementation).
+func (s *SSEServer) sendNotification(clientID string, method string, params interface{}) {
+	// If clientID is empty, it's a broadcast
+	if clientID == "" {
+		s.broadcastNotification(method, params)
+		return
+	}
+	//Otherwise, send to the specific client
+	notification := Notification{
+		JSONRPC: "2.0",
+		Method:  method,
+	}
+	if params != nil {
+		paramsBytes, err := json.Marshal(params)
+		if err != nil {
+			s.logger.Printf("Error marshaling notification parameters: %v", err)
+			return
+		}
+		notification.Params = json.RawMessage(paramsBytes)
+	}
+
+	jsonNotification, err := json.Marshal(notification)
+	if err != nil {
+		s.logger.Printf("Error marshaling notification message: %v", err)
+		return
+	}
+
+	s.sendMessageToClient(clientID, jsonNotification)
+}
+
+// sendMessageToClient sends a message to a specific client.
+func (s *SSEServer) sendMessageToClient(clientID string, message []byte) {
+	s.clientsMutex.RLock()
+	defer s.clientsMutex.RUnlock()
+
+	if clientChan, ok := s.clients[clientID]; ok {
+		select {
+		case clientChan <- message: // Send without blocking
+		default:
+			s.logger.Printf("Client message buffer full, dropping message for: %s", clientID)
+			// Consider closing the connection or implementing backpressure.
+		}
+	} else {
+		s.logger.Printf("Client not found: %s", clientID)
+	}
+}
+
 func (s *SSEServer) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 	s.logger.Printf("Received HTTP request: method=%s, path=%s, query=%s", r.Method, r.URL.Path, r.URL.RawQuery)
 
@@ -253,7 +188,7 @@ func (s *SSEServer) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleSSEConnection establishes a new SSE connection with a client.
+// handleSSEConnection establishes a new SSE connection.
 func (s *SSEServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -268,7 +203,7 @@ func (s *SSEServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Access-Control-Allow-Origin", "*") // CORS
 
 	// Each client gets a unique ID.
-	clientID := uuid.NewString()
+	clientID := s.generateClientID()
 	messageChan := make(chan []byte, 10) // Buffered channel
 
 	s.clientsMutex.Lock()
@@ -318,24 +253,7 @@ func (s *SSEServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func (s *SSEServer) sendMessageToClient(clientID string, message []byte) {
-	s.clientsMutex.RLock()
-	defer s.clientsMutex.RUnlock()
-
-	if clientChan, ok := s.clients[clientID]; ok {
-		select {
-		case clientChan <- message: // Send without blocking
-
-		default:
-			s.logger.Printf("Client message buffer full, dropping message for: %s", clientID)
-			// Consider closing the connection or implementing backpressure.
-		}
-	} else {
-		s.logger.Printf("Client not found: %s", clientID)
-	}
-}
-
-// handleClientMessage processes incoming messages from clients (received via POST requests).
+// handleClientMessage processes incoming messages from clients (POST to /message).
 func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -378,225 +296,7 @@ func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) 
 	s.sendError(clientID, nil, -32600, "Invalid Request", nil)
 }
 
-// handleRequest processes a JSON-RPC request from a client.
-func (s *SSEServer) handleRequest(clientID string, request *Request) {
-	s.logger.Printf("Received request from client %s: method=%s, id=%v", clientID, request.Method, request.ID)
-
-	switch request.Method {
-	case "initialize":
-		var params InitializeParams
-		if err := json.Unmarshal(request.Params, &params); err != nil {
-			s.sendError(clientID, request.ID, -32602, "Invalid params", nil)
-			return
-		}
-
-		if !strings.HasPrefix(params.ProtocolVersion, "2024-11") {
-			s.sendError(clientID, request.ID, -32602, "Unsupported protocol version", map[string][]string{"supported": {"2024-11-05"}})
-			return
-		}
-
-		s.clientCapabilities = params.Capabilities
-		result := InitializeResult{
-			ProtocolVersion: s.protocolVersion,
-			Capabilities:    s.capabilities,
-			ServerInfo:      s.ServerInfo,
-		}
-
-		// Check and set if server supports prompt list changed.
-		if promptCaps, ok := s.capabilities["prompts"].(map[string]any); ok {
-			if listChanged, ok := promptCaps["listChanged"].(bool); ok && listChanged {
-				s.supportsPromptListChanged = true
-			}
-		}
-
-		// Check and set if server supports tool list changed
-		if toolCaps, ok := s.capabilities["tools"].(map[string]any); ok {
-			if listChanged, ok := toolCaps["listChanged"].(bool); ok && listChanged {
-				s.supportsToolListChanged = true
-			}
-		}
-
-		s.sendResponse(clientID, request.ID, result, nil)
-
-	case "ping":
-		s.sendResponse(clientID, request.ID, map[string]interface{}{}, nil)
-
-	case "resources/list":
-		var resourceList []Resource = make([]Resource, 0) // Initialize an empty slice!
-		for _, res := range s.resources {
-			resourceList = append(resourceList, Resource{
-				URI:         res.URI,
-				Name:        res.Name,
-				Description: res.Description,
-				MimeType:    res.MimeType,
-			})
-		}
-		result := ListResourcesResult{Resources: resourceList}
-		s.sendResponse(clientID, request.ID, result, nil)
-
-	case "resources/read":
-		var params ReadResourceParams
-		if err := json.Unmarshal(request.Params, &params); err != nil {
-			s.sendError(clientID, request.ID, -32602, "Invalid params", nil)
-			return
-		}
-
-		resource, ok := s.resources[params.URI]
-		if !ok {
-			s.sendError(clientID, request.ID, -32002, "Resource not found", map[string]string{"uri": params.URI})
-			return
-		}
-
-		result := ReadResourceResult{
-			Contents: []ResourceContent{{
-				URI:      resource.URI,
-				MimeType: resource.MimeType,
-				Text:     resource.TextContent, // Assuming text content for now
-			}},
-		}
-		s.sendResponse(clientID, request.ID, result, nil)
-	case "prompts/list":
-		var promptList []Prompt
-		for _, prompt := range s.prompts {
-			// Create a copy *without* the Messages field for the list response.
-			promptList = append(promptList, Prompt{
-				Name:        prompt.Name,
-				Description: prompt.Description,
-				Arguments:   prompt.Arguments, // Include arguments
-				// Messages is *not* included in the list response.
-			})
-		}
-		result := ListPromptsResult{Prompts: promptList}
-		s.sendResponse(clientID, request.ID, result, nil)
-	case "prompts/get":
-		var params GetPromptParams
-		if err := json.Unmarshal(request.Params, &params); err != nil {
-			s.sendError(clientID, request.ID, -32602, "Invalid params", nil)
-			return
-		}
-
-		prompt, ok := s.prompts[params.Name]
-		if !ok {
-			s.sendError(clientID, request.ID, -32602, "Prompt not found", map[string]string{"prompt": params.Name})
-			return
-		}
-
-		result := Prompt{
-			Name:        prompt.Name,
-			Description: prompt.Description,
-			Messages:    prompt.Messages, // Include messages in get response
-		}
-		s.sendResponse(clientID, request.ID, result, nil)
-	case "logging/setLevel":
-		var params SetLogLevelParams
-		if err := json.Unmarshal(request.Params, &params); err != nil {
-			s.sendError(clientID, request.ID, -32602, "Invalid Params", nil)
-			return
-		}
-		if _, ok := logLevelSeverity[params.Level]; !ok {
-			s.sendError(clientID, request.ID, -32602, "Invalid log level", nil)
-			return
-		}
-
-		s.minLogLevel = params.Level
-		s.sendResponse(clientID, request.ID, struct{}{}, nil)
-	case "tools/list":
-		var toolList []Tool
-		for _, tool := range s.tools {
-			toolList = append(toolList, tool)
-		}
-		result := ListToolsResult{Tools: toolList}
-		s.sendResponse(clientID, request.ID, result, nil)
-
-	case "tools/call":
-		var params CallToolParams
-		if err := json.Unmarshal(request.Params, &params); err != nil {
-			s.sendError(clientID, request.ID, -32602, "Invalid params", nil)
-			return
-		}
-		tool, ok := s.tools[params.Name]
-		if !ok {
-			s.sendError(clientID, request.ID, -32602, "Unknown tool", map[string]string{"tool": params.Name})
-			return
-		}
-		// VERY basic argument validation, just checking required fields.
-		var input map[string]interface{}
-		if err := json.Unmarshal(params.Arguments, &input); err != nil {
-			s.sendError(clientID, request.ID, -32602, "Invalid tool arguments", nil)
-			return
-		}
-		var schema map[string]interface{}
-		if err := json.Unmarshal(tool.InputSchema, &schema); err != nil {
-			s.sendError(clientID, request.ID, -32603, "Internal error: invalid tool schema", nil)
-			return
-		}
-
-		required, hasRequired := schema["required"].([]interface{}) // Use type assertion
-		if hasRequired {
-			for _, reqField := range required {
-				reqFieldName, ok := reqField.(string)
-				if !ok {
-					continue
-				}
-				if _, present := input[reqFieldName]; !present {
-					s.sendError(clientID, request.ID, -32602, "Missing required argument", map[string]string{"argument": reqFieldName})
-					return
-				}
-			}
-		}
-
-		result := CallToolResult{IsError: false}
-		if params.Name == "get_weather" {
-			location, _ := input["location"].(string) //  We checked presence above
-			result.Content = []ToolResultContent{{
-				Type: "text",
-				Text: fmt.Sprintf("Weather in %s: Sunny, 72°F", location), //  Fake data
-			}}
-
-		} else if params.Name == "greet" { //From main.go example
-			name, _ := input["name"].(string)
-			result.Content = []ToolResultContent{
-				{Type: "text", Text: fmt.Sprintf("Hello, %s!", name)},
-			}
-		} else if params.Name == "another_tool" {
-			value, _ := input["value"].(float64)
-			result.Content = []ToolResultContent{{
-				Type: "text",
-				Text: fmt.Sprintf("The value is %f", value),
-			}}
-
-		}
-		s.sendResponse(clientID, request.ID, result, nil)
-
-	default:
-		s.sendError(clientID, request.ID, -32601, "Method not found", nil)
-	}
-}
-
-// handleNotification processes a JSON-RPC notification from a client.
-func (s *SSEServer) handleNotification(clientID string, notification *Notification) {
-	s.logger.Printf("Received notification from client %s: method=%s", clientID, notification.Method)
-	switch notification.Method {
-	case "notifications/initialized": // The client confirms it's initialized.
-		// We don't need to *do* anything here, but it's good to log.
-		s.logger.Printf("Client %s initialized.", clientID)
-	case "notifications/cancelled":
-		var cancelParams struct {
-			RequestID json.RawMessage `json:"requestId"`
-			Reason    string          `json:"reason"`
-		}
-		if err := json.Unmarshal(notification.Params, &cancelParams); err == nil {
-			s.logger.Printf("Cancellation requested for ID %s from client %s: %s", string(cancelParams.RequestID), clientID, cancelParams.Reason)
-			// In a real implementation, you'd have a way to map request IDs to
-			// ongoing operations and cancel them.  This is a placeholder.
-		}
-
-	default:
-		s.logger.Printf("Unhandled notification from client %s: %s", clientID, notification.Method) // Log but don't send error.
-	}
-}
-
-// Run starts the MCP server, listening for incoming HTTP connections.
+// Run starts the MCP SSEServer, listening for incoming HTTP connections.
 func (s *SSEServer) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleHTTPRequest)
