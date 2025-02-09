@@ -24,10 +24,14 @@ type SSEServer struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	}
-	capabilities            map[string]any
-	tools                   map[string]Tool // Store available tools
-	supportsToolListChanged bool
-	address                 string // Add address field
+	capabilities              map[string]any
+	resources                 map[string]Resource // Added resources
+	minLogLevel               LogLevel            // Added minLogLevel
+	tools                     map[string]Tool
+	prompts                   map[string]Prompt // Added prompts
+	supportsPromptListChanged bool              // Added support flag
+	supportsToolListChanged   bool
+	address                   string
 
 	clients      map[string]chan []byte // Map client IDs to their message channels.
 	clientsMutex sync.RWMutex           // Protects access to the clients map.
@@ -48,14 +52,23 @@ func NewSSEServer() *SSEServer {
 			Version: "0.1.0",
 		},
 		capabilities: map[string]any{
-			"tools": map[string]any{ // Only tools capability for now
+			"resources": map[string]any{ // Added resources capability
 				"listChanged": true,
+				"subscribe":   true,
 			},
 			"logging": map[string]any{},
+			"tools": map[string]any{
+				"listChanged": true,
+			},
+			"prompts": map[string]any{"listChanged": true}, // Added prompts capability
 		},
-		tools:                   make(map[string]Tool),
-		supportsToolListChanged: false,
-		address:                 ":8080", // Default address
+		tools:                     make(map[string]Tool),
+		resources:                 make(map[string]Resource), // Initialize resources
+		prompts:                   make(map[string]Prompt),   // Initialize prompts
+		minLogLevel:               LogLevelInfo,              // Initialize log level
+		supportsToolListChanged:   false,
+		supportsPromptListChanged: false,
+		address:                   ":8080",
 
 		clients:      make(map[string]chan []byte),
 		clientsMutex: sync.RWMutex{},
@@ -78,6 +91,38 @@ func (s *SSEServer) SetAddress(address string) {
 // SendToolListChangedNotification broadcasts the tool list changed notification.
 func (s *SSEServer) SendToolListChangedNotification() {
 	s.broadcastNotification("notifications/tools/list_changed", nil) // Broadcast to all clients
+}
+
+// AddResource adds a new resource to the server's resource collection.
+func (s *SSEServer) AddResource(resource Resource) {
+	s.resources[resource.URI] = resource
+	s.broadcastNotification("notifications/resources/list_changed", nil) //broad cast to all clients
+}
+
+// AddPrompt registers a new prompt template with the server.
+func (s *SSEServer) AddPrompt(prompt Prompt) {
+	s.prompts[prompt.Name] = prompt
+
+	if s.supportsPromptListChanged {
+		s.SendPromptListChangedNotification()
+	}
+}
+
+// DeletePrompt removes a prompt template identified by its name.
+func (s *SSEServer) DeletePrompt(name string) error {
+	if _, exists := s.prompts[name]; !exists {
+		return fmt.Errorf("prompt not found: %s", name)
+	}
+	delete(s.prompts, name)
+	if s.supportsPromptListChanged {
+		s.SendPromptListChangedNotification()
+	}
+	return nil
+}
+
+// SendPromptListChangedNotification sends a notification indicating the prompt list has been changed.
+func (s *SSEServer) SendPromptListChangedNotification() {
+	s.broadcastNotification("notifications/prompts/list_changed", nil)
 }
 
 // sendResponse sends a JSON-RPC response to a specific client.
@@ -174,7 +219,7 @@ func (s *SSEServer) broadcastNotification(method string, params interface{}) {
 func (s *SSEServer) LogMessage(level LogLevel, loggerName string, data interface{}) {
 	// For simplicity, we log to stderr *and* send as a notification.  A real implementation
 	// might have configurable log routing.
-	if logLevelSeverity[level] <= logLevelSeverity[LogLevelInfo] { //  Basic filtering.
+	if logLevelSeverity[level] <= logLevelSeverity[s.minLogLevel] { //  Basic filtering.
 		s.logger.Printf("[%s] %s: %+v", level, loggerName, data) // Log to server's stderr
 	}
 	params := LogMessageParams{
@@ -187,7 +232,7 @@ func (s *SSEServer) LogMessage(level LogLevel, loggerName string, data interface
 
 // handleHTTPRequest handles incoming HTTP requests, including SSE setup and message posting.
 func (s *SSEServer) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
-	s.logger.Printf("Received HTTP request: method=%s, path=%s, query=%s", r.Method, r.URL.Path, r.URL.RawQuery) // Log the full URL
+	s.logger.Printf("Received HTTP request: method=%s, path=%s, query=%s", r.Method, r.URL.Path, r.URL.RawQuery)
 
 	// CORS handling (Allow all origins - adjust as needed for production).
 	if r.Method == http.MethodOptions {
@@ -333,7 +378,7 @@ func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) 
 	s.sendError(clientID, nil, -32600, "Invalid Request", nil)
 }
 
-// handleRequest processes a JSON-RPC request from a client.  Note the clientID parameter.
+// handleRequest processes a JSON-RPC request from a client.
 func (s *SSEServer) handleRequest(clientID string, request *Request) {
 	s.logger.Printf("Received request from client %s: method=%s, id=%v", clientID, request.Method, request.ID)
 
@@ -357,6 +402,13 @@ func (s *SSEServer) handleRequest(clientID string, request *Request) {
 			ServerInfo:      s.ServerInfo,
 		}
 
+		// Check and set if server supports prompt list changed.
+		if promptCaps, ok := s.capabilities["prompts"].(map[string]any); ok {
+			if listChanged, ok := promptCaps["listChanged"].(bool); ok && listChanged {
+				s.supportsPromptListChanged = true
+			}
+		}
+
 		// Check and set if server supports tool list changed
 		if toolCaps, ok := s.capabilities["tools"].(map[string]any); ok {
 			if listChanged, ok := toolCaps["listChanged"].(bool); ok && listChanged {
@@ -369,10 +421,89 @@ func (s *SSEServer) handleRequest(clientID string, request *Request) {
 	case "ping":
 		s.sendResponse(clientID, request.ID, map[string]interface{}{}, nil)
 
+	case "resources/list":
+		var resourceList []Resource = make([]Resource, 0) // Initialize an empty slice!
+		for _, res := range s.resources {
+			resourceList = append(resourceList, Resource{
+				URI:         res.URI,
+				Name:        res.Name,
+				Description: res.Description,
+				MimeType:    res.MimeType,
+			})
+		}
+		result := ListResourcesResult{Resources: resourceList}
+		s.sendResponse(clientID, request.ID, result, nil)
+
+	case "resources/read":
+		var params ReadResourceParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			s.sendError(clientID, request.ID, -32602, "Invalid params", nil)
+			return
+		}
+
+		resource, ok := s.resources[params.URI]
+		if !ok {
+			s.sendError(clientID, request.ID, -32002, "Resource not found", map[string]string{"uri": params.URI})
+			return
+		}
+
+		result := ReadResourceResult{
+			Contents: []ResourceContent{{
+				URI:      resource.URI,
+				MimeType: resource.MimeType,
+				Text:     resource.TextContent, // Assuming text content for now
+			}},
+		}
+		s.sendResponse(clientID, request.ID, result, nil)
+	case "prompts/list":
+		var promptList []Prompt
+		for _, prompt := range s.prompts {
+			// Create a copy *without* the Messages field for the list response.
+			promptList = append(promptList, Prompt{
+				Name:        prompt.Name,
+				Description: prompt.Description,
+				Arguments:   prompt.Arguments, // Include arguments
+				// Messages is *not* included in the list response.
+			})
+		}
+		result := ListPromptsResult{Prompts: promptList}
+		s.sendResponse(clientID, request.ID, result, nil)
+	case "prompts/get":
+		var params GetPromptParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			s.sendError(clientID, request.ID, -32602, "Invalid params", nil)
+			return
+		}
+
+		prompt, ok := s.prompts[params.Name]
+		if !ok {
+			s.sendError(clientID, request.ID, -32602, "Prompt not found", map[string]string{"prompt": params.Name})
+			return
+		}
+
+		result := Prompt{
+			Name:        prompt.Name,
+			Description: prompt.Description,
+			Messages:    prompt.Messages, // Include messages in get response
+		}
+		s.sendResponse(clientID, request.ID, result, nil)
+	case "logging/setLevel":
+		var params SetLogLevelParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			s.sendError(clientID, request.ID, -32602, "Invalid Params", nil)
+			return
+		}
+		if _, ok := logLevelSeverity[params.Level]; !ok {
+			s.sendError(clientID, request.ID, -32602, "Invalid log level", nil)
+			return
+		}
+
+		s.minLogLevel = params.Level
+		s.sendResponse(clientID, request.ID, struct{}{}, nil)
 	case "tools/list":
 		var toolList []Tool
 		for _, tool := range s.tools {
-			toolList = append(toolList, tool) // Append the tool directly.
+			toolList = append(toolList, tool)
 		}
 		result := ListToolsResult{Tools: toolList}
 		s.sendResponse(clientID, request.ID, result, nil)
@@ -494,7 +625,7 @@ func (s *SSEServer) Run(ctx context.Context) error {
 
 	s.LogMessage(LogLevelInfo, "startup", fmt.Sprintf("Starting SSE server on %s", s.address))
 
-	// Shutdown handling, inspired by the Go blog's graceful shutdown example.
+	// Shutdown handling
 	errChan := make(chan error, 1)
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
