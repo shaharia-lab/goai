@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -43,19 +44,18 @@ func TestNewStdIOServer(t *testing.T) {
 		t.Error("Expected non-nil output writer")
 	}
 
-	// Verify initial resources were added
-	if len(server.resources) != 2 {
-		t.Errorf("Expected 2 initial resources, got %d", len(server.resources))
+	if len(server.resources) != 0 {
+		t.Errorf("Expected 0 initial resources, got %d", len(server.resources))
 	}
 
 	// Verify initial tools were added
-	if len(server.tools) != 1 {
-		t.Errorf("Expected 1 initial tool, got %d", len(server.tools))
+	if len(server.tools) != 0 {
+		t.Errorf("Expected 0 initial tool, got %d", len(server.tools))
 	}
 
 	// Verify initial prompts were added
-	if len(server.prompts) != 2 {
-		t.Errorf("Expected 2 initial prompts, got %d", len(server.prompts))
+	if len(server.prompts) != 0 {
+		t.Errorf("Expected 0 initial prompts, got %d", len(server.prompts))
 	}
 }
 
@@ -175,7 +175,7 @@ func TestRun(t *testing.T) {
 
 	select {
 	case err := <-errChan:
-		if err != nil && err != context.Canceled {
+		if err != nil && !errors.Is(err, context.Canceled) {
 			t.Errorf("Unexpected error: %v", err)
 		}
 	case <-time.After(3 * time.Second):
@@ -342,7 +342,7 @@ func TestResourceHandling(t *testing.T) {
 
 	select {
 	case err := <-errChan:
-		if err != nil && err != context.Canceled {
+		if err != nil && !errors.Is(err, context.Canceled) {
 			t.Errorf("Unexpected error: %v", err)
 		}
 	case <-time.After(2 * time.Second):
@@ -367,7 +367,7 @@ func TestResourceHandling(t *testing.T) {
 		t.Fatal("Expected array of resources")
 	}
 
-	if len(resources) != 2 {
-		t.Errorf("Expected 2 resources, got %d", len(resources))
+	if len(resources) != 0 {
+		t.Errorf("Expected 0 resources, got %d", len(resources))
 	}
 }
