@@ -78,24 +78,70 @@ suitable for web-based clients and scenarios requiring persistent connections.
 
     ```go
     package main
-
+    
     import (
-        "context"
-    	"log"
-    	"os"
-
-        "github.com/shaharia-lab/goai/mcp"
+    "context"
+    "fmt"
+    "github.com/shaharia-lab/goai/mcp"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
     )
-
+    
     func main() {
-    	stdioServer := mcp.NewStdIOServer(os.Stdin, os.Stdout) // Used by the SSE server
-    	logger := log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)
-        sseServer := mcp.NewSSEServer(stdioServer, ":8080", logger) // Listen on port 8080
-        ctx := context.Background()
-        if err := sseServer.Run(ctx); err != nil {
-            panic(err)
-        }
-    }
+    // Create an instance of the SSEServer.
+    server := mcp.NewSSEServer()
+
+	// Add a sample tool (optional, but demonstrates tool functionality).
+	server.AddTool(mcp.Tool{
+		Name:        "greet",
+		Description: "Greets the user.",
+		InputSchema: []byte(`{"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}`),
+	})
+	// You may add tool.
+	time.Sleep(2 * time.Second) //Simulating a delay
+	server.AddTool(mcp.Tool{
+		Name:        "another_tool",
+		Description: "This is another tool",
+		InputSchema: []byte(`{"type": "object", "properties": {"value": {"type": "number"}}, "required": ["value"]}`),
+	})
+
+	// Set the server address (optional, defaults to ":8080").
+	server.SetAddress(":8080")
+
+	// Create a context that can be cancelled.  This is important for
+	// graceful shutdowns.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // Ensure cancel is always called.
+
+	// Set up signal handling for graceful shutdown.  This listens for
+	// SIGINT (Ctrl+C) and SIGTERM.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigChan
+		fmt.Printf("\nReceived signal: %v. Shutting down...\n", sig)
+		cancel() // Cancel the context, signaling the server to stop.
+	}()
+
+	// Start the server in a goroutine.
+	go func() {
+		err := server.Run(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+			os.Exit(1) // Exit if the server fails.
+		}
+	}()
+
+	// Keep the main goroutine alive until the context is cancelled.  This
+	// prevents the program from exiting immediately. You could add other
+	// logic here if needed, but for a simple server, this is sufficient.
+	<-ctx.Done()
+	fmt.Println("Main goroutine exiting.")
+}
+
     ```
 
 2.  **Build and run:**
