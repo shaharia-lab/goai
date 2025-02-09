@@ -447,3 +447,145 @@ func TestStdIOServerRequests(t *testing.T) {
 		})
 	}
 }
+
+func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		tools          []Tool
+		expectedOutput string
+	}{
+		{
+			name: "tools list request",
+			input: `{
+				"method": "tools/list",
+				"params": {"cursor": "optional-cursor-value"}
+			}`,
+			tools: []Tool{
+				{
+					Name:        "get_weather",
+					Description: "Get the current weather for a given location.",
+					InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"location": {
+						"type": "string",
+						"description": "The city and state, e.g. San Francisco, CA"
+					}
+				},
+				"required": ["location"]
+			}`),
+				},
+				{
+					Name:        "translate_text",
+					Description: "Translate text from one language to another.",
+					InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"text": {
+						"type": "string",
+						"description": "Text to translate"
+					},
+					"source_lang": {
+						"type": "string",
+						"description": "Source language code (e.g., 'en', 'es')"
+					},
+					"target_lang": {
+						"type": "string",
+						"description": "Target language code (e.g., 'fr', 'de')"
+					}
+				},
+				"required": ["text", "target_lang"]
+			}`),
+				},
+				{
+					Name:        "summarize_text",
+					Description: "Generate a concise summary of a given text.",
+					InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"text": {
+						"type": "string",
+						"description": "Text to summarize"
+					},
+					"max_length": {
+						"type": "integer",
+						"description": "Maximum length of summary in words",
+						"default": 100
+					}
+				},
+				"required": ["text"]
+			}`),
+				},
+				{
+					Name:        "code_review",
+					Description: "Analyze code and provide review comments.",
+					InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"code": {
+						"type": "string",
+						"description": "Source code to review"
+					},
+					"language": {
+						"type": "string",
+						"description": "Programming language",
+						"enum": ["python", "javascript", "go", "java"]
+					},
+					"review_type": {
+						"type": "string",
+						"description": "Type of review",
+						"enum": ["security", "style", "performance", "all"],
+						"default": "all"
+					}
+				},
+				"required": ["code", "language"]
+			}`),
+				},
+			},
+			expectedOutput: `{"jsonrpc":"2.0","id":null,"result":{"tools":[{"name":"get_weather","description":"Get the current weather for a given location.","inputSchema":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"}},"required":["location"]}}]}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a buffer to capture output
+			var out bytes.Buffer
+
+			// Create server with input and output buffers
+			in := strings.NewReader(tt.input + "\n")
+			server := NewStdIOServer(in, &out)
+			server.AddTool(Tool{
+				Name:        "get_weather",
+				Description: "Get the current weather for a given location.",
+				InputSchema: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"location": {
+							"type": "string",
+							"description": "The city and state, e.g. San Francisco, CA"
+						}
+					},
+					"required": ["location"]
+				}`),
+			})
+
+			// Process the request
+			var request Request
+			if err := json.Unmarshal([]byte(tt.input), &request); err != nil {
+				t.Fatalf("Failed to unmarshal request: %v", err)
+			}
+
+			// Handle the request
+			server.handleRequest("test-client", &request)
+
+			// Get output and clean it up (remove newline)
+			got := strings.TrimSpace(out.String())
+
+			// Compare with expected output
+			if got != tt.expectedOutput {
+				t.Errorf("Expected output %s, got %s", tt.expectedOutput, got)
+			}
+		})
+	}
+}
