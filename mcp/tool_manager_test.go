@@ -207,6 +207,132 @@ func TestCallTool(t *testing.T) {
 	}
 }
 
+func TestCallToolSchemaValidation(t *testing.T) {
+	tm := NewToolManager()
+
+	// Test tool with a complex schema
+	complexSchema := `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string", "minLength": 2},
+			"age": {"type": "integer", "minimum": 0, "maximum": 150},
+			"email": {"type": "string", "format": "email"},
+			"tags": {
+				"type": "array",
+				"items": {"type": "string"},
+				"minItems": 1
+			},
+			"settings": {
+				"type": "object",
+				"properties": {
+					"enabled": {"type": "boolean"},
+					"level": {"type": "integer"}
+				},
+				"required": ["enabled"]
+			}
+		},
+		"required": ["name", "age"]
+	}`
+
+	testTool := Tool{
+		Name:        "validation-test",
+		InputSchema: json.RawMessage(complexSchema),
+	}
+
+	implementation := func(args json.RawMessage) (CallToolResult, error) {
+		return CallToolResult{
+			Content: []ToolResultContent{{
+				Type: "text",
+				Text: "success",
+			}},
+		}, nil
+	}
+
+	err := tm.RegisterTool(testTool, implementation)
+	assert.NoError(t, err)
+
+	tests := []struct {
+		name          string
+		args          json.RawMessage
+		expectedError string
+		shouldPass    bool
+	}{
+		{
+			name:       "valid complete input",
+			args:       json.RawMessage(`{"name": "John Doe", "age": 30, "email": "john@example.com", "tags": ["user"], "settings": {"enabled": true, "level": 1}}`),
+			shouldPass: true,
+		},
+		{
+			name:          "missing required field",
+			args:          json.RawMessage(`{"name": "John"}`),
+			expectedError: "age is required",
+			shouldPass:    false,
+		},
+		{
+			name:          "invalid email format",
+			args:          json.RawMessage(`{"name": "John", "age": 30, "email": "not-an-email"}`),
+			expectedError: "Does not match format 'email'",
+			shouldPass:    false,
+		},
+		{
+			name:          "invalid age range",
+			args:          json.RawMessage(`{"name": "John", "age": 200}`),
+			expectedError: "Must be less than or equal to 150",
+			shouldPass:    false,
+		},
+		{
+			name:          "invalid name length",
+			args:          json.RawMessage(`{"name": "J", "age": 30}`),
+			expectedError: "String length must be greater than or equal to 2",
+			shouldPass:    false,
+		},
+		{
+			name:          "invalid tags array",
+			args:          json.RawMessage(`{"name": "John", "age": 30, "tags": []}`),
+			expectedError: "Array must have at least 1 items",
+			shouldPass:    false,
+		},
+		{
+			name:          "missing required nested field",
+			args:          json.RawMessage(`{"name": "John", "age": 30, "settings": {"level": 1}}`),
+			expectedError: "settings: enabled is required",
+			shouldPass:    false,
+		},
+		{
+			name:          "wrong type for age",
+			args:          json.RawMessage(`{"name": "John", "age": "thirty"}`),
+			expectedError: "Invalid type. Expected: integer",
+			shouldPass:    false,
+		},
+		{
+			name:       "minimal valid input",
+			args:       json.RawMessage(`{"name": "John", "age": 30}`),
+			shouldPass: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tm.CallTool(CallToolParams{
+				Name:      "validation-test",
+				Arguments: tt.args,
+			})
+
+			assert.NoError(t, err, "Should not return system error")
+
+			if tt.shouldPass {
+				assert.False(t, result.IsError, "Expected validation to pass")
+				assert.Equal(t, "success", result.Content[0].Text)
+			} else {
+				assert.True(t, result.IsError, "Expected validation to fail")
+				assert.Contains(t, result.Content[0].Text, tt.expectedError,
+					"Expected error message to contain %q, got %q",
+					tt.expectedError, result.Content[0].Text)
+			}
+		})
+	}
+}
+
 func TestGetTool(t *testing.T) {
 	tm := NewToolManager()
 
