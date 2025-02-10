@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -51,11 +52,6 @@ func TestNewStdIOServer(t *testing.T) {
 
 	if len(server.resources) != 0 {
 		t.Errorf("Expected 0 initial resources, got %d", len(server.resources))
-	}
-
-	// Verify initial tools were added
-	if len(server.tools) != 0 {
-		t.Errorf("Expected 0 initial tool, got %d", len(server.tools))
 	}
 
 	// Verify initial prompts were added
@@ -427,7 +423,7 @@ func TestStdIOServerRequests(t *testing.T) {
 			name: "tools list request",
 			input: `{
 				"method": "tools/list",
-				"params": {}
+				"params": {"cursor": "optional-cursor-value"}
 			}`,
 			expectedOutput: `{"jsonrpc":"2.0","id":null,"result":{"tools":[]}}`,
 		},
@@ -494,7 +490,7 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 	tests := []struct {
 		name           string
 		input          string
-		tools          []Tool
+		tools          []ToolHandler
 		expectedOutput string
 	}{
 		{
@@ -503,87 +499,17 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 				"method": "tools/list",
 				"params": {"cursor": "optional-cursor-value"}
 			}`,
-			tools: []Tool{
-				{
-					Name:        "get_weather",
-					Description: "Get the current weather for a given location.",
-					InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"location": {
-						"type": "string",
-						"description": "The city and state, e.g. San Francisco, CA"
-					}
-				},
-				"required": ["location"]
-			}`),
-				},
-				{
-					Name:        "translate_text",
-					Description: "Translate text from one language to another.",
-					InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"text": {
-						"type": "string",
-						"description": "Text to translate"
+			tools: []ToolHandler{
+				NewWeatherTool("get_weather", "Get the current weather for a given location.", json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"location": {
+							"type": "string",
+							"description": "The city and state, e.g. San Francisco, CA"
+						}
 					},
-					"source_lang": {
-						"type": "string",
-						"description": "Source language code (e.g., 'en', 'es')"
-					},
-					"target_lang": {
-						"type": "string",
-						"description": "Target language code (e.g., 'fr', 'de')"
-					}
-				},
-				"required": ["text", "target_lang"]
-			}`),
-				},
-				{
-					Name:        "summarize_text",
-					Description: "Generate a concise summary of a given text.",
-					InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"text": {
-						"type": "string",
-						"description": "Text to summarize"
-					},
-					"max_length": {
-						"type": "integer",
-						"description": "Maximum length of summary in words",
-						"default": 100
-					}
-				},
-				"required": ["text"]
-			}`),
-				},
-				{
-					Name:        "code_review",
-					Description: "Analyze code and provide review comments.",
-					InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"code": {
-						"type": "string",
-						"description": "Source code to review"
-					},
-					"language": {
-						"type": "string",
-						"description": "Programming language",
-						"enum": ["python", "javascript", "go", "java"]
-					},
-					"review_type": {
-						"type": "string",
-						"description": "Type of review",
-						"enum": ["security", "style", "performance", "all"],
-						"default": "all"
-					}
-				},
-				"required": ["code", "language"]
-			}`),
-				},
+					"required": ["location"]
+				}`)),
 			},
 			expectedOutput: `{"jsonrpc":"2.0","id":null,"result":{"tools":[{"name":"get_weather","description":"Get the current weather for a given location.","inputSchema":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"}},"required":["location"]}}]}}`,
 		},
@@ -593,25 +519,10 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
 
-			tool := Tool{
-				Name:        "get_weather",
-				Description: "Get the current weather for a given location.",
-				InputSchema: json.RawMessage(`{
-					"type": "object",
-					"properties": {
-						"location": {
-							"type": "string",
-							"description": "The city and state, e.g. San Francisco, CA"
-						}
-					},
-					"required": ["location"]
-				}`),
-			}
-
 			server := NewStdIOServer(
 				NewServerBuilder(
 					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-					UseTools(tool),
+					UseToolManager(NewToolManager(tt.tools)),
 				),
 				strings.NewReader(tt.input+"\n"),
 				&out,
@@ -635,4 +546,51 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 			}
 		})
 	}
+}
+
+// An example tool implementation
+type WeatherTool struct {
+	name        string
+	description string
+	inputSchema json.RawMessage
+}
+
+func NewWeatherTool(name, description string, inputSchema json.RawMessage) *WeatherTool {
+	return &WeatherTool{
+		name:        name,
+		description: description,
+		inputSchema: inputSchema,
+	}
+}
+
+func (wt *WeatherTool) GetName() string {
+	return wt.name
+}
+
+func (wt *WeatherTool) GetDescription() string {
+	return wt.description
+}
+
+func (wt *WeatherTool) GetInputSchema() json.RawMessage {
+	return wt.inputSchema
+}
+
+func (wt *WeatherTool) Handler(params CallToolParams) (CallToolResult, error) {
+	// Parse input
+	var input struct {
+		Location string `json:"location"`
+	}
+	if err := json.Unmarshal(params.Arguments, &input); err != nil {
+		return CallToolResult{}, err
+	}
+
+	// Return result
+	return CallToolResult{
+		Content: []ToolResultContent{
+			{
+				Type: "text",
+				Text: fmt.Sprintf("Weather in %s: Sunny, 72°F", input.Location),
+			},
+		},
+	}, nil
 }

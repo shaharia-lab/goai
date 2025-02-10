@@ -15,8 +15,8 @@ type ToolManager struct {
 }
 
 // NewToolManager creates a new ToolManager instance.
-func NewToolManager(tools []ToolHandler) *ToolManager {
-	return &ToolManager{
+func NewToolManager(tools []ToolHandler) ToolManager {
+	return ToolManager{
 		tools:               tools,
 		toolImplementations: make(map[string]ToolImplementation),
 	}
@@ -59,7 +59,7 @@ func (tm *ToolManager) ListTools(cursor string, limit int) ListToolsResult {
 	}
 
 	// Get the page of tools
-	var pageTools []Tool
+	pageTools := make([]Tool, 0)
 	for i := startIdx; i < endIdx; i++ {
 		if tool, exists := toolMap[names[i]]; exists {
 			pageTools = append(pageTools, tool)

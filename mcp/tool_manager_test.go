@@ -200,3 +200,18 @@ func TestGetTool(t *testing.T) {
 		})
 	}
 }
+
+func TestListToolsWithNoTools(t *testing.T) {
+	tm := NewToolManager(nil) // or []ToolHandler{}
+	result := tm.ListTools("", 10)
+
+	if result.Tools == nil {
+		t.Error("Expected empty slice, got nil")
+	}
+	if len(result.Tools) != 0 {
+		t.Error("Expected 0 tools, got", len(result.Tools))
+	}
+	if result.NextCursor != "" {
+		t.Error("Expected empty cursor, got", result.NextCursor)
+	}
+}

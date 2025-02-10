@@ -42,7 +42,7 @@ type ServerConfig struct {
 	initialResources []Resource
 	initialTools     []Tool
 	initialPrompts   []Prompt
-	tools            map[string]Tool
+	toolManager      ToolManager
 	prompts          map[string]Prompt
 	resources        map[string]Resource
 }
@@ -81,12 +81,10 @@ func UseResources(resources ...Resource) ServerConfigOption {
 	}
 }
 
-// UseTools sets initial tools
-func UseTools(tools ...Tool) ServerConfigOption {
+// UseToolManager sets initial tools
+func UseToolManager(toolManager ToolManager) ServerConfigOption {
 	return func(c *ServerConfig) {
-		for _, tool := range tools {
-			c.tools[tool.Name] = tool
-		}
+		c.toolManager = toolManager
 	}
 }
 
@@ -111,7 +109,6 @@ type BaseServer struct {
 	capabilities              map[string]any
 	resources                 map[string]Resource
 	minLogLevel               LogLevel
-	tools                     map[string]Tool
 	toolManager               ToolManager
 	prompts                   map[string]Prompt
 	supportsPromptListChanged bool
@@ -145,9 +142,9 @@ func NewServerBuilder(opts ...ServerConfigOption) *BaseServer {
 				"listChanged": true,
 			},
 		},
-		tools:     make(map[string]Tool),
-		prompts:   make(map[string]Prompt),
-		resources: make(map[string]Resource),
+		toolManager: NewToolManager([]ToolHandler{}),
+		prompts:     make(map[string]Prompt),
+		resources:   make(map[string]Resource),
 	}
 
 	for _, opt := range opts {
@@ -167,13 +164,14 @@ func NewServerBuilder(opts ...ServerConfigOption) *BaseServer {
 		capabilities:              cfg.capabilities,
 		resources:                 cfg.resources,
 		minLogLevel:               cfg.minLogLevel,
-		tools:                     cfg.tools,
+		toolManager:               cfg.toolManager,
 		prompts:                   cfg.prompts,
 		supportsPromptListChanged: false,
 		supportsToolListChanged:   false,
+		sendNoti:                  func(clientID string, method string, params interface{}) {},
 	}
 
-	if s.supportsToolListChanged {
+	if tools := cfg.toolManager.ListTools("", 2); tools.Tools != nil && len(tools.Tools) > 0 {
 		s.SendToolListChangedNotification()
 	}
 
@@ -187,14 +185,6 @@ func NewServerBuilder(opts ...ServerConfigOption) *BaseServer {
 // AddResource adds a new resource to the server.
 func (s *BaseServer) AddResource(resource Resource) {
 	s.resources[resource.URI] = resource
-}
-
-// addTool adds a new tool to the server.
-func (s *BaseServer) addTool(tool Tool) {
-	s.tools[tool.Name] = tool
-	if s.supportsToolListChanged {
-		s.SendToolListChangedNotification()
-	}
 }
 
 // AddPrompt adds a new prompt to the server.
@@ -320,7 +310,7 @@ func (s *BaseServer) handleRequest(clientID string, request *Request) {
 
 	case "prompts/list":
 		// Initialize the slice here:
-		var promptList []Prompt = make([]Prompt, 0)
+		var promptList = make([]Prompt, 0)
 		for _, prompt := range s.prompts {
 			promptList = append(promptList, Prompt{
 				Name:        prompt.Name,
@@ -366,13 +356,16 @@ func (s *BaseServer) handleRequest(clientID string, request *Request) {
 		s.sendResp(clientID, request.ID, struct{}{}, nil)
 
 	case "tools/list":
-		// Initialize the slice here:
-		var toolList []Tool = make([]Tool, 0)
-		for _, tool := range s.tools {
-			toolList = append(toolList, tool)
+		var params ListToolsParams
+
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
+			return
 		}
-		result := ListToolsResult{Tools: toolList}
-		s.sendResp(clientID, request.ID, result, nil)
+
+		log.Printf("Total tools: %+v", s.toolManager.ListTools(params.Cursor, 0))
+
+		s.sendResp(clientID, request.ID, s.toolManager.ListTools(params.Cursor, 0), nil)
 
 	case "tools/call":
 		var params CallToolParams
@@ -380,58 +373,13 @@ func (s *BaseServer) handleRequest(clientID string, request *Request) {
 			s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
 			return
 		}
-		tool, ok := s.tools[params.Name]
-		if !ok {
-			s.sendErr(clientID, request.ID, -32602, "Unknown tool", map[string]string{"tool": params.Name})
-			return
-		}
-		// VERY basic argument validation, just checking required fields.
-		var input map[string]interface{}
-		if err := json.Unmarshal(params.Arguments, &input); err != nil {
-			s.sendErr(clientID, request.ID, -32602, "Invalid tool arguments", nil)
-			return
-		}
-		var schema map[string]interface{}
-		if err := json.Unmarshal(tool.InputSchema, &schema); err != nil {
-			s.sendErr(clientID, request.ID, -32603, "Internal error: invalid tool schema", nil)
+
+		result, err := s.toolManager.CallTool(params)
+		if err != nil {
+			s.sendErr(clientID, request.ID, -32602, err.Error(), nil)
 			return
 		}
 
-		required, hasRequired := schema["required"].([]interface{}) // Use type assertion
-		if hasRequired {
-			for _, reqField := range required {
-				reqFieldName, ok := reqField.(string)
-				if !ok {
-					continue
-				}
-				if _, present := input[reqFieldName]; !present {
-					s.sendErr(clientID, request.ID, -32602, "Missing required argument", map[string]string{"argument": reqFieldName})
-					return
-				}
-			}
-		}
-
-		result := CallToolResult{IsError: false}
-		if params.Name == "get_weather" {
-			location, _ := input["location"].(string) //  We checked presence above
-			result.Content = []ToolResultContent{{
-				Type: "text",
-				Text: fmt.Sprintf("Weather in %s: Sunny, 72°F", location), //  Fake data
-			}}
-
-		} else if params.Name == "greet" { //From main.go example
-			name, _ := input["name"].(string)
-			result.Content = []ToolResultContent{
-				{Type: "text", Text: fmt.Sprintf("Hello, %s!", name)},
-			}
-		} else if params.Name == "another_tool" {
-			value, _ := input["value"].(float64)
-			result.Content = []ToolResultContent{{
-				Type: "text",
-				Text: fmt.Sprintf("The value is %f", value),
-			}}
-
-		}
 		s.sendResp(clientID, request.ID, result, nil)
 
 	default:

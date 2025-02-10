@@ -188,6 +188,10 @@ type ListToolsResult struct {
 	NextCursor string `json:"nextCursor,omitempty"`
 }
 
+type ListToolsParams struct {
+	Cursor string `json:"cursor"`
+}
+
 type ToolImplementation func(args json.RawMessage) (CallToolResult, error)
 
 type ToolHandler interface {
