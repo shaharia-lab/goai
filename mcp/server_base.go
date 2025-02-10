@@ -60,8 +60,8 @@ func UseResources(resourceManager *ResourceManager) ServerConfigOption {
 	}
 }
 
-// UseToolManager sets initial tools
-func UseToolManager(toolManager *ToolManager) ServerConfigOption {
+// UseTools sets initial tools
+func UseTools(toolManager *ToolManager) ServerConfigOption {
 	return func(c *ServerConfig) {
 		c.toolManager = toolManager
 	}
@@ -216,7 +216,7 @@ func (s *BaseServer) handleRequest(clientID string, request *Request) {
 		s.handleToolsCall(clientID, request)
 	case "prompts/list":
 		s.handlePromptsList(clientID, request)
-	case "prompt/get":
+	case "prompts/get":
 		s.handlePromptGet(clientID, request)
 
 	default:
@@ -270,20 +270,20 @@ func (s *BaseServer) handleResourcesRead(clientID string, request *Request) {
 		return
 	}
 
-	resource, err := s.resourceManager.GetResource(params.URI)
+	_, err := s.resourceManager.GetResource(params.URI)
 	if err != nil {
 		s.sendErr(clientID, request.ID, -32002, "Resource not found",
 			map[string]string{"uri": params.URI})
 		return
 	}
 
-	result := ReadResourceResult{
-		Contents: []ResourceContent{{
-			URI:      resource.URI,
-			MimeType: resource.MimeType,
-			Text:     resource.TextContent,
-		}},
+	result, err := s.resourceManager.ReadResource(params)
+	if err != nil {
+		s.sendErr(clientID, request.ID, -32603, "Failed to read resource",
+			map[string]string{"uri": params.URI})
+		return
 	}
+
 	s.sendResp(clientID, request.ID, result, nil)
 }
 

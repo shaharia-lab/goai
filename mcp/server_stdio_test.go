@@ -510,7 +510,7 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 
 			baseServer, _ := NewBaseServer(
 				UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-				UseToolManager(tm),
+				UseTools(tm),
 			)
 			server := NewStdIOServer(
 				baseServer,

@@ -37,11 +37,68 @@ func main() {
 					"required": ["location"]
 				}`))
 
+	resources := []mcp.Resource{
+		{
+			URI:         "file:///home/shaharia/Projects/goai/bash.sh",
+			Name:        "Sample Document",
+			Description: "A sample text document for testing",
+			MimeType:    "text/plain",
+			TextContent: "This is the content of the sample document.",
+		},
+	}
+
+	prompt := mcp.Prompt{
+		Name:        "code_review",
+		Description: "Performs a detailed code review analyzing code quality, potential issues, and suggesting improvements",
+		Arguments: []mcp.PromptArgument{
+			{
+				Name:        "language",
+				Description: "Programming language of the code (e.g., Go, Python, JavaScript)",
+				Required:    true,
+			},
+			{
+				Name:        "code",
+				Description: "Source code to be reviewed",
+				Required:    true,
+			},
+			{
+				Name:        "focus_areas",
+				Description: "Specific areas to focus on (e.g., performance, security, readability)",
+				Required:    false,
+			},
+		},
+		Messages: []mcp.PromptMessage{
+			{
+				Role: "assistant",
+				Content: mcp.PromptContent{
+					Type: "text",
+					Text: "You are an experienced code reviewer. Analyze the provided code and give constructive feedback focusing on:" +
+						"\n- Code quality and best practices" +
+						"\n- Potential bugs or issues" +
+						"\n- Performance considerations" +
+						"\n- Security implications" +
+						"\n- Readability and maintainability",
+				},
+			},
+			{
+				Role: "user",
+				Content: mcp.PromptContent{
+					Type: "text",
+					Text: "Please provide a comprehensive code review with actionable suggestions for improvement.",
+				},
+			},
+		},
+	}
+
+	resourceManager, _ := mcp.NewResourceManager(resources)
 	toolManager, _ := mcp.NewToolManager([]mcp.ToolHandler{weatherTool})
+	promptManager, _ := mcp.NewPromptManager([]mcp.Prompt{prompt})
 
 	baseServer, err := mcp.NewBaseServer(
 		mcp.UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-		mcp.UseToolManager(toolManager),
+		mcp.UseTools(toolManager),
+		mcp.UseResources(resourceManager),
+		mcp.UsePrompts(promptManager),
 	)
 	if err != nil {
 		panic(err)

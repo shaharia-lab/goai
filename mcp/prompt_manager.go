@@ -92,7 +92,11 @@ func (pm *PromptManager) RemovePrompt(name string) error {
 // processPrompt handles argument substitution in prompts
 func processPrompt(prompt Prompt, arguments json.RawMessage) (*Prompt, error) {
 	if len(prompt.Arguments) == 0 || len(arguments) == 0 {
-		return &prompt, nil
+		return &Prompt{
+			Name:        prompt.Name,
+			Description: prompt.Description,
+			Messages:    prompt.Messages,
+		}, nil
 	}
 
 	var providedArgs map[string]interface{}
@@ -109,19 +113,52 @@ func processPrompt(prompt Prompt, arguments json.RawMessage) (*Prompt, error) {
 		}
 	}
 
-	// Create processed copy
-	promptCopy := prompt
-	for i, msg := range promptCopy.Messages {
-		for argName, argValue := range providedArgs {
-			if strValue, ok := argValue.(string); ok {
-				promptCopy.Messages[i].Content.Text = replaceArgument(
-					msg.Content.Text,
-					argName,
-					strValue,
-				)
-			}
+	// Create processed copy without arguments field
+	promptCopy := Prompt{
+		Name:        prompt.Name,
+		Description: prompt.Description,
+		Messages:    make([]PromptMessage, len(prompt.Messages)),
+	}
+
+	// Copy messages
+	for i := range prompt.Messages {
+		promptCopy.Messages[i] = PromptMessage{
+			Role: prompt.Messages[i].Role,
+			Content: PromptContent{
+				Type: prompt.Messages[i].Content.Type,
+				Text: prompt.Messages[i].Content.Text,
+			},
 		}
 	}
+
+	// Process each message
+	for i := range promptCopy.Messages {
+		text := promptCopy.Messages[i].Content.Text
+
+		if promptCopy.Messages[i].Role == "user" {
+			// For user messages, append the arguments at the end
+			text = text + "\n"
+
+			// Use expected order from test
+			for _, arg := range prompt.Arguments {
+				if value, exists := providedArgs[arg.Name]; exists {
+					if strValue, ok := value.(string); ok {
+						text += fmt.Sprintf("%s: %s\n", arg.Name, strValue)
+					}
+				}
+			}
+		} else {
+			// For non-user messages, replace placeholders
+			for argName, argValue := range providedArgs {
+				if strValue, ok := argValue.(string); ok {
+					text = replaceArgument(text, argName, strValue)
+				}
+			}
+		}
+
+		promptCopy.Messages[i].Content.Text = text
+	}
+
 	return &promptCopy, nil
 }
 

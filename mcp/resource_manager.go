@@ -151,10 +151,16 @@ func (rm *ResourceManager) ListResources(cursor string, limit int) ListResources
 }
 
 // ReadResource reads the content of a resource.
+// ReadResource implementation with proper error handling and URI validation
 func (rm *ResourceManager) ReadResource(params ReadResourceParams) (ReadResourceResult, error) {
-	resource, err := rm.GetResource(params.URI)
-	if err != nil {
-		return ReadResourceResult{}, err
+	// Validate URI scheme
+	if !isValidURIScheme(params.URI) {
+		return ReadResourceResult{}, fmt.Errorf("invalid URI scheme: %s", params.URI)
+	}
+
+	resource, exists := rm.resources[params.URI]
+	if !exists {
+		return ReadResourceResult{}, fmt.Errorf("resource not found: %s", params.URI)
 	}
 
 	content := ResourceContent{
@@ -172,4 +178,15 @@ func (rm *ResourceManager) ReadResource(params ReadResourceParams) (ReadResource
 	return ReadResourceResult{
 		Contents: []ResourceContent{content},
 	}, nil
+}
+
+// Helper function to validate URI schemes
+func isValidURIScheme(uri string) bool {
+	validSchemes := []string{"file://", "https://", "git://"}
+	for _, scheme := range validSchemes {
+		if strings.HasPrefix(uri, scheme) {
+			return true
+		}
+	}
+	return false
 }

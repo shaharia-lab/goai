@@ -102,7 +102,6 @@ func TestAddPrompt(t *testing.T) {
 
 func TestGetPrompt(t *testing.T) {
 	pm, _ := NewPromptManager(nil)
-
 	t.Run("prompt without arguments", func(t *testing.T) {
 		prompt := Prompt{
 			Name: "test-prompt",
@@ -179,6 +178,158 @@ func TestGetPrompt(t *testing.T) {
 		})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "missing required argument")
+	})
+
+	t.Run("verify no arguments field in response", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-no-args-field",
+			Messages: []PromptMessage{
+				{
+					Role: "assistant",
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello!",
+					},
+				},
+			},
+			Arguments: []PromptArgument{
+				{
+					Name:     "name",
+					Required: true,
+				},
+			},
+		}
+		_ = pm.AddPrompt(prompt)
+
+		args, _ := json.Marshal(map[string]string{"name": "John"})
+		result, err := pm.GetPrompt(GetPromptParams{
+			Name:      "test-no-args-field",
+			Arguments: args,
+		})
+
+		assert.NoError(t, err)
+		// Verify Arguments field is not present in response
+		assert.Empty(t, result.Arguments)
+	})
+
+	t.Run("verify user message argument formatting", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-user-msg",
+			Messages: []PromptMessage{
+				{
+					Role: "assistant",
+					Content: PromptContent{
+						Type: "text",
+						Text: "I will help you.",
+					},
+				},
+				{
+					Role: "user",
+					Content: PromptContent{
+						Type: "text",
+						Text: "Base message",
+					},
+				},
+			},
+			Arguments: []PromptArgument{
+				{
+					Name:     "lang",
+					Required: true,
+				},
+				{
+					Name:     "code",
+					Required: true,
+				},
+			},
+		}
+		_ = pm.AddPrompt(prompt)
+
+		args, _ := json.Marshal(map[string]string{
+			"lang": "Go",
+			"code": "fmt.Println()",
+		})
+
+		result, err := pm.GetPrompt(GetPromptParams{
+			Name:      "test-user-msg",
+			Arguments: args,
+		})
+
+		assert.NoError(t, err)
+		// Verify assistant message remains unchanged
+		assert.Equal(t, "I will help you.", result.Messages[0].Content.Text)
+		// Verify user message has arguments appended
+		expectedUserMsg := "Base message\nlang: Go\ncode: fmt.Println()\n"
+		assert.Equal(t, expectedUserMsg, result.Messages[1].Content.Text)
+	})
+
+	t.Run("verify placeholder substitution in assistant message", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-placeholder",
+			Messages: []PromptMessage{
+				{
+					Role: "assistant",
+					Content: PromptContent{
+						Type: "text",
+						Text: "I will review {{lang}} code: {{code}}",
+					},
+				},
+			},
+			Arguments: []PromptArgument{
+				{
+					Name:     "lang",
+					Required: true,
+				},
+				{
+					Name:     "code",
+					Required: true,
+				},
+			},
+		}
+		_ = pm.AddPrompt(prompt)
+
+		args, _ := json.Marshal(map[string]string{
+			"lang": "Go",
+			"code": "fmt.Println()",
+		})
+
+		result, err := pm.GetPrompt(GetPromptParams{
+			Name:      "test-placeholder",
+			Arguments: args,
+		})
+
+		assert.NoError(t, err)
+		expectedMsg := "I will review Go code: fmt.Println()"
+		assert.Equal(t, expectedMsg, result.Messages[0].Content.Text)
+	})
+
+	t.Run("verify invalid json arguments", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-invalid-json",
+			Messages: []PromptMessage{
+				{
+					Role: "assistant",
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello {{name}}!",
+					},
+				},
+			},
+			Arguments: []PromptArgument{
+				{
+					Name:     "name",
+					Required: true,
+				},
+			},
+		}
+		_ = pm.AddPrompt(prompt)
+
+		_, err := pm.GetPrompt(GetPromptParams{
+			Name:      "test-invalid-json",
+			Arguments: []byte("{invalid json}"),
+		})
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid arguments format")
 	})
 }
 

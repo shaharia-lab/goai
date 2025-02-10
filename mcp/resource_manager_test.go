@@ -148,14 +148,14 @@ func TestReadResource(t *testing.T) {
 	rm, _ := NewResourceManager([]Resource{})
 
 	textResource := Resource{
-		URI:         "test://file.txt",
+		URI:         "file://file.txt",
 		Name:        "file.txt",
 		MimeType:    "text/plain",
 		TextContent: "Hello, World!",
 	}
 
 	binaryResource := Resource{
-		URI:         "test://file.bin",
+		URI:         "file://file.bin",
 		Name:        "file.bin",
 		MimeType:    "application/octet-stream",
 		TextContent: "binary content",
@@ -172,19 +172,19 @@ func TestReadResource(t *testing.T) {
 	}{
 		{
 			name:        "read text resource",
-			params:      ReadResourceParams{URI: "test://file.txt"},
+			params:      ReadResourceParams{URI: "file://file.txt"},
 			expectError: false,
 			checkText:   true,
 		},
 		{
 			name:        "read binary resource",
-			params:      ReadResourceParams{URI: "test://file.bin"},
+			params:      ReadResourceParams{URI: "file://file.bin"},
 			expectError: false,
 			checkText:   false,
 		},
 		{
 			name:        "read non-existent resource",
-			params:      ReadResourceParams{URI: "test://nonexistent.txt"},
+			params:      ReadResourceParams{URI: "file://nonexistent.txt"},
 			expectError: true,
 			checkText:   false,
 		},
@@ -234,7 +234,7 @@ func TestValidateResource(t *testing.T) {
 		{
 			name: "valid resource",
 			resource: Resource{
-				URI:      "test://example.com/file.txt",
+				URI:      "file://example.com/file.txt",
 				Name:     "file.txt",
 				MimeType: "text/plain",
 			},
@@ -243,7 +243,7 @@ func TestValidateResource(t *testing.T) {
 		{
 			name: "empty MIME type",
 			resource: Resource{
-				URI:  "test://example.com/file.txt",
+				URI:  "file://example.com/file.txt",
 				Name: "file.txt",
 			},
 			expectError: true,
@@ -304,7 +304,7 @@ func TestReadResourceBinaryContent(t *testing.T) {
 
 	binaryData := []byte{0x00, 0x01, 0x02, 0x03}
 	binaryResource := Resource{
-		URI:         "test://file.bin",
+		URI:         "file://file.bin",
 		Name:        "file.bin",
 		MimeType:    "application/octet-stream",
 		TextContent: string(binaryData),
@@ -313,7 +313,7 @@ func TestReadResourceBinaryContent(t *testing.T) {
 	err := rm.AddResource(binaryResource)
 	assert.NoError(t, err)
 
-	result, err := rm.ReadResource(ReadResourceParams{URI: "test://file.bin"})
+	result, err := rm.ReadResource(ReadResourceParams{URI: "file://file.bin"})
 	assert.NoError(t, err)
 	assert.Len(t, result.Contents, 1)
 
