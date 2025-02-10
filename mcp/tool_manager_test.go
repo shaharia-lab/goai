@@ -8,7 +8,6 @@ import (
 )
 
 // MockToolHandler implements ToolHandler interface for testing
-// MockToolHandler implements ToolHandler interface for testing
 type MockToolHandler struct {
 	name        string
 	description string
