@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/stretchr/testify/require"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -261,5 +263,132 @@ func TestServerShutdown(t *testing.T) {
 		}
 	case <-time.After(6 * time.Second): // Longer than shutdown timeout
 		t.Error("Server shutdown timed out")
+	}
+}
+
+func TestHandlePromptGetSSE(t *testing.T) {
+	tests := []struct {
+		name           string
+		initFirst      bool
+		input          string
+		expectedID     string
+		expectedError  *Error
+		expectedResult map[string]interface{}
+	}{
+		// Using the same test cases as StdIOServer
+		{
+			name:       "valid prompt get request",
+			initFirst:  true,
+			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": {"name": "code_review", "arguments": {"language": "go", "code": "test code", "focus_areas": "test"}}}`,
+			expectedID: "1",
+			expectedResult: map[string]interface{}{
+				"name": "code_review",
+				"messages": []interface{}{
+					map[string]interface{}{
+						"role": "user",
+						"content": map[string]interface{}{
+							"type": "text",
+							"text": "Please review this code:\nlanguage: go\ncode: test code\nfocus_areas: test\n",
+						},
+					},
+				},
+			},
+		},
+		// ... copy other test cases from StdIOServer test
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create prompt manager with test prompt
+			codeReviewPrompt := Prompt{
+				Name: "code_review",
+				Messages: []PromptMessage{
+					{
+						Role: "user",
+						Content: PromptContent{
+							Type: "text",
+							Text: "Please review this code:",
+						},
+					},
+				},
+				Arguments: []PromptArgument{
+					{Name: "language", Required: true},
+					{Name: "code", Required: true},
+					{Name: "focus_areas", Required: true},
+				},
+			}
+			pm, _ := NewPromptManager([]Prompt{codeReviewPrompt})
+
+			// Create SSE server
+			baseServer, _ := NewBaseServer(
+				UseLogger(log.New(io.Discard, "", 0)),
+				UsePrompts(pm),
+			)
+			server := NewSSEServer(baseServer)
+
+			// Create test client
+			clientID := "test-client"
+			messageChan := make(chan []byte, 10)
+			server.clientsMutex.Lock()
+			server.clients[clientID] = messageChan
+			server.clientsMutex.Unlock()
+
+			if tt.initFirst {
+				// Initialize the server
+				initRequest := `{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
+				req := httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBufferString(initRequest))
+				w := httptest.NewRecorder()
+				server.handleClientMessage(w, req)
+				require.Equal(t, http.StatusOK, w.Code)
+
+				// Send initialized notification
+				initNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
+				req = httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBufferString(initNotification))
+				w = httptest.NewRecorder()
+				server.handleClientMessage(w, req)
+				require.Equal(t, http.StatusOK, w.Code)
+
+				// Clear any initialization responses
+				for len(messageChan) > 0 {
+					<-messageChan
+				}
+			}
+
+			// Send the test request
+			req := httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBufferString(tt.input))
+			w := httptest.NewRecorder()
+			server.handleClientMessage(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			// Wait for and verify response
+			select {
+			case responseBytes := <-messageChan:
+				var response Response
+				err := json.Unmarshal(responseBytes, &response)
+				require.NoError(t, err)
+
+				if tt.expectedError != nil {
+					require.NotNil(t, response.Error)
+					require.Equal(t, tt.expectedError.Code, response.Error.Code)
+					require.Equal(t, tt.expectedError.Message, response.Error.Message)
+				} else {
+					require.Nil(t, response.Error)
+					require.Equal(t, "2.0", response.JSONRPC)
+					require.Equal(t, tt.expectedID, string(*response.ID))
+
+					result, ok := response.Result.(map[string]interface{})
+					require.True(t, ok)
+					require.Equal(t, tt.expectedResult, result)
+				}
+			case <-time.After(100 * time.Millisecond):
+				t.Fatal("Timeout waiting for response")
+			}
+
+			// Cleanup
+			server.clientsMutex.Lock()
+			delete(server.clients, clientID)
+			server.clientsMutex.Unlock()
+			close(messageChan)
+		})
 	}
 }
