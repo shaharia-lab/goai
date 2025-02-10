@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
-	"flag"
 	"github.com/shaharia-lab/goai/mcp"
 	"log"
 	"os"
 )
 
-func main() {
+/*func main() {
 	addr := flag.String("addr", ":8080", "HTTP address to listen on")
 	flag.Parse()
 
@@ -21,12 +20,18 @@ func main() {
 	if err := server.Run(ctx); err != nil {
 		log.Fatal(err)
 	}
-}
+}*/
 
-/*func main() {
-	server := mcp.NewStdIOServer(os.Stdin, os.Stdout)
+func main() {
+	server := mcp.NewStdIOServer(
+		mcp.NewCommonServer(
+			mcp.UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+		),
+		os.Stdin,
+		os.Stdout,
+	)
 	ctx := context.Background()
 	if err := server.Run(ctx); err != nil {
 		panic(err)
 	}
-}*/
+}

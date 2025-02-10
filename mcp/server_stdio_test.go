@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -29,10 +31,13 @@ func waitForResponse(t *testing.T, out *bytes.Buffer, timeout time.Duration) *Re
 }
 
 func TestNewStdIOServer(t *testing.T) {
-	in := strings.NewReader("")
-	out := &bytes.Buffer{}
-
-	server := NewStdIOServer(in, out)
+	server := NewStdIOServer(
+		NewCommonServer(
+			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+		),
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
 
 	if server == nil {
 		t.Fatal("Expected non-nil server")
@@ -61,7 +66,13 @@ func TestNewStdIOServer(t *testing.T) {
 
 func TestSendResponse(t *testing.T) {
 	out := &bytes.Buffer{}
-	server := NewStdIOServer(strings.NewReader(""), out)
+	server := NewStdIOServer(
+		NewCommonServer(
+			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+		),
+		strings.NewReader(""),
+		out,
+	)
 
 	testID := json.RawMessage(`1`)
 	testResult := map[string]string{"status": "ok"}
@@ -92,7 +103,13 @@ func TestSendResponse(t *testing.T) {
 
 func TestSendError(t *testing.T) {
 	out := &bytes.Buffer{}
-	server := NewStdIOServer(strings.NewReader(""), out)
+	server := NewStdIOServer(
+		NewCommonServer(
+			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+		),
+		strings.NewReader(""),
+		out,
+	)
 
 	testID := json.RawMessage(`1`)
 	server.sendError("", &testID, -32600, "Invalid Request", nil)
@@ -115,7 +132,13 @@ func TestSendError(t *testing.T) {
 
 func TestSendNotification(t *testing.T) {
 	out := &bytes.Buffer{}
-	server := NewStdIOServer(strings.NewReader(""), out)
+	server := NewStdIOServer(
+		NewCommonServer(
+			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+		),
+		strings.NewReader(""),
+		out,
+	)
 
 	testMethod := "test/notification"
 	testParams := map[string]string{"message": "test"}
@@ -155,9 +178,14 @@ func TestRun(t *testing.T) {
 		pingMessage + "\n",
 	}
 
-	in := newMockReader(messages)
 	out := &bytes.Buffer{}
-	server := NewStdIOServer(in, out)
+	server := NewStdIOServer(
+		NewCommonServer(
+			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+		),
+		newMockReader(messages),
+		out,
+	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -263,10 +291,14 @@ func TestErrorHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a new server for each test
-			in := strings.NewReader(strings.Join(tt.messages, ""))
 			out := &bytes.Buffer{}
-			server := NewStdIOServer(in, out)
+			server := NewStdIOServer(
+				NewCommonServer(
+					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+				),
+				strings.NewReader(strings.Join(tt.messages, "")),
+				out,
+			)
 
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
@@ -315,7 +347,13 @@ func TestErrorHandling(t *testing.T) {
 
 func TestResourceHandling(t *testing.T) {
 	out := &bytes.Buffer{}
-	server := NewStdIOServer(strings.NewReader(""), out)
+	server := NewStdIOServer(
+		NewCommonServer(
+			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+		),
+		strings.NewReader(""),
+		out,
+	)
 
 	// Test listing resources
 	listRequest := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}`
@@ -424,9 +462,13 @@ func TestStdIOServerRequests(t *testing.T) {
 			// Create a buffer to capture output
 			var out bytes.Buffer
 
-			// Create server with input and output buffers
-			in := strings.NewReader(tt.input + "\n")
-			server := NewStdIOServer(in, &out)
+			server := NewStdIOServer(
+				NewCommonServer(
+					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+				),
+				strings.NewReader(tt.input+"\n"),
+				&out,
+			)
 
 			// Process the request
 			var request Request
@@ -549,12 +591,15 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a buffer to capture output
 			var out bytes.Buffer
 
-			// Create server with input and output buffers
-			in := strings.NewReader(tt.input + "\n")
-			server := NewStdIOServer(in, &out)
+			server := NewStdIOServer(
+				NewCommonServer(
+					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+				),
+				strings.NewReader(tt.input+"\n"),
+				&out,
+			)
 			server.AddTool(Tool{
 				Name:        "get_weather",
 				Description: "Get the current weather for a given location.",

@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
-	"os"
 )
 
 // StdIOServer is the MCP server implementation using standard input/output.
@@ -18,14 +16,9 @@ type StdIOServer struct {
 }
 
 // NewStdIOServer creates a new StdIOServer.
-func NewStdIOServer(in io.Reader, out io.Writer) *StdIOServer {
-	logger := log.New(os.Stderr, "[MCP StdIOServer] ", log.LstdFlags|log.Lmsgprefix)
-	commonServer := NewCommonServer(
-		UseLogger(logger),
-	)
-
+func NewStdIOServer(serverConfig *CommonServer, in io.Reader, out io.Writer) *StdIOServer {
 	s := &StdIOServer{
-		CommonServer: commonServer,
+		CommonServer: serverConfig,
 		in:           in,
 		out:          out,
 	}
