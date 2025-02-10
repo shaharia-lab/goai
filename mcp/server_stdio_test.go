@@ -584,3 +584,173 @@ func (wt *WeatherTool) Handler(params CallToolParams) (CallToolResult, error) {
 		},
 	}, nil
 }
+
+func TestHandlePromptGet(t *testing.T) {
+	tests := []struct {
+		name           string
+		initFirst      bool
+		input          string
+		expectedID     string
+		expectedError  *Error
+		expectedResult map[string]interface{}
+	}{
+		{
+			name:       "valid prompt get request",
+			initFirst:  true,
+			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": {"name": "code_review", "arguments": {"language": "go", "code": "test code", "focus_areas": "test"}}}`,
+			expectedID: "1",
+			expectedResult: map[string]interface{}{
+				"name": "code_review",
+				"messages": []interface{}{
+					map[string]interface{}{
+						"role": "user",
+						"content": map[string]interface{}{
+							"type": "text",
+							"text": "Please review this code:\nlanguage: go\ncode: test code\nfocus_areas: test\n",
+						},
+					},
+				},
+			},
+		},
+		{
+			name:       "request without initialization",
+			initFirst:  false,
+			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": {"id": "test-prompt-1"}}`,
+			expectedID: "1",
+			expectedError: &Error{
+				Code:    -32000,
+				Message: "Server not initialized",
+			},
+		},
+		{
+			name:      "malformed request",
+			initFirst: false,
+			input:     `{"jsonrpc": "2.0", "method": "prompts/get", "id": }`,
+			expectedError: &Error{
+				Code:    -32700,
+				Message: "Parse error",
+			},
+		},
+		{
+			name:       "get prompt with invalid name",
+			initFirst:  true,
+			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": {"name": "nonexistent_prompt"}}`,
+			expectedID: "1",
+			expectedError: &Error{
+				Code:    -32602,
+				Message: "Prompt not found",
+			},
+		},
+		{
+			name:       "get prompt without name parameter",
+			initFirst:  true,
+			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": {}}`,
+			expectedID: "1",
+			expectedError: &Error{
+				Code:    -32602,
+				Message: "Prompt not found",
+			},
+		},
+		{
+			name:       "get prompt with null params",
+			initFirst:  true,
+			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": null}`,
+			expectedID: "1",
+			expectedError: &Error{
+				Code:    -32602,
+				Message: "Prompt not found",
+			},
+		},
+		{
+			name:       "get prompt with invalid params type",
+			initFirst:  true,
+			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": "code_review"}`,
+			expectedID: "1",
+			expectedError: &Error{
+				Code:    -32602,
+				Message: "Invalid params",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inR, inW := io.Pipe()
+			out := &bytes.Buffer{}
+
+			codeReviewPrompt := Prompt{
+				Name: "code_review",
+				Messages: []PromptMessage{
+					{
+						Role: "user",
+						Content: PromptContent{
+							Type: "text",
+							Text: "Please review this code:",
+						},
+					},
+				},
+				Arguments: []PromptArgument{
+					{Name: "language", Required: true},
+					{Name: "code", Required: true},
+					{Name: "focus_areas", Required: true},
+				},
+			}
+
+			// Initialize PromptManager with the prompt
+			pm, _ := NewPromptManager([]Prompt{codeReviewPrompt})
+
+			// Add the PromptManager when creating the server
+			baseServer, _ := NewBaseServer(
+				UseLogger(log.New(io.Discard, "", 0)),
+				UsePrompts(pm),
+			)
+
+			server := NewStdIOServer(
+				baseServer,
+				inR,
+				out,
+			)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			go server.Run(ctx)
+
+			if tt.initFirst {
+				// Initialize the server
+				initRequest := `{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
+				_, err := fmt.Fprintln(inW, initRequest)
+				require.NoError(t, err)
+
+				_, err = fmt.Fprintln(inW, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+				require.NoError(t, err)
+
+				resp := waitForResponse(t, out, 100*time.Millisecond)
+				require.NotNil(t, resp)
+				require.Nil(t, resp.Error)
+				out.Reset()
+			}
+
+			_, err := fmt.Fprintln(inW, tt.input)
+			require.NoError(t, err)
+
+			response := waitForResponse(t, out, 100*time.Millisecond)
+			require.NotNil(t, response)
+
+			if tt.expectedError != nil {
+				require.NotNil(t, response.Error)
+				require.Equal(t, tt.expectedError.Code, response.Error.Code)
+				require.Equal(t, tt.expectedError.Message, response.Error.Message)
+			} else {
+				require.Nil(t, response.Error)
+				require.Equal(t, "2.0", response.JSONRPC)
+				require.Equal(t, tt.expectedID, string(*response.ID))
+
+				result, ok := response.Result.(map[string]interface{})
+				require.True(t, ok)
+				require.Equal(t, tt.expectedResult, result)
+			}
+
+			inW.Close()
+		})
+	}
+}
