@@ -14,9 +14,8 @@ import (
 )
 
 func TestNewSSEServer(t *testing.T) {
-	server := NewSSEServer(NewServerBuilder(
-		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-	))
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	server := NewSSEServer(baseServer)
 
 	if server == nil {
 		t.Fatal("Expected non-nil server")
@@ -30,9 +29,8 @@ func TestNewSSEServer(t *testing.T) {
 }
 
 func TestSetAddress(t *testing.T) {
-	server := NewSSEServer(NewServerBuilder(
-		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-	))
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	server := NewSSEServer(baseServer)
 	newAddress := ":9090"
 	server.SetAddress(newAddress)
 
@@ -42,9 +40,8 @@ func TestSetAddress(t *testing.T) {
 }
 
 func TestHandleSSEConnection(t *testing.T) {
-	server := NewSSEServer(NewServerBuilder(
-		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-	))
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	server := NewSSEServer(baseServer)
 
 	// Create test request and response recorder
 	req := httptest.NewRequest("GET", "/events", nil)
@@ -91,9 +88,8 @@ func TestHandleSSEConnection(t *testing.T) {
 }
 
 func TestHandleClientMessage(t *testing.T) {
-	server := NewSSEServer(NewServerBuilder(
-		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-	))
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	server := NewSSEServer(baseServer)
 	clientID := "test-client"
 
 	// Create a message channel for the test client
@@ -141,9 +137,8 @@ func TestHandleClientMessage(t *testing.T) {
 }
 
 func TestBroadcastNotification(t *testing.T) {
-	server := NewSSEServer(NewServerBuilder(
-		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-	))
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	server := NewSSEServer(baseServer)
 
 	// Create multiple test clients
 	client1Chan := make(chan []byte, 10)
@@ -187,9 +182,8 @@ func TestBroadcastNotification(t *testing.T) {
 }
 
 func TestSendMessageToClient(t *testing.T) {
-	server := NewSSEServer(NewServerBuilder(
-		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-	))
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	server := NewSSEServer(baseServer)
 	clientID := "test-client"
 	messageChan := make(chan []byte, 1)
 
@@ -215,9 +209,8 @@ func TestSendMessageToClient(t *testing.T) {
 }
 
 func TestCORSHandling(t *testing.T) {
-	server := NewSSEServer(NewServerBuilder(
-		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-	))
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	server := NewSSEServer(baseServer)
 
 	// Test OPTIONS request
 	req := httptest.NewRequest("OPTIONS", "/events", nil)
@@ -242,9 +235,8 @@ func TestCORSHandling(t *testing.T) {
 }
 
 func TestServerShutdown(t *testing.T) {
-	server := NewSSEServer(NewServerBuilder(
-		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-	))
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	server := NewSSEServer(baseServer)
 	server.SetAddress(":0") // Use random available port
 
 	ctx, cancel := context.WithCancel(context.Background())

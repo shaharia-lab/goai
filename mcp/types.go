@@ -188,7 +188,7 @@ type ListToolsResult struct {
 	NextCursor string `json:"nextCursor,omitempty"`
 }
 
-type ListToolsParams struct {
+type ListParams struct {
 	Cursor string `json:"cursor"`
 }
 

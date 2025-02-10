@@ -33,10 +33,9 @@ func waitForResponse(t *testing.T, out *bytes.Buffer, timeout time.Duration) *Re
 }
 
 func TestNewStdIOServer(t *testing.T) {
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
 	server := NewStdIOServer(
-		NewServerBuilder(
-			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-		),
+		baseServer,
 		strings.NewReader(""),
 		&bytes.Buffer{},
 	)
@@ -54,19 +53,13 @@ func TestNewStdIOServer(t *testing.T) {
 	if len(server.resources) != 0 {
 		t.Errorf("Expected 0 initial resources, got %d", len(server.resources))
 	}
-
-	// Verify initial prompts were added
-	if len(server.prompts) != 0 {
-		t.Errorf("Expected 0 initial prompts, got %d", len(server.prompts))
-	}
 }
 
 func TestSendResponse(t *testing.T) {
 	out := &bytes.Buffer{}
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
 	server := NewStdIOServer(
-		NewServerBuilder(
-			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-		),
+		baseServer,
 		strings.NewReader(""),
 		out,
 	)
@@ -100,10 +93,9 @@ func TestSendResponse(t *testing.T) {
 
 func TestSendError(t *testing.T) {
 	out := &bytes.Buffer{}
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
 	server := NewStdIOServer(
-		NewServerBuilder(
-			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-		),
+		baseServer,
 		strings.NewReader(""),
 		out,
 	)
@@ -129,10 +121,9 @@ func TestSendError(t *testing.T) {
 
 func TestSendNotification(t *testing.T) {
 	out := &bytes.Buffer{}
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
 	server := NewStdIOServer(
-		NewServerBuilder(
-			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-		),
+		baseServer,
 		strings.NewReader(""),
 		out,
 	)
@@ -176,10 +167,9 @@ func TestRun(t *testing.T) {
 	}
 
 	out := &bytes.Buffer{}
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
 	server := NewStdIOServer(
-		NewServerBuilder(
-			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-		),
+		baseServer,
 		newMockReader(messages),
 		out,
 	)
@@ -289,10 +279,9 @@ func TestErrorHandling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			out := &bytes.Buffer{}
+			baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
 			server := NewStdIOServer(
-				NewServerBuilder(
-					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-				),
+				baseServer,
 				strings.NewReader(strings.Join(tt.messages, "")),
 				out,
 			)
@@ -344,10 +333,9 @@ func TestErrorHandling(t *testing.T) {
 
 func TestResourceHandling(t *testing.T) {
 	out := &bytes.Buffer{}
+	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
 	server := NewStdIOServer(
-		NewServerBuilder(
-			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-		),
+		baseServer,
 		strings.NewReader(""),
 		out,
 	)
@@ -459,10 +447,9 @@ func TestStdIOServerRequests(t *testing.T) {
 			// Create a buffer to capture output
 			var out bytes.Buffer
 
+			baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
 			server := NewStdIOServer(
-				NewServerBuilder(
-					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-				),
+				baseServer,
 				strings.NewReader(tt.input+"\n"),
 				&out,
 			)
@@ -524,11 +511,12 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 			require.NoError(t, err, "Failed to create ToolManager")
 			require.NotNil(t, tm, "ToolManager should not be nil")
 
+			baseServer, _ := NewBaseServer(
+				UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+				UseToolManager(tm),
+			)
 			server := NewStdIOServer(
-				NewServerBuilder(
-					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-					UseToolManager(tm),
-				),
+				baseServer,
 				strings.NewReader(tt.input+"\n"),
 				&out,
 			)

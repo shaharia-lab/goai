@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -137,4 +138,54 @@ func (pm *PromptManager) DeletePrompt(name string) error {
 	}
 	delete(pm.prompts, name)
 	return nil
+}
+
+// ListPrompts returns a list of all available prompts, with optional pagination
+func (pm *PromptManager) ListPrompts(cursor string, limit int) ListPromptsResult {
+	if limit <= 0 {
+		limit = 50 // Default limit
+	}
+
+	// Get sorted list of prompt names
+	var names []string
+	for name := range pm.prompts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	// Find starting index based on cursor
+	startIdx := 0
+	if cursor != "" {
+		for i, name := range names {
+			if name == cursor {
+				startIdx = i + 1
+				break
+			}
+		}
+	}
+
+	// Calculate end index
+	endIdx := startIdx + limit
+	if endIdx > len(names) {
+		endIdx = len(names)
+	}
+
+	// Get the page of prompts
+	pagePrompts := make([]Prompt, 0)
+	for i := startIdx; i < endIdx; i++ {
+		if prompt, exists := pm.prompts[names[i]]; exists {
+			pagePrompts = append(pagePrompts, prompt)
+		}
+	}
+
+	// Set next cursor if there are more items
+	var nextCursor string
+	if endIdx < len(names) {
+		nextCursor = names[endIdx]
+	}
+
+	return ListPromptsResult{
+		Prompts:    pagePrompts,
+		NextCursor: nextCursor,
+	}
 }

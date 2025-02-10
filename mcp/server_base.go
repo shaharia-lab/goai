@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"strings"
 )
@@ -12,24 +11,6 @@ const (
 	defaultServerName = "goai-mcp-server"
 	serverVersion     = "0.1.0"
 )
-
-// Server is the common interface for all MCP servers.
-type Server interface {
-	AddResource(resource Resource)
-	AddTool(tool Tool)
-	AddPrompt(prompt Prompt)
-	DeletePrompt(name string) error
-	LogMessage(level LogLevel, loggerName string, data interface{})
-	SendPromptListChangedNotification()
-	SendToolListChangedNotification()
-	handleRequest(clientID string, request *Request)
-	handleNotification(clientID string, notification *Notification)
-
-	// Abstract methods for sending messages - to be implemented by specific server types.
-	sendResponse(clientID string, id *json.RawMessage, result interface{}, err *Error)
-	sendError(clientID string, id *json.RawMessage, code int, message string, data interface{})
-	sendNotification(clientID string, method string, params interface{})
-}
 
 // ServerConfig holds all configuration for BaseServer
 type ServerConfig struct {
@@ -43,7 +24,7 @@ type ServerConfig struct {
 	initialTools     []Tool
 	initialPrompts   []Prompt
 	toolManager      *ToolManager
-	prompts          map[string]Prompt
+	promptManager    *PromptManager
 	resources        map[string]Resource
 }
 
@@ -89,11 +70,9 @@ func UseToolManager(toolManager *ToolManager) ServerConfigOption {
 }
 
 // UsePrompts sets initial prompts
-func UsePrompts(prompts ...Prompt) ServerConfigOption {
+func UsePrompts(promptManager *PromptManager) ServerConfigOption {
 	return func(c *ServerConfig) {
-		for _, prompt := range prompts {
-			c.prompts[prompt.Name] = prompt
-		}
+		c.promptManager = promptManager
 	}
 }
 
@@ -106,11 +85,12 @@ type BaseServer struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	}
-	capabilities              map[string]any
-	resources                 map[string]Resource
-	minLogLevel               LogLevel
-	toolManager               *ToolManager
-	prompts                   map[string]Prompt
+	capabilities  map[string]any
+	resources     map[string]Resource
+	minLogLevel   LogLevel
+	toolManager   *ToolManager
+	promptManager *PromptManager
+
 	supportsPromptListChanged bool
 	supportsToolListChanged   bool
 
@@ -120,12 +100,54 @@ type BaseServer struct {
 	sendNoti func(clientID string, method string, params interface{})
 }
 
-// NewServerBuilder creates a new BaseServer instance Use the given options
-func NewServerBuilder(opts ...ServerConfigOption) *BaseServer {
-	tm, _ := NewToolManager([]ToolHandler{})
+// NewBaseServer creates a new BaseServer instance with the given options
+func NewBaseServer(opts ...ServerConfigOption) (*BaseServer, error) {
+	// Get default configuration
+	cfg := defaultConfig()
 
-	// Default configuration
-	cfg := &ServerConfig{
+	// Apply options
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	// Create server instance
+	s := &BaseServer{
+		protocolVersion: cfg.protocolVersion,
+		logger:          cfg.logger,
+		ServerInfo: struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		}{
+			Name:    cfg.serverName,
+			Version: cfg.serverVersion,
+		},
+		capabilities:              cfg.capabilities,
+		resources:                 cfg.resources,
+		minLogLevel:               cfg.minLogLevel,
+		toolManager:               cfg.toolManager,
+		promptManager:             cfg.promptManager,
+		supportsPromptListChanged: false,
+		supportsToolListChanged:   false,
+		sendNoti:                  func(clientID string, method string, params interface{}) {},
+	}
+
+	// Initialize notifications if needed
+	if tools := cfg.toolManager.ListTools("", 2); tools.Tools != nil && len(tools.Tools) > 0 {
+		s.SendToolListChangedNotification()
+	}
+
+	if s.supportsPromptListChanged {
+		s.SendPromptListChangedNotification()
+	}
+
+	return s, nil
+}
+
+func defaultConfig() *ServerConfig {
+	tm, _ := NewToolManager([]ToolHandler{})
+	pm, _ := NewPromptManager([]Prompt{})
+
+	return &ServerConfig{
 		logger:          log.Default(),
 		protocolVersion: ProtocolVersion,
 		serverName:      defaultServerName,
@@ -144,44 +166,10 @@ func NewServerBuilder(opts ...ServerConfigOption) *BaseServer {
 				"listChanged": true,
 			},
 		},
-		toolManager: tm,
-		prompts:     make(map[string]Prompt),
-		resources:   make(map[string]Resource),
+		toolManager:   tm,
+		promptManager: pm,
+		resources:     make(map[string]Resource),
 	}
-
-	for _, opt := range opts {
-		opt(cfg)
-	}
-
-	s := &BaseServer{
-		protocolVersion: cfg.protocolVersion,
-		logger:          cfg.logger,
-		ServerInfo: struct {
-			Name    string `json:"name"`
-			Version string `json:"version"`
-		}{
-			Name:    cfg.serverName,
-			Version: cfg.serverVersion,
-		},
-		capabilities:              cfg.capabilities,
-		resources:                 cfg.resources,
-		minLogLevel:               cfg.minLogLevel,
-		toolManager:               cfg.toolManager,
-		prompts:                   cfg.prompts,
-		supportsPromptListChanged: false,
-		supportsToolListChanged:   false,
-		sendNoti:                  func(clientID string, method string, params interface{}) {},
-	}
-
-	if tools := cfg.toolManager.ListTools("", 2); tools.Tools != nil && len(tools.Tools) > 0 {
-		s.SendToolListChangedNotification()
-	}
-
-	if s.supportsPromptListChanged {
-		s.SendPromptListChangedNotification()
-	}
-
-	return s
 }
 
 // AddResource adds a new resource to the server.
@@ -191,21 +179,21 @@ func (s *BaseServer) AddResource(resource Resource) {
 
 // AddPrompt adds a new prompt to the server.
 func (s *BaseServer) AddPrompt(prompt Prompt) {
-	s.prompts[prompt.Name] = prompt
-	if s.supportsPromptListChanged {
-		s.SendPromptListChangedNotification()
+	err := s.promptManager.AddPrompt(prompt)
+	if err != nil {
+		s.logger.Printf("Error adding prompt: %v", err)
+		return
 	}
+	s.SendPromptListChangedNotification()
 }
 
 // DeletePrompt removes a prompt from the server.
 func (s *BaseServer) DeletePrompt(name string) error {
-	if _, exists := s.prompts[name]; !exists {
-		return fmt.Errorf("prompt not found: %s", name)
+	err := s.promptManager.DeletePrompt(name)
+	if err != nil {
+		return err
 	}
-	delete(s.prompts, name)
-	if s.supportsPromptListChanged {
-		s.SendPromptListChangedNotification()
-	}
+	s.SendPromptListChangedNotification()
 	return nil
 }
 
@@ -234,155 +222,216 @@ func (s *BaseServer) LogMessage(level LogLevel, loggerName string, data interfac
 	s.sendNoti("", "notifications/message", params) // Empty client ID - it's a broadcast
 }
 
-// handleRequest handles incoming requests.  This is now common to both server types.
+// handleRequest handles incoming requests.  Common to both server types.
 func (s *BaseServer) handleRequest(clientID string, request *Request) {
 	s.logger.Printf("Received request from client %s: method=%s, id=%v", clientID, request.Method, request.ID)
 
 	switch request.Method {
 	case "initialize":
-		var params InitializeParams
-		if err := json.Unmarshal(request.Params, &params); err != nil {
-			s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
-			return
-		}
-
-		if !strings.HasPrefix(params.ProtocolVersion, "2024-11") {
-			s.sendErr(clientID, request.ID, -32602, "Unsupported protocol version", map[string][]string{"supported": {"2024-11-05"}})
-			return
-		}
-
-		s.clientCapabilities = params.Capabilities
-		result := InitializeResult{
-			ProtocolVersion: s.protocolVersion,
-			Capabilities:    s.capabilities,
-			ServerInfo:      s.ServerInfo,
-		}
-
-		// Check and set if server supports prompt/tool list changed.
-		if promptCaps, ok := s.capabilities["prompts"].(map[string]any); ok {
-			if listChanged, ok := promptCaps["listChanged"].(bool); ok && listChanged {
-				s.supportsPromptListChanged = true
-			}
-		}
-		if toolCaps, ok := s.capabilities["tools"].(map[string]any); ok {
-			if listChanged, ok := toolCaps["listChanged"].(bool); ok && listChanged {
-				s.supportsToolListChanged = true
-			}
-		}
-
-		s.sendResp(clientID, request.ID, result, nil)
-
+		s.handleInitialize(clientID, request)
 	case "ping":
-		s.sendResp(clientID, request.ID, map[string]interface{}{}, nil)
-
+		s.handlePing(clientID, request)
 	case "resources/list":
-		var resourceList []Resource = make([]Resource, 0)
-		for _, res := range s.resources {
-			resourceList = append(resourceList, Resource{
-				URI:         res.URI,
-				Name:        res.Name,
-				Description: res.Description,
-				MimeType:    res.MimeType,
-			})
-		}
-		result := ListResourcesResult{Resources: resourceList}
-		s.sendResp(clientID, request.ID, result, nil)
-
+		s.handleResourcesList(clientID, request)
 	case "resources/read":
-		var params ReadResourceParams
-		if err := json.Unmarshal(request.Params, &params); err != nil {
-			s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
-			return
-		}
-
-		resource, ok := s.resources[params.URI]
-		if !ok {
-			s.sendErr(clientID, request.ID, -32002, "Resource not found", map[string]string{"uri": params.URI})
-			return
-		}
-
-		result := ReadResourceResult{
-			Contents: []ResourceContent{{
-				URI:      resource.URI,
-				MimeType: resource.MimeType,
-				Text:     resource.TextContent, // Assuming text content for now
-			}},
-		}
-		s.sendResp(clientID, request.ID, result, nil)
-
-	case "prompts/list":
-		// Initialize the slice here:
-		var promptList = make([]Prompt, 0)
-		for _, prompt := range s.prompts {
-			promptList = append(promptList, Prompt{
-				Name:        prompt.Name,
-				Description: prompt.Description,
-				Arguments:   prompt.Arguments,
-			})
-		}
-		result := ListPromptsResult{Prompts: promptList}
-		s.sendResp(clientID, request.ID, result, nil)
-
-	case "prompts/get":
-		var params GetPromptParams
-		if err := json.Unmarshal(request.Params, &params); err != nil {
-			s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
-			return
-		}
-
-		prompt, ok := s.prompts[params.Name]
-		if !ok {
-			s.sendErr(clientID, request.ID, -32602, "Prompt not found", map[string]string{"prompt": params.Name})
-			return
-		}
-
-		result := Prompt{
-			Name:        prompt.Name,
-			Description: prompt.Description,
-			Messages:    prompt.Messages, // Include messages in get response
-		}
-		s.sendResp(clientID, request.ID, result, nil)
-
+		s.handleResourcesRead(clientID, request)
 	case "logging/setLevel":
-		var params SetLogLevelParams
-		if err := json.Unmarshal(request.Params, &params); err != nil {
-			s.sendErr(clientID, request.ID, -32602, "Invalid Params", nil)
-			return
-		}
-		if _, ok := logLevelSeverity[params.Level]; !ok {
-			s.sendErr(clientID, request.ID, -32602, "Invalid log level", nil)
-			return
-		}
-
-		s.minLogLevel = params.Level
-		s.sendResp(clientID, request.ID, struct{}{}, nil)
-
+		s.handleLoggingSetLevel(clientID, request)
 	case "tools/list":
-		var params ListToolsParams
+		s.handleToolsList(clientID, request)
+	case "tools/call":
+		s.handleToolsCall(clientID, request)
+	case "prompts/list":
+		s.handlePromptsList(clientID, request)
+	case "prompt/get":
+		s.handlePromptGet(clientID, request)
+
+	default:
+		s.sendErr(clientID, request.ID, -32601, "Method not found", nil)
+	}
+}
+
+func (s *BaseServer) handleInitialize(clientID string, request *Request) {
+	var params InitializeParams
+	if err := json.Unmarshal(request.Params, &params); err != nil {
+		s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
+		return
+	}
+
+	if !strings.HasPrefix(params.ProtocolVersion, "2024-11") {
+		s.sendErr(clientID, request.ID, -32602, "Unsupported protocol version",
+			map[string][]string{"supported": {"2024-11-05"}})
+		return
+	}
+
+	s.clientCapabilities = params.Capabilities
+	result := InitializeResult{
+		ProtocolVersion: s.protocolVersion,
+		Capabilities:    s.capabilities,
+		ServerInfo:      s.ServerInfo,
+	}
+
+	s.updateSupportedCapabilities()
+	s.sendResp(clientID, request.ID, result, nil)
+}
+
+func (s *BaseServer) handlePing(clientID string, request *Request) {
+	s.sendResp(clientID, request.ID, map[string]interface{}{}, nil)
+}
+
+func (s *BaseServer) handleResourcesList(clientID string, request *Request) {
+	resourceList := s.buildResourceList()
+	result := ListResourcesResult{Resources: resourceList}
+	s.sendResp(clientID, request.ID, result, nil)
+}
+
+func (s *BaseServer) handleResourcesRead(clientID string, request *Request) {
+	var params ReadResourceParams
+	if err := json.Unmarshal(request.Params, &params); err != nil {
+		s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
+		return
+	}
+
+	resource, ok := s.resources[params.URI]
+	if !ok {
+		s.sendErr(clientID, request.ID, -32002, "Resource not found",
+			map[string]string{"uri": params.URI})
+		return
+	}
+
+	result := ReadResourceResult{
+		Contents: []ResourceContent{{
+			URI:      resource.URI,
+			MimeType: resource.MimeType,
+			Text:     resource.TextContent,
+		}},
+	}
+	s.sendResp(clientID, request.ID, result, nil)
+}
+
+func (s *BaseServer) handleLoggingSetLevel(clientID string, request *Request) {
+	var params SetLogLevelParams
+	if err := json.Unmarshal(request.Params, &params); err != nil {
+		s.sendErr(clientID, request.ID, -32602, "Invalid Params", nil)
+		return
+	}
+	if _, ok := logLevelSeverity[params.Level]; !ok {
+		s.sendErr(clientID, request.ID, -32602, "Invalid log level", nil)
+		return
+	}
+
+	s.minLogLevel = params.Level
+	s.sendResp(clientID, request.ID, struct{}{}, nil)
+}
+
+func (s *BaseServer) handleToolsList(clientID string, request *Request) {
+	var params ListParams
+	if err := json.Unmarshal(request.Params, &params); err != nil {
+		s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
+		return
+	}
+
+	s.logger.Printf("Total tools: %+v", s.toolManager.ListTools(params.Cursor, 0))
+	s.sendResp(clientID, request.ID, s.toolManager.ListTools(params.Cursor, 0), nil)
+}
+
+func (s *BaseServer) handleToolsCall(clientID string, request *Request) {
+	var params CallToolParams
+	if err := json.Unmarshal(request.Params, &params); err != nil {
+		s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
+		return
+	}
+
+	result, err := s.toolManager.CallTool(params)
+	if err != nil {
+		s.sendErr(clientID, request.ID, -32602, err.Error(), nil)
+		return
+	}
+
+	s.sendResp(clientID, request.ID, result, nil)
+}
+
+func (s *BaseServer) handlePromptsList(clientID string, request *Request) {
+	var params ListParams
+	if err := json.Unmarshal(request.Params, &params); err != nil {
+		s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
+		return
+	}
+
+	result := s.promptManager.ListPrompts(params.Cursor, 0)
+	s.sendResp(clientID, request.ID, result, nil)
+}
+
+func (s *BaseServer) handlePromptGet(clientID string, request *Request) {
+	var params GetPromptParams
+	if err := json.Unmarshal(request.Params, &params); err != nil {
+		s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
+		return
+	}
+
+	prompt, err := s.promptManager.GetPrompt(params)
+	if err != nil {
+		s.sendErr(clientID, request.ID, -32602, "Prompt not found",
+			map[string]string{"prompt": params.Name})
+		return
+	}
+
+	s.sendResp(clientID, request.ID, prompt, nil)
+}
+
+// Helper functions
+func (s *BaseServer) updateSupportedCapabilities() {
+	if promptCaps, ok := s.capabilities["prompts"].(map[string]any); ok {
+		if listChanged, ok := promptCaps["listChanged"].(bool); ok && listChanged {
+			s.supportsPromptListChanged = true
+		}
+	}
+	if toolCaps, ok := s.capabilities["tools"].(map[string]any); ok {
+		if listChanged, ok := toolCaps["listChanged"].(bool); ok && listChanged {
+			s.supportsToolListChanged = true
+		}
+	}
+}
+
+func (s *BaseServer) buildResourceList() []Resource {
+	resourceList := make([]Resource, 0, len(s.resources))
+	for _, res := range s.resources {
+		resourceList = append(resourceList, Resource{
+			URI:         res.URI,
+			Name:        res.Name,
+			Description: res.Description,
+			MimeType:    res.MimeType,
+		})
+	}
+	return resourceList
+}
+
+func (s *BaseServer) handlePromptRequest(clientID string, request *Request) {
+	switch request.Method {
+	case "prompts/list":
+		var params ListParams
 
 		if err := json.Unmarshal(request.Params, &params); err != nil {
 			s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
 			return
 		}
 
-		log.Printf("Total tools: %+v", s.toolManager.ListTools(params.Cursor, 0))
+		s.sendResp(clientID, request.ID, s.promptManager.ListPrompts(params.Cursor, 0), nil)
 
-		s.sendResp(clientID, request.ID, s.toolManager.ListTools(params.Cursor, 0), nil)
-
-	case "tools/call":
-		var params CallToolParams
-		if err := json.Unmarshal(request.Params, &params); err != nil {
+	case "prompt/get":
+		var getParams GetPromptParams
+		if err := json.Unmarshal(request.Params, &getParams); err != nil {
 			s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
 			return
 		}
 
-		result, err := s.toolManager.CallTool(params)
+		prompt, err := s.promptManager.GetPrompt(getParams)
 		if err != nil {
-			s.sendErr(clientID, request.ID, -32602, err.Error(), nil)
+			s.sendErr(clientID, request.ID, -32602, "Prompt not found", map[string]string{"prompt": prompt.Name})
 			return
 		}
 
-		s.sendResp(clientID, request.ID, result, nil)
+		s.sendResp(clientID, request.ID, prompt, nil)
 
 	default:
 		s.sendErr(clientID, request.ID, -32601, "Method not found", nil)

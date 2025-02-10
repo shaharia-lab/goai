@@ -37,13 +37,18 @@ func main() {
 					"required": ["location"]
 				}`))
 
-	toolManager := mcp.NewToolManager([]mcp.ToolHandler{weatherTool})
+	toolManager, _ := mcp.NewToolManager([]mcp.ToolHandler{weatherTool})
+
+	baseServer, err := mcp.NewBaseServer(
+		mcp.UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+		mcp.UseToolManager(toolManager),
+	)
+	if err != nil {
+		panic(err)
+	}
 
 	server := mcp.NewStdIOServer(
-		mcp.NewServerBuilder(
-			mcp.UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-			mcp.UseToolManager(toolManager),
-		),
+		baseServer,
 		os.Stdin,
 		os.Stdout,
 	)
