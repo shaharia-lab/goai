@@ -10,31 +10,16 @@ import (
 
 // ToolManager handles tool-related operations.
 type ToolManager struct {
-	tools               map[string]Tool
+	tools               []ToolHandler
 	toolImplementations map[string]ToolImplementation
 }
 
 // NewToolManager creates a new ToolManager instance.
-func NewToolManager() *ToolManager {
+func NewToolManager(tools []ToolHandler) *ToolManager {
 	return &ToolManager{
-		tools:               make(map[string]Tool),
+		tools:               tools,
 		toolImplementations: make(map[string]ToolImplementation),
 	}
-}
-
-// RegisterTool registers a new tool with its implementation.
-func (tm *ToolManager) RegisterTool(tool Tool, implementation ToolImplementation) error {
-	if tool.Name == "" {
-		return fmt.Errorf("tool name cannot be empty")
-	}
-
-	if implementation == nil {
-		return fmt.Errorf("tool implementation cannot be nil")
-	}
-
-	tm.tools[tool.Name] = tool
-	tm.toolImplementations[tool.Name] = implementation
-	return nil
 }
 
 // ListTools returns a list of all available tools, with optional pagination.
@@ -43,14 +28,23 @@ func (tm *ToolManager) ListTools(cursor string, limit int) ListToolsResult {
 		limit = 50
 	}
 
+	// Create a map for easier tool lookup
+	toolMap := make(map[string]Tool)
 	var names []string
-	for name := range tm.tools {
+	for _, t := range tm.tools {
+		name := t.GetName()
 		names = append(names, name)
+		toolMap[name] = Tool{
+			Name:        t.GetName(),
+			Description: t.GetDescription(),
+			InputSchema: t.GetInputSchema(),
+		}
 	}
 	sort.Strings(names)
 
 	startIdx := 0
 	if cursor != "" {
+		// Find the cursor position
 		for i, name := range names {
 			if name == cursor {
 				startIdx = i + 1
@@ -64,14 +58,17 @@ func (tm *ToolManager) ListTools(cursor string, limit int) ListToolsResult {
 		endIdx = len(names)
 	}
 
+	// Get the page of tools
 	var pageTools []Tool
 	for i := startIdx; i < endIdx; i++ {
-		pageTools = append(pageTools, tm.tools[names[i]])
+		if tool, exists := toolMap[names[i]]; exists {
+			pageTools = append(pageTools, tool)
+		}
 	}
 
 	var nextCursor string
 	if endIdx < len(names) {
-		nextCursor = names[endIdx-1]
+		nextCursor = names[endIdx] // Use the next item's name as cursor
 	}
 
 	return ListToolsResult{
@@ -82,52 +79,53 @@ func (tm *ToolManager) ListTools(cursor string, limit int) ListToolsResult {
 
 // CallTool executes a tool with the given parameters.
 func (tm *ToolManager) CallTool(params CallToolParams) (CallToolResult, error) {
-	implementation, exists := tm.toolImplementations[params.Name]
-	if !exists {
-		return CallToolResult{}, fmt.Errorf("tool not found: %s", params.Name)
+	var targetTool ToolHandler
+	found := false
+
+	for _, tool := range tm.tools {
+		if tool.GetName() == params.Name {
+			targetTool = tool
+			found = true
+			break
+		}
 	}
 
-	tool, exists := tm.tools[params.Name]
-	if !exists {
+	if !found {
 		return CallToolResult{}, fmt.Errorf("tool metadata not found: %s", params.Name)
 	}
 
-	if tool.InputSchema != nil && len(params.Arguments) > 0 {
-		// Create schema loader
-		schemaLoader := gojsonschema.NewStringLoader(string(tool.InputSchema))
+	if targetTool.GetInputSchema() != nil && len(params.Arguments) > 0 {
+		schemaLoader := gojsonschema.NewStringLoader(string(targetTool.GetInputSchema()))
 
-		// Convert arguments to JSON string
 		argsJSON, err := json.Marshal(params.Arguments)
 		if err != nil {
 			return CallToolResult{}, fmt.Errorf("failed to marshal arguments: %v", err)
 		}
 
-		// Create document loader for the arguments
 		documentLoader := gojsonschema.NewStringLoader(string(argsJSON))
 
-		// Perform validation
 		result, err := gojsonschema.Validate(schemaLoader, documentLoader)
 		if err != nil {
 			return CallToolResult{}, fmt.Errorf("validation error: %v", err)
 		}
 
 		if !result.Valid() {
-			// Collect all validation errors
-			var errMsgs []string
+			var errorMessages []string
 			for _, desc := range result.Errors() {
-				errMsgs = append(errMsgs, desc.String())
+				errorMessages = append(errorMessages, desc.String())
 			}
+
 			return CallToolResult{
 				IsError: true,
 				Content: []ToolResultContent{{
 					Type: "text",
-					Text: fmt.Sprintf("Schema validation failed: %s", strings.Join(errMsgs, "; ")),
+					Text: fmt.Sprintf("Schema validation failed: %s", strings.Join(errorMessages, "; ")),
 				}},
 			}, nil
 		}
 	}
 
-	result, err := implementation(params.Arguments)
+	result, err := targetTool.Handler(params)
 	if err != nil {
 		return CallToolResult{
 			IsError: true,
@@ -142,10 +140,12 @@ func (tm *ToolManager) CallTool(params CallToolParams) (CallToolResult, error) {
 }
 
 // GetTool retrieves a tool by its name.
-func (tm *ToolManager) GetTool(name string) (Tool, error) {
-	tool, exists := tm.tools[name]
-	if !exists {
-		return Tool{}, fmt.Errorf("tool not found: %s", name)
+func (tm *ToolManager) GetTool(name string) (ToolHandler, error) {
+	for _, tool := range tm.tools {
+		if tool.GetName() == name {
+			return tool, nil
+		}
 	}
-	return tool, nil
+
+	return nil, fmt.Errorf("tool not found: %s", name)
 }

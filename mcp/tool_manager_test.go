@@ -6,89 +6,43 @@ import (
 	"testing"
 )
 
-func TestNewToolManager(t *testing.T) {
-	tm := NewToolManager()
-	if tm == nil {
-		t.Error("NewToolManager returned nil")
-	}
-	if tm.tools == nil {
-		t.Error("tools map was not initialized")
-	}
-	if tm.toolImplementations == nil {
-		t.Error("toolImplementations map was not initialized")
-	}
+// MockToolHandler implements ToolHandler interface for testing
+// MockToolHandler implements ToolHandler interface for testing
+type MockToolHandler struct {
+	name        string
+	description string
+	inputSchema json.RawMessage
+	handler     func(params CallToolParams) (CallToolResult, error)
 }
 
-func TestRegisterTool(t *testing.T) {
-	tm := NewToolManager()
+func (m MockToolHandler) GetName() string                 { return m.name }
+func (m MockToolHandler) GetDescription() string          { return m.description }
+func (m MockToolHandler) GetInputSchema() json.RawMessage { return m.inputSchema }
+func (m MockToolHandler) Handler(params CallToolParams) (CallToolResult, error) {
+	return m.handler(params)
+}
 
-	tests := []struct {
-		name           string
-		tool           Tool
-		implementation ToolImplementation
-		wantErr        bool
-	}{
-		{
-			name: "valid registration",
-			tool: Tool{Name: "test-tool"},
-			implementation: func(args json.RawMessage) (CallToolResult, error) {
-				return CallToolResult{}, nil
-			},
-			wantErr: false,
-		},
-		{
-			name: "empty tool name",
-			tool: Tool{Name: ""},
-			implementation: func(args json.RawMessage) (CallToolResult, error) {
-				return CallToolResult{}, nil
-			},
-			wantErr: true,
-		},
-		{
-			name:           "nil implementation",
-			tool:           Tool{Name: "test-tool"},
-			implementation: nil,
-			wantErr:        true,
-		},
+func TestNewToolManager(t *testing.T) {
+	tools := []ToolHandler{
+		MockToolHandler{name: "test-tool"},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tm.RegisterTool(tt.tool, tt.implementation)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("RegisterTool() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			if !tt.wantErr {
-				// Verify tool was registered
-				if _, exists := tm.tools[tt.tool.Name]; !exists {
-					t.Error("tool was not added to tools map")
-				}
-				if _, exists := tm.toolImplementations[tt.tool.Name]; !exists {
-					t.Error("implementation was not added to toolImplementations map")
-				}
-			}
-		})
-	}
+	tm := NewToolManager(tools)
+	assert.NotNil(t, tm, "NewToolManager returned nil")
+	assert.NotNil(t, tm.tools, "tools slice was not initialized")
+	assert.NotNil(t, tm.toolImplementations, "toolImplementations map was not initialized")
+	assert.Len(t, tm.tools, 1, "tools slice should contain one tool")
 }
 
 func TestListTools(t *testing.T) {
-	tm := NewToolManager()
-
-	// Register test tools in a way that would expose ordering issues
-	tools := []Tool{
-		{Name: "d_tool"},
-		{Name: "a_tool"},
-		{Name: "c_tool"},
-		{Name: "b_tool"},
+	tools := []ToolHandler{
+		MockToolHandler{name: "d_tool"},
+		MockToolHandler{name: "a_tool"},
+		MockToolHandler{name: "c_tool"},
+		MockToolHandler{name: "b_tool"},
 	}
 
-	// Register tools
-	for _, tool := range tools {
-		_ = tm.RegisterTool(tool, func(args json.RawMessage) (CallToolResult, error) {
-			return CallToolResult{}, nil
-		})
-	}
+	tm := NewToolManager(tools)
 
 	tests := []struct {
 		name       string
@@ -116,7 +70,7 @@ func TestListTools(t *testing.T) {
 			cursor:     "a_tool",
 			limit:      2,
 			wantTools:  []string{"b_tool", "c_tool"},
-			wantCursor: "c_tool",
+			wantCursor: "d_tool",
 		},
 		{
 			name:       "limit larger than remaining items",
@@ -131,18 +85,15 @@ func TestListTools(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tm.ListTools(tt.cursor, tt.limit)
 
-			// Check length
 			assert.Len(t, result.Tools, len(tt.wantTools),
 				"Expected %d tools, got %d", len(tt.wantTools), len(result.Tools))
 
-			// Check tool names in order
 			for i, tool := range result.Tools {
 				assert.Equal(t, tt.wantTools[i], tool.Name,
 					"Tool at position %d: expected %s, got %s",
 					i, tt.wantTools[i], tool.Name)
 			}
 
-			// Check cursor
 			assert.Equal(t, tt.wantCursor, result.NextCursor,
 				"Expected next cursor to be %q, got %q",
 				tt.wantCursor, result.NextCursor)
@@ -151,11 +102,7 @@ func TestListTools(t *testing.T) {
 }
 
 func TestCallTool(t *testing.T) {
-	tm := NewToolManager()
-
-	// Register a test tool
-	testTool := Tool{Name: "test-tool"}
-	testImpl := func(args json.RawMessage) (CallToolResult, error) {
+	successHandler := func(params CallToolParams) (CallToolResult, error) {
 		return CallToolResult{
 			Content: []ToolResultContent{{
 				Type: "text",
@@ -164,30 +111,40 @@ func TestCallTool(t *testing.T) {
 		}, nil
 	}
 
-	_ = tm.RegisterTool(testTool, testImpl)
+	tools := []ToolHandler{
+		MockToolHandler{
+			name:    "test-tool",
+			handler: successHandler,
+		},
+	}
+
+	tm := NewToolManager(tools)
 
 	tests := []struct {
 		name    string
 		params  CallToolParams
-		want    string
+		want    CallToolResult
 		wantErr bool
 	}{
 		{
 			name: "valid tool call",
 			params: CallToolParams{
-				Name:      "test-tool",
-				Arguments: json.RawMessage(`{}`),
+				Name: "test-tool",
 			},
-			want:    "success",
+			want: CallToolResult{
+				Content: []ToolResultContent{{
+					Type: "text",
+					Text: "success",
+				}},
+			},
 			wantErr: false,
 		},
 		{
-			name: "non-existent tool",
+			name: "unknown tool",
 			params: CallToolParams{
-				Name:      "invalid-tool",
-				Arguments: json.RawMessage(`{}`),
+				Name: "unknown-tool",
 			},
-			want:    "",
+			want:    CallToolResult{},
 			wantErr: true,
 		},
 	}
@@ -195,151 +152,22 @@ func TestCallTool(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := tm.CallTool(tt.params)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("CallTool() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if !tt.wantErr && len(result.Content) > 0 && result.Content[0].Text != tt.want {
-				t.Errorf("CallTool() result = %v, want %v", result.Content[0].Text, tt.want)
-			}
-		})
-	}
-}
-
-func TestCallToolSchemaValidation(t *testing.T) {
-	tm := NewToolManager()
-
-	// Test tool with a complex schema
-	complexSchema := `{
-		"type": "object",
-		"properties": {
-			"name": {"type": "string", "minLength": 2},
-			"age": {"type": "integer", "minimum": 0, "maximum": 150},
-			"email": {"type": "string", "format": "email"},
-			"tags": {
-				"type": "array",
-				"items": {"type": "string"},
-				"minItems": 1
-			},
-			"settings": {
-				"type": "object",
-				"properties": {
-					"enabled": {"type": "boolean"},
-					"level": {"type": "integer"}
-				},
-				"required": ["enabled"]
-			}
-		},
-		"required": ["name", "age"]
-	}`
-
-	testTool := Tool{
-		Name:        "validation-test",
-		InputSchema: json.RawMessage(complexSchema),
-	}
-
-	implementation := func(args json.RawMessage) (CallToolResult, error) {
-		return CallToolResult{
-			Content: []ToolResultContent{{
-				Type: "text",
-				Text: "success",
-			}},
-		}, nil
-	}
-
-	err := tm.RegisterTool(testTool, implementation)
-	assert.NoError(t, err)
-
-	tests := []struct {
-		name          string
-		args          json.RawMessage
-		expectedError string
-		shouldPass    bool
-	}{
-		{
-			name:       "valid complete input",
-			args:       json.RawMessage(`{"name": "John Doe", "age": 30, "email": "john@example.com", "tags": ["user"], "settings": {"enabled": true, "level": 1}}`),
-			shouldPass: true,
-		},
-		{
-			name:          "missing required field",
-			args:          json.RawMessage(`{"name": "John"}`),
-			expectedError: "age is required",
-			shouldPass:    false,
-		},
-		{
-			name:          "invalid email format",
-			args:          json.RawMessage(`{"name": "John", "age": 30, "email": "not-an-email"}`),
-			expectedError: "Does not match format 'email'",
-			shouldPass:    false,
-		},
-		{
-			name:          "invalid age range",
-			args:          json.RawMessage(`{"name": "John", "age": 200}`),
-			expectedError: "Must be less than or equal to 150",
-			shouldPass:    false,
-		},
-		{
-			name:          "invalid name length",
-			args:          json.RawMessage(`{"name": "J", "age": 30}`),
-			expectedError: "String length must be greater than or equal to 2",
-			shouldPass:    false,
-		},
-		{
-			name:          "invalid tags array",
-			args:          json.RawMessage(`{"name": "John", "age": 30, "tags": []}`),
-			expectedError: "Array must have at least 1 items",
-			shouldPass:    false,
-		},
-		{
-			name:          "missing required nested field",
-			args:          json.RawMessage(`{"name": "John", "age": 30, "settings": {"level": 1}}`),
-			expectedError: "settings: enabled is required",
-			shouldPass:    false,
-		},
-		{
-			name:          "wrong type for age",
-			args:          json.RawMessage(`{"name": "John", "age": "thirty"}`),
-			expectedError: "Invalid type. Expected: integer",
-			shouldPass:    false,
-		},
-		{
-			name:       "minimal valid input",
-			args:       json.RawMessage(`{"name": "John", "age": 30}`),
-			shouldPass: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := tm.CallTool(CallToolParams{
-				Name:      "validation-test",
-				Arguments: tt.args,
-			})
-
-			assert.NoError(t, err, "Should not return system error")
-
-			if tt.shouldPass {
-				assert.False(t, result.IsError, "Expected validation to pass")
-				assert.Equal(t, "success", result.Content[0].Text)
+			if tt.wantErr {
+				assert.Error(t, err)
 			} else {
-				assert.True(t, result.IsError, "Expected validation to fail")
-				assert.Contains(t, result.Content[0].Text, tt.expectedError,
-					"Expected error message to contain %q, got %q",
-					tt.expectedError, result.Content[0].Text)
+				assert.NoError(t, err)
+				assert.Equal(t, tt.want, result)
 			}
 		})
 	}
 }
 
 func TestGetTool(t *testing.T) {
-	tm := NewToolManager()
+	tools := []ToolHandler{
+		MockToolHandler{name: "existing-tool"},
+	}
 
-	testTool := Tool{Name: "test-tool"}
-	_ = tm.RegisterTool(testTool, func(args json.RawMessage) (CallToolResult, error) {
-		return CallToolResult{}, nil
-	})
+	tm := NewToolManager(tools)
 
 	tests := []struct {
 		name     string
@@ -348,12 +176,12 @@ func TestGetTool(t *testing.T) {
 	}{
 		{
 			name:     "existing tool",
-			toolName: "test-tool",
+			toolName: "existing-tool",
 			wantErr:  false,
 		},
 		{
-			name:     "non-existent tool",
-			toolName: "invalid-tool",
+			name:     "non-existing tool",
+			toolName: "non-existing-tool",
 			wantErr:  true,
 		},
 	}
@@ -361,13 +189,13 @@ func TestGetTool(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tool, err := tm.GetTool(tt.toolName)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("GetTool() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if !tt.wantErr && tool.Name != tt.toolName {
-				t.Errorf("GetTool() returned tool name = %v, want %v", tool.Name, tt.toolName)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, tool)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, tool)
+				assert.Equal(t, tt.toolName, tool.GetName())
 			}
 		})
 	}

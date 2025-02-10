@@ -189,3 +189,10 @@ type ListToolsResult struct {
 }
 
 type ToolImplementation func(args json.RawMessage) (CallToolResult, error)
+
+type ToolHandler interface {
+	GetName() string
+	GetDescription() string
+	GetInputSchema() json.RawMessage
+	Handler(params CallToolParams) (CallToolResult, error)
+}
