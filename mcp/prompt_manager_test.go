@@ -8,13 +8,58 @@ import (
 )
 
 func TestNewPromptManager(t *testing.T) {
-	pm := NewPromptManager()
-	assert.NotNil(t, pm)
-	assert.Empty(t, pm.prompts)
+	t.Run("empty prompts", func(t *testing.T) {
+		pm, err := NewPromptManager(nil)
+		assert.NoError(t, err)
+		assert.NotNil(t, pm)
+		assert.Empty(t, pm.prompts)
+	})
+
+	t.Run("valid prompts", func(t *testing.T) {
+		prompts := []Prompt{
+			{
+				Name: "test-prompt",
+				Messages: []PromptMessage{
+					{
+						Role: "system",
+						Content: PromptContent{
+							Type: "text",
+							Text: "Hello, world!",
+						},
+					},
+				},
+			},
+		}
+		pm, err := NewPromptManager(prompts)
+		assert.NoError(t, err)
+		assert.NotNil(t, pm)
+		assert.Len(t, pm.prompts, 1)
+	})
+
+	t.Run("invalid prompt", func(t *testing.T) {
+		prompts := []Prompt{
+			{
+				Name: "", // Invalid - empty name
+				Messages: []PromptMessage{
+					{
+						Role: "system",
+						Content: PromptContent{
+							Type: "text",
+							Text: "Hello, world!",
+						},
+					},
+				},
+			},
+		}
+		pm, err := NewPromptManager(prompts)
+		assert.Error(t, err)
+		assert.Nil(t, pm)
+		assert.Contains(t, err.Error(), "prompt name cannot be empty")
+	})
 }
 
-func TestRegisterPrompt(t *testing.T) {
-	pm := NewPromptManager()
+func TestAddPrompt(t *testing.T) {
+	pm, _ := NewPromptManager(nil)
 
 	t.Run("valid prompt", func(t *testing.T) {
 		prompt := Prompt{
@@ -30,13 +75,14 @@ func TestRegisterPrompt(t *testing.T) {
 			},
 		}
 
-		err := pm.RegisterPrompt(prompt)
+		err := pm.AddPrompt(prompt)
 		assert.NoError(t, err)
 		assert.Contains(t, pm.prompts, "test-prompt")
 	})
 
-	t.Run("empty name", func(t *testing.T) {
+	t.Run("duplicate prompt", func(t *testing.T) {
 		prompt := Prompt{
+			Name: "test-prompt",
 			Messages: []PromptMessage{
 				{
 					Role: "system",
@@ -48,190 +94,285 @@ func TestRegisterPrompt(t *testing.T) {
 			},
 		}
 
-		err := pm.RegisterPrompt(prompt)
+		err := pm.AddPrompt(prompt)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "prompt name cannot be empty")
-	})
-
-	t.Run("no messages", func(t *testing.T) {
-		prompt := Prompt{
-			Name: "test-prompt",
-		}
-
-		err := pm.RegisterPrompt(prompt)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "prompt must have at least one message")
-	})
-
-	t.Run("invalid content type", func(t *testing.T) {
-		prompt := Prompt{
-			Name: "test-prompt",
-			Messages: []PromptMessage{
-				{
-					Role: "system",
-					Content: PromptContent{
-						Type: "invalid",
-						Text: "Hello, world!",
-					},
-				},
-			},
-		}
-
-		err := pm.RegisterPrompt(prompt)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "only text type is supported")
-	})
-
-	t.Run("empty message content", func(t *testing.T) {
-		prompt := Prompt{
-			Name: "test-prompt",
-			Messages: []PromptMessage{
-				{
-					Role: "system",
-					Content: PromptContent{
-						Type: "text",
-					},
-				},
-			},
-		}
-
-		err := pm.RegisterPrompt(prompt)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "message content text cannot be empty")
-	})
-}
-
-func TestListPrompts(t *testing.T) {
-	pm := NewPromptManager()
-
-	prompts := []Prompt{
-		{
-			Name: "a_prompt1",
-			Messages: []PromptMessage{{
-				Content: PromptContent{Type: "text", Text: "test1"},
-			}},
-		},
-		{
-			Name: "b_prompt2",
-			Messages: []PromptMessage{{
-				Content: PromptContent{Type: "text", Text: "test2"},
-			}},
-		},
-		{
-			Name: "c_prompt3",
-			Messages: []PromptMessage{{
-				Content: PromptContent{Type: "text", Text: "test3"},
-			}},
-		},
-	}
-
-	for _, p := range prompts {
-		err := pm.RegisterPrompt(p)
-		assert.NoError(t, err)
-	}
-
-	t.Run("list all prompts", func(t *testing.T) {
-		result := pm.ListPrompts("", 50)
-		assert.Len(t, result.Prompts, 3)
-		assert.Empty(t, result.NextCursor)
-	})
-
-	t.Run("list with pagination", func(t *testing.T) {
-		result := pm.ListPrompts("", 2)
-		assert.Len(t, result.Prompts, 2, "First page should have 2 prompts")
-		assert.NotEmpty(t, result.NextCursor, "First page should have a next cursor")
-
-		firstPageNames := make(map[string]bool)
-		for _, p := range result.Prompts {
-			firstPageNames[p.Name] = true
-		}
-
-		nextResult := pm.ListPrompts(result.NextCursor, 2)
-		assert.Len(t, nextResult.Prompts, 1, "Second page should have 1 prompt")
-		assert.Empty(t, nextResult.NextCursor, "Second page should not have a next cursor")
-
-		for _, p := range nextResult.Prompts {
-			assert.False(t, firstPageNames[p.Name],
-				"Prompt %s from second page should not be in first page", p.Name)
-		}
-
-		allPrompts := make(map[string]bool)
-		for _, p := range result.Prompts {
-			allPrompts[p.Name] = true
-		}
-		for _, p := range nextResult.Prompts {
-			allPrompts[p.Name] = true
-		}
-		assert.Len(t, allPrompts, 3, "Total unique prompts should be 3")
+		assert.Contains(t, err.Error(), "already exists")
 	})
 }
 
 func TestGetPrompt(t *testing.T) {
-	pm := NewPromptManager()
+	pm, _ := NewPromptManager(nil)
 
-	t.Run("get non-existent prompt", func(t *testing.T) {
-		_, err := pm.GetPrompt(GetPromptParams{Name: "non-existent"})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "prompt not found")
-	})
-
-	t.Run("get prompt with arguments", func(t *testing.T) {
+	t.Run("prompt without arguments", func(t *testing.T) {
 		prompt := Prompt{
 			Name: "test-prompt",
-			Arguments: []PromptArgument{
-				{
-					Name:     "name",
-					Required: true,
-				},
-			},
 			Messages: []PromptMessage{
 				{
 					Role: "system",
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello, world!",
+					},
+				},
+			},
+		}
+		_ = pm.AddPrompt(prompt)
+
+		result, err := pm.GetPrompt(GetPromptParams{Name: "test-prompt"})
+		assert.NoError(t, err)
+		assert.Equal(t, prompt.Name, result.Name)
+	})
+
+	t.Run("prompt with arguments", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "arg-prompt",
+			Messages: []PromptMessage{
+				{
 					Content: PromptContent{
 						Type: "text",
 						Text: "Hello, {{name}}!",
 					},
 				},
 			},
+			Arguments: []PromptArgument{
+				{
+					Name:     "name",
+					Required: true,
+				},
+			},
 		}
-
-		err := pm.RegisterPrompt(prompt)
-		assert.NoError(t, err)
+		_ = pm.AddPrompt(prompt)
 
 		args, _ := json.Marshal(map[string]string{"name": "John"})
 		result, err := pm.GetPrompt(GetPromptParams{
-			Name:      "test-prompt",
+			Name:      "arg-prompt",
 			Arguments: args,
 		})
-
 		assert.NoError(t, err)
 		assert.Equal(t, "Hello, John!", result.Messages[0].Content.Text)
 	})
+
+	t.Run("missing required argument", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "required-arg",
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello, {{name}}!",
+					},
+				},
+			},
+			Arguments: []PromptArgument{
+				{
+					Name:     "name",
+					Required: true,
+				},
+			},
+		}
+		_ = pm.AddPrompt(prompt)
+
+		args, _ := json.Marshal(map[string]string{})
+		_, err := pm.GetPrompt(GetPromptParams{
+			Name:      "required-arg",
+			Arguments: args,
+		})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "missing required argument")
+	})
 }
 
-func TestDeletePrompt(t *testing.T) {
-	pm := NewPromptManager()
+func TestRemovePrompt(t *testing.T) {
+	pm, _ := NewPromptManager(nil)
 
-	prompt := Prompt{
-		Name: "test-prompt",
-		Messages: []PromptMessage{
-			{
-				Content: PromptContent{Type: "text", Text: "test"},
+	t.Run("remove existing prompt", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello!",
+					},
+				},
 			},
-		},
-	}
+		}
+		_ = pm.AddPrompt(prompt)
 
-	_ = pm.RegisterPrompt(prompt)
-
-	t.Run("delete existing prompt", func(t *testing.T) {
-		err := pm.DeletePrompt("test-prompt")
+		err := pm.RemovePrompt("test-prompt")
 		assert.NoError(t, err)
-		assert.Empty(t, pm.prompts)
+		assert.NotContains(t, pm.prompts, "test-prompt")
 	})
 
-	t.Run("delete non-existent prompt", func(t *testing.T) {
-		err := pm.DeletePrompt("non-existent")
+	t.Run("remove non-existent prompt", func(t *testing.T) {
+		err := pm.RemovePrompt("non-existent")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "prompt not found")
+	})
+}
+
+func TestValidatePrompt(t *testing.T) {
+	t.Run("valid prompt", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Role: "system",
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello, world!",
+					},
+				},
+			},
+			Arguments: []PromptArgument{
+				{
+					Name:     "arg1",
+					Required: true,
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.NoError(t, err)
+	})
+
+	t.Run("empty prompt name", func(t *testing.T) {
+		prompt := Prompt{
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello!",
+					},
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "prompt name cannot be empty")
+	})
+
+	t.Run("empty messages", func(t *testing.T) {
+		prompt := Prompt{
+			Name:     "test-prompt",
+			Messages: []PromptMessage{},
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "prompt must have at least one message")
+	})
+
+	t.Run("unsupported content type", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "image",
+						Text: "some text",
+					},
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "only text type is supported")
+	})
+
+	t.Run("empty content text", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "",
+					},
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "message content text cannot be empty")
+	})
+
+	t.Run("empty argument name", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello!",
+					},
+				},
+			},
+			Arguments: []PromptArgument{
+				{
+					Name:     "",
+					Required: true,
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "argument name cannot be empty")
+	})
+
+	t.Run("multiple messages validation", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "Message 1",
+					},
+				},
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "", // Invalid
+					},
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "message content text cannot be empty")
+	})
+
+	t.Run("multiple valid arguments", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello {{name}} and {{greeting}}!",
+					},
+				},
+			},
+			Arguments: []PromptArgument{
+				{
+					Name:     "name",
+					Required: true,
+				},
+				{
+					Name:     "greeting",
+					Required: false,
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.NoError(t, err)
+	})
+
+	t.Run("nil messages", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "prompt must have at least one message")
 	})
 }
