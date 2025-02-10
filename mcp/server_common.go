@@ -123,7 +123,7 @@ func NewCommonServer(opts ...CommonServerOption) *CommonServer {
 	cfg := &CommonServerConfig{
 		logger:          log.Default(),
 		protocolVersion: "2024-11-05",
-		serverName:      "goai-server",
+		serverName:      "goai-mcp-server",
 		serverVersion:   "0.1.0",
 		minLogLevel:     LogLevelInfo,
 		generateClientID: func() string {

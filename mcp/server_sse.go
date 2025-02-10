@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -23,13 +21,9 @@ type SSEServer struct {
 }
 
 // NewSSEServer creates a new SSEServer.
-func NewSSEServer() *SSEServer {
-	logger := log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)
-	commonServer := NewCommonServer(
-		UseLogger(logger),
-	)
+func NewSSEServer(serverConfig *CommonServer) *SSEServer {
 	s := &SSEServer{
-		CommonServer: commonServer,
+		CommonServer: serverConfig,
 		clients:      make(map[string]chan []byte),
 		clientsMutex: sync.RWMutex{},
 		address:      ":8080", // Default address
