@@ -1,12 +1,16 @@
-// /home/shaharia/Projects/goai/mcp/server_common.go
 package mcp
 
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
 	"log"
 	"strings"
+)
+
+const (
+	ProtocolVersion   = "2024-11-05"
+	defaultServerName = "goai-mcp-server"
+	serverVersion     = "0.1.0"
 )
 
 // Server is the common interface for all MCP servers.
@@ -24,7 +28,7 @@ type Server interface {
 	// Abstract methods for sending messages - to be implemented by specific server types.
 	sendResponse(clientID string, id *json.RawMessage, result interface{}, err *Error)
 	sendError(clientID string, id *json.RawMessage, code int, message string, data interface{})
-	sendNotification(clientID string, method string, params interface{}) // clientID is needed, as both will send it, but SSE may send to many
+	sendNotification(clientID string, method string, params interface{})
 }
 
 // ServerConfig holds all configuration for BaseServer
@@ -34,11 +38,13 @@ type ServerConfig struct {
 	serverName       string
 	serverVersion    string
 	minLogLevel      LogLevel
-	generateClientID func() string
 	capabilities     map[string]any
 	initialResources []Resource
 	initialTools     []Tool
 	initialPrompts   []Prompt
+	tools            map[string]Tool
+	prompts          map[string]Prompt
+	resources        map[string]Resource
 }
 
 // ServerConfigOption is a function that modifies ServerConfig
@@ -69,21 +75,27 @@ func UseLogLevel(level LogLevel) ServerConfigOption {
 // UseResources sets initial resources
 func UseResources(resources ...Resource) ServerConfigOption {
 	return func(c *ServerConfig) {
-		c.initialResources = resources
+		for _, resource := range resources {
+			c.resources[resource.URI] = resource
+		}
 	}
 }
 
 // UseTools sets initial tools
 func UseTools(tools ...Tool) ServerConfigOption {
 	return func(c *ServerConfig) {
-		c.initialTools = tools
+		for _, tool := range tools {
+			c.tools[tool.Name] = tool
+		}
 	}
 }
 
 // UsePrompts sets initial prompts
 func UsePrompts(prompts ...Prompt) ServerConfigOption {
 	return func(c *ServerConfig) {
-		c.initialPrompts = prompts
+		for _, prompt := range prompts {
+			c.prompts[prompt.Name] = prompt
+		}
 	}
 }
 
@@ -104,12 +116,6 @@ type BaseServer struct {
 	prompts                   map[string]Prompt
 	supportsPromptListChanged bool
 	supportsToolListChanged   bool
-	// The specific server implementations (StdIOServer, SSEServer) embed this and
-	// provide the transport-specific parts.
-
-	// New fields for managing clientID.  Needed for shared handleRequest
-	generateClientID func() string
-	//sendMessage   func(clientID string, message []byte) // NO.  Too generic, not all servers will send generic msgs
 
 	// Abstract send methods.
 	sendResp func(clientID string, id *json.RawMessage, result interface{}, err *Error)
@@ -122,13 +128,10 @@ func NewServerBuilder(opts ...ServerConfigOption) *BaseServer {
 	// Default configuration
 	cfg := &ServerConfig{
 		logger:          log.Default(),
-		protocolVersion: "2024-11-05",
-		serverName:      "goai-mcp-server",
-		serverVersion:   "0.1.0",
+		protocolVersion: ProtocolVersion,
+		serverName:      defaultServerName,
+		serverVersion:   serverVersion,
 		minLogLevel:     LogLevelInfo,
-		generateClientID: func() string {
-			return uuid.NewString()
-		},
 		capabilities: map[string]any{
 			"resources": map[string]any{
 				"listChanged": true,
@@ -142,14 +145,15 @@ func NewServerBuilder(opts ...ServerConfigOption) *BaseServer {
 				"listChanged": true,
 			},
 		},
+		tools:     make(map[string]Tool),
+		prompts:   make(map[string]Prompt),
+		resources: make(map[string]Resource),
 	}
 
-	// Apply all options
 	for _, opt := range opts {
 		opt(cfg)
 	}
 
-	// Create server instance
 	s := &BaseServer{
 		protocolVersion: cfg.protocolVersion,
 		logger:          cfg.logger,
@@ -161,24 +165,20 @@ func NewServerBuilder(opts ...ServerConfigOption) *BaseServer {
 			Version: cfg.serverVersion,
 		},
 		capabilities:              cfg.capabilities,
-		resources:                 make(map[string]Resource),
+		resources:                 cfg.resources,
 		minLogLevel:               cfg.minLogLevel,
-		tools:                     make(map[string]Tool),
-		prompts:                   make(map[string]Prompt),
+		tools:                     cfg.tools,
+		prompts:                   cfg.prompts,
 		supportsPromptListChanged: false,
 		supportsToolListChanged:   false,
-		generateClientID:          cfg.generateClientID,
 	}
 
-	// Initialize Use provided resources, tools, and prompts
-	for _, resource := range cfg.initialResources {
-		s.AddResource(resource)
+	if s.supportsToolListChanged {
+		s.SendToolListChangedNotification()
 	}
-	for _, tool := range cfg.initialTools {
-		s.AddTool(tool)
-	}
-	for _, prompt := range cfg.initialPrompts {
-		s.AddPrompt(prompt)
+
+	if s.supportsPromptListChanged {
+		s.SendPromptListChangedNotification()
 	}
 
 	return s
@@ -189,8 +189,8 @@ func (s *BaseServer) AddResource(resource Resource) {
 	s.resources[resource.URI] = resource
 }
 
-// AddTool adds a new tool to the server.
-func (s *BaseServer) AddTool(tool Tool) {
+// addTool adds a new tool to the server.
+func (s *BaseServer) addTool(tool Tool) {
 	s.tools[tool.Name] = tool
 	if s.supportsToolListChanged {
 		s.SendToolListChangedNotification()
@@ -284,7 +284,6 @@ func (s *BaseServer) handleRequest(clientID string, request *Request) {
 		s.sendResp(clientID, request.ID, map[string]interface{}{}, nil)
 
 	case "resources/list":
-		// Initialize the slice here:
 		var resourceList []Resource = make([]Resource, 0)
 		for _, res := range s.resources {
 			resourceList = append(resourceList, Resource{

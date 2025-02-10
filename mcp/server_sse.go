@@ -28,8 +28,6 @@ func NewSSEServer(baseServer *BaseServer) *SSEServer {
 		clientsMutex: sync.RWMutex{},
 		address:      ":8080", // Default address
 	}
-	// Override the client ID generator, as it is used in the /message path
-	s.generateClientID = func() string { return uuid.NewString() }
 
 	// Set the concrete send methods for SSEServer
 	s.sendResp = s.sendResponse
@@ -199,7 +197,7 @@ func (s *SSEServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Access-Control-Allow-Origin", "*") // CORS
 
 	// Each client gets a unique ID.
-	clientID := s.generateClientID()
+	clientID := uuid.NewString()
 	messageChan := make(chan []byte, 10) // Buffered channel
 
 	s.clientsMutex.Lock()

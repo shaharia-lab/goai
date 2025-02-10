@@ -593,14 +593,7 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
 
-			server := NewStdIOServer(
-				NewServerBuilder(
-					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-				),
-				strings.NewReader(tt.input+"\n"),
-				&out,
-			)
-			server.AddTool(Tool{
+			tool := Tool{
 				Name:        "get_weather",
 				Description: "Get the current weather for a given location.",
 				InputSchema: json.RawMessage(`{
@@ -613,7 +606,16 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 					},
 					"required": ["location"]
 				}`),
-			})
+			}
+
+			server := NewStdIOServer(
+				NewServerBuilder(
+					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+					UseTools(tool),
+				),
+				strings.NewReader(tt.input+"\n"),
+				&out,
+			)
 
 			// Process the request
 			var request Request
