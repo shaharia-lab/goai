@@ -3,24 +3,57 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/xeipuuv/gojsonschema"
+	"reflect"
 	"sort"
 	"strings"
-
-	"github.com/xeipuuv/gojsonschema"
 )
 
 // ToolManager handles tool-related operations.
 type ToolManager struct {
-	tools               []ToolHandler
-	toolImplementations map[string]ToolImplementation
+	tools map[string]ToolHandler
 }
 
 // NewToolManager creates a new ToolManager instance.
-func NewToolManager(tools []ToolHandler) ToolManager {
-	return ToolManager{
-		tools:               tools,
-		toolImplementations: make(map[string]ToolImplementation),
+func NewToolManager(tools []ToolHandler) (*ToolManager, error) {
+	t := make(map[string]ToolHandler)
+
+	for _, tool := range tools {
+		err := validateTool(tool)
+		if err != nil {
+			return nil, fmt.Errorf("invalid tool: %v", err)
+		}
+
+		t[tool.GetName()] = tool
 	}
+
+	return &ToolManager{
+		tools: t,
+	}, nil
+}
+
+func validateTool(tool ToolHandler) error {
+	if tool.GetName() == "" {
+		return fmt.Errorf("tool name cannot be empty")
+	}
+
+	if tool.GetDescription() == "" {
+		return fmt.Errorf("tool description cannot be empty")
+	}
+
+	if tool.GetInputSchema() != nil {
+		loader := gojsonschema.NewStringLoader(string(tool.GetInputSchema()))
+		_, err := gojsonschema.NewSchema(loader)
+		if err != nil {
+			return fmt.Errorf("invalid input schema: %v", err)
+		}
+	}
+
+	if reflect.ValueOf(tool.Handler).IsNil() {
+		return fmt.Errorf("tool handler cannot be nil")
+	}
+
+	return nil
 }
 
 // ListTools returns a list of all available tools, with optional pagination.
@@ -33,9 +66,8 @@ func (tm *ToolManager) ListTools(cursor string, limit int) ListToolsResult {
 	toolMap := make(map[string]Tool)
 	var names []string
 	for _, t := range tm.tools {
-		name := t.GetName()
-		names = append(names, name)
-		toolMap[name] = Tool{
+		names = append(names, t.GetName())
+		toolMap[t.GetName()] = Tool{
 			Name:        t.GetName(),
 			Description: t.GetDescription(),
 			InputSchema: t.GetInputSchema(),
@@ -80,23 +112,12 @@ func (tm *ToolManager) ListTools(cursor string, limit int) ListToolsResult {
 
 // CallTool executes a tool with the given parameters.
 func (tm *ToolManager) CallTool(params CallToolParams) (CallToolResult, error) {
-	var targetTool ToolHandler
-	found := false
-
-	for _, tool := range tm.tools {
-		if tool.GetName() == params.Name {
-			targetTool = tool
-			found = true
-			break
-		}
-	}
-
-	if !found {
+	if _, exists := tm.tools[params.Name]; !exists {
 		return CallToolResult{}, fmt.Errorf("tool metadata not found: %s", params.Name)
 	}
 
-	if targetTool.GetInputSchema() != nil && len(params.Arguments) > 0 {
-		schemaLoader := gojsonschema.NewStringLoader(string(targetTool.GetInputSchema()))
+	if tm.tools[params.Name].GetInputSchema() != nil && len(params.Arguments) > 0 {
+		schemaLoader := gojsonschema.NewStringLoader(string(tm.tools[params.Name].GetInputSchema()))
 
 		argsJSON, err := json.Marshal(params.Arguments)
 		if err != nil {
@@ -126,7 +147,7 @@ func (tm *ToolManager) CallTool(params CallToolParams) (CallToolResult, error) {
 		}
 	}
 
-	result, err := targetTool.Handler(params)
+	result, err := tm.tools[params.Name].Handler(params)
 	if err != nil {
 		return CallToolResult{
 			IsError: true,
@@ -142,11 +163,31 @@ func (tm *ToolManager) CallTool(params CallToolParams) (CallToolResult, error) {
 
 // GetTool retrieves a tool by its name.
 func (tm *ToolManager) GetTool(name string) (ToolHandler, error) {
-	for _, tool := range tm.tools {
-		if tool.GetName() == name {
-			return tool, nil
-		}
+	if _, exists := tm.tools[name]; !exists {
+		return nil, fmt.Errorf("tool metadata not found: %s", name)
 	}
 
-	return nil, fmt.Errorf("tool not found: %s", name)
+	return tm.tools[name], nil
+}
+
+func (tm *ToolManager) AddTool(tool ToolHandler) error {
+	if err := validateTool(tool); err != nil {
+		return fmt.Errorf("invalid tool: %v", err)
+	}
+
+	if _, exists := tm.tools[tool.GetName()]; exists {
+		return fmt.Errorf("tool with name '%s' already exists", tool.GetName())
+	}
+
+	tm.tools[tool.GetName()] = tool
+	return nil
+}
+
+func (tm *ToolManager) RemoveTool(name string) error {
+	if _, exists := tm.tools[name]; !exists {
+		return fmt.Errorf("tool '%s' not found", name)
+	}
+
+	delete(tm.tools, name)
+	return nil
 }

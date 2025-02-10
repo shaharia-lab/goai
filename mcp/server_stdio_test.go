@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"io"
 	"log"
 	"os"
@@ -519,10 +520,14 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
 
+			tm, err := NewToolManager(tt.tools)
+			require.NoError(t, err, "Failed to create ToolManager")
+			require.NotNil(t, tm, "ToolManager should not be nil")
+
 			server := NewStdIOServer(
 				NewServerBuilder(
 					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-					UseToolManager(NewToolManager(tt.tools)),
+					UseToolManager(tm),
 				),
 				strings.NewReader(tt.input+"\n"),
 				&out,

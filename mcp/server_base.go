@@ -42,7 +42,7 @@ type ServerConfig struct {
 	initialResources []Resource
 	initialTools     []Tool
 	initialPrompts   []Prompt
-	toolManager      ToolManager
+	toolManager      *ToolManager
 	prompts          map[string]Prompt
 	resources        map[string]Resource
 }
@@ -82,7 +82,7 @@ func UseResources(resources ...Resource) ServerConfigOption {
 }
 
 // UseToolManager sets initial tools
-func UseToolManager(toolManager ToolManager) ServerConfigOption {
+func UseToolManager(toolManager *ToolManager) ServerConfigOption {
 	return func(c *ServerConfig) {
 		c.toolManager = toolManager
 	}
@@ -109,7 +109,7 @@ type BaseServer struct {
 	capabilities              map[string]any
 	resources                 map[string]Resource
 	minLogLevel               LogLevel
-	toolManager               ToolManager
+	toolManager               *ToolManager
 	prompts                   map[string]Prompt
 	supportsPromptListChanged bool
 	supportsToolListChanged   bool
@@ -122,6 +122,8 @@ type BaseServer struct {
 
 // NewServerBuilder creates a new BaseServer instance Use the given options
 func NewServerBuilder(opts ...ServerConfigOption) *BaseServer {
+	tm, _ := NewToolManager([]ToolHandler{})
+
 	// Default configuration
 	cfg := &ServerConfig{
 		logger:          log.Default(),
@@ -142,7 +144,7 @@ func NewServerBuilder(opts ...ServerConfigOption) *BaseServer {
 				"listChanged": true,
 			},
 		},
-		toolManager: NewToolManager([]ToolHandler{}),
+		toolManager: tm,
 		prompts:     make(map[string]Prompt),
 		resources:   make(map[string]Resource),
 	}
