@@ -12,8 +12,6 @@ func main() {
 	addr := flag.String("addr", ":8080", "HTTP address to listen on")
 	flag.Parse()
 
-	logger := log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)
-
 	server := mcp.NewSSEServer(mcp.NewCommonServer(
 		mcp.UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 	))
