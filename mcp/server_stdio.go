@@ -10,17 +10,17 @@ import (
 
 // StdIOServer is the MCP server implementation using standard input/output.
 type StdIOServer struct {
-	*CommonServer // Embed the common server
-	in            io.Reader
-	out           io.Writer
+	*BaseServer // Embed the common server
+	in          io.Reader
+	out         io.Writer
 }
 
 // NewStdIOServer creates a new StdIOServer.
-func NewStdIOServer(serverConfig *CommonServer, in io.Reader, out io.Writer) *StdIOServer {
+func NewStdIOServer(baseServer *BaseServer, in io.Reader, out io.Writer) *StdIOServer {
 	s := &StdIOServer{
-		CommonServer: serverConfig,
-		in:           in,
-		out:          out,
+		BaseServer: baseServer,
+		in:         in,
+		out:        out,
 	}
 
 	// Set the concrete send methods for StdIOServer.

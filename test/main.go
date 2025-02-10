@@ -11,7 +11,7 @@ import (
 	addr := flag.String("addr", ":8080", "HTTP address to listen on")
 	flag.Parse()
 
-	server := mcp.NewSSEServer(mcp.NewCommonServer(
+	server := mcp.NewSSEServer(mcp.NewServerBuilder(
 		mcp.UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 	))
 	server.SetAddress(*addr)
@@ -24,7 +24,7 @@ import (
 
 func main() {
 	server := mcp.NewStdIOServer(
-		mcp.NewCommonServer(
+		mcp.NewServerBuilder(
 			mcp.UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 		),
 		os.Stdin,

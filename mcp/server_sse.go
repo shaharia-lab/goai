@@ -14,16 +14,16 @@ import (
 
 // SSEServer is the MCP server implementation using Server-Sent Events.
 type SSEServer struct {
-	*CommonServer                        // Embed the common server
-	clients       map[string]chan []byte // Map client IDs to message channels.
-	clientsMutex  sync.RWMutex           // Protect client map access.
-	address       string
+	*BaseServer                         // Embed the common server
+	clients      map[string]chan []byte // Map client IDs to message channels.
+	clientsMutex sync.RWMutex           // Protect client map access.
+	address      string
 }
 
 // NewSSEServer creates a new SSEServer.
-func NewSSEServer(serverConfig *CommonServer) *SSEServer {
+func NewSSEServer(baseServer *BaseServer) *SSEServer {
 	s := &SSEServer{
-		CommonServer: serverConfig,
+		BaseServer:   baseServer,
 		clients:      make(map[string]chan []byte),
 		clientsMutex: sync.RWMutex{},
 		address:      ":8080", // Default address

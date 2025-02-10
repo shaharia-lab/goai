@@ -32,7 +32,7 @@ func waitForResponse(t *testing.T, out *bytes.Buffer, timeout time.Duration) *Re
 
 func TestNewStdIOServer(t *testing.T) {
 	server := NewStdIOServer(
-		NewCommonServer(
+		NewServerBuilder(
 			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 		),
 		strings.NewReader(""),
@@ -67,7 +67,7 @@ func TestNewStdIOServer(t *testing.T) {
 func TestSendResponse(t *testing.T) {
 	out := &bytes.Buffer{}
 	server := NewStdIOServer(
-		NewCommonServer(
+		NewServerBuilder(
 			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 		),
 		strings.NewReader(""),
@@ -104,7 +104,7 @@ func TestSendResponse(t *testing.T) {
 func TestSendError(t *testing.T) {
 	out := &bytes.Buffer{}
 	server := NewStdIOServer(
-		NewCommonServer(
+		NewServerBuilder(
 			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 		),
 		strings.NewReader(""),
@@ -133,7 +133,7 @@ func TestSendError(t *testing.T) {
 func TestSendNotification(t *testing.T) {
 	out := &bytes.Buffer{}
 	server := NewStdIOServer(
-		NewCommonServer(
+		NewServerBuilder(
 			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 		),
 		strings.NewReader(""),
@@ -180,7 +180,7 @@ func TestRun(t *testing.T) {
 
 	out := &bytes.Buffer{}
 	server := NewStdIOServer(
-		NewCommonServer(
+		NewServerBuilder(
 			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 		),
 		newMockReader(messages),
@@ -293,7 +293,7 @@ func TestErrorHandling(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			out := &bytes.Buffer{}
 			server := NewStdIOServer(
-				NewCommonServer(
+				NewServerBuilder(
 					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 				),
 				strings.NewReader(strings.Join(tt.messages, "")),
@@ -348,7 +348,7 @@ func TestErrorHandling(t *testing.T) {
 func TestResourceHandling(t *testing.T) {
 	out := &bytes.Buffer{}
 	server := NewStdIOServer(
-		NewCommonServer(
+		NewServerBuilder(
 			UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 		),
 		strings.NewReader(""),
@@ -463,7 +463,7 @@ func TestStdIOServerRequests(t *testing.T) {
 			var out bytes.Buffer
 
 			server := NewStdIOServer(
-				NewCommonServer(
+				NewServerBuilder(
 					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 				),
 				strings.NewReader(tt.input+"\n"),
@@ -594,7 +594,7 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 			var out bytes.Buffer
 
 			server := NewStdIOServer(
-				NewCommonServer(
+				NewServerBuilder(
 					UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 				),
 				strings.NewReader(tt.input+"\n"),

@@ -27,8 +27,8 @@ type Server interface {
 	sendNotification(clientID string, method string, params interface{}) // clientID is needed, as both will send it, but SSE may send to many
 }
 
-// CommonServerConfig holds all configuration for CommonServer
-type CommonServerConfig struct {
+// ServerConfig holds all configuration for BaseServer
+type ServerConfig struct {
 	logger           *log.Logger
 	protocolVersion  string
 	serverName       string
@@ -41,54 +41,54 @@ type CommonServerConfig struct {
 	initialPrompts   []Prompt
 }
 
-// CommonServerOption is a function that modifies CommonServerConfig
-type CommonServerOption func(*CommonServerConfig)
+// ServerConfigOption is a function that modifies ServerConfig
+type ServerConfigOption func(*ServerConfig)
 
 // UseLogger sets a custom logger
-func UseLogger(logger *log.Logger) CommonServerOption {
-	return func(c *CommonServerConfig) {
+func UseLogger(logger *log.Logger) ServerConfigOption {
+	return func(c *ServerConfig) {
 		c.logger = logger
 	}
 }
 
 // UseServerInfo sets server name and version
-func UseServerInfo(name, version string) CommonServerOption {
-	return func(c *CommonServerConfig) {
+func UseServerInfo(name, version string) ServerConfigOption {
+	return func(c *ServerConfig) {
 		c.serverName = name
 		c.serverVersion = version
 	}
 }
 
 // UseLogLevel sets minimum log level
-func UseLogLevel(level LogLevel) CommonServerOption {
-	return func(c *CommonServerConfig) {
+func UseLogLevel(level LogLevel) ServerConfigOption {
+	return func(c *ServerConfig) {
 		c.minLogLevel = level
 	}
 }
 
 // UseResources sets initial resources
-func UseResources(resources ...Resource) CommonServerOption {
-	return func(c *CommonServerConfig) {
+func UseResources(resources ...Resource) ServerConfigOption {
+	return func(c *ServerConfig) {
 		c.initialResources = resources
 	}
 }
 
 // UseTools sets initial tools
-func UseTools(tools ...Tool) CommonServerOption {
-	return func(c *CommonServerConfig) {
+func UseTools(tools ...Tool) ServerConfigOption {
+	return func(c *ServerConfig) {
 		c.initialTools = tools
 	}
 }
 
 // UsePrompts sets initial prompts
-func UsePrompts(prompts ...Prompt) CommonServerOption {
-	return func(c *CommonServerConfig) {
+func UsePrompts(prompts ...Prompt) ServerConfigOption {
+	return func(c *ServerConfig) {
 		c.initialPrompts = prompts
 	}
 }
 
-// CommonServer contains the common fields and methods for all MCP server implementations.
-type CommonServer struct {
+// BaseServer contains the common fields and methods for all MCP server implementations.
+type BaseServer struct {
 	protocolVersion    string
 	clientCapabilities map[string]any
 	logger             *log.Logger
@@ -117,10 +117,10 @@ type CommonServer struct {
 	sendNoti func(clientID string, method string, params interface{})
 }
 
-// NewCommonServer creates a new CommonServer instance Use the given options
-func NewCommonServer(opts ...CommonServerOption) *CommonServer {
+// NewServerBuilder creates a new BaseServer instance Use the given options
+func NewServerBuilder(opts ...ServerConfigOption) *BaseServer {
 	// Default configuration
-	cfg := &CommonServerConfig{
+	cfg := &ServerConfig{
 		logger:          log.Default(),
 		protocolVersion: "2024-11-05",
 		serverName:      "goai-mcp-server",
@@ -150,7 +150,7 @@ func NewCommonServer(opts ...CommonServerOption) *CommonServer {
 	}
 
 	// Create server instance
-	s := &CommonServer{
+	s := &BaseServer{
 		protocolVersion: cfg.protocolVersion,
 		logger:          cfg.logger,
 		ServerInfo: struct {
@@ -185,12 +185,12 @@ func NewCommonServer(opts ...CommonServerOption) *CommonServer {
 }
 
 // AddResource adds a new resource to the server.
-func (s *CommonServer) AddResource(resource Resource) {
+func (s *BaseServer) AddResource(resource Resource) {
 	s.resources[resource.URI] = resource
 }
 
 // AddTool adds a new tool to the server.
-func (s *CommonServer) AddTool(tool Tool) {
+func (s *BaseServer) AddTool(tool Tool) {
 	s.tools[tool.Name] = tool
 	if s.supportsToolListChanged {
 		s.SendToolListChangedNotification()
@@ -198,7 +198,7 @@ func (s *CommonServer) AddTool(tool Tool) {
 }
 
 // AddPrompt adds a new prompt to the server.
-func (s *CommonServer) AddPrompt(prompt Prompt) {
+func (s *BaseServer) AddPrompt(prompt Prompt) {
 	s.prompts[prompt.Name] = prompt
 	if s.supportsPromptListChanged {
 		s.SendPromptListChangedNotification()
@@ -206,7 +206,7 @@ func (s *CommonServer) AddPrompt(prompt Prompt) {
 }
 
 // DeletePrompt removes a prompt from the server.
-func (s *CommonServer) DeletePrompt(name string) error {
+func (s *BaseServer) DeletePrompt(name string) error {
 	if _, exists := s.prompts[name]; !exists {
 		return fmt.Errorf("prompt not found: %s", name)
 	}
@@ -218,18 +218,18 @@ func (s *CommonServer) DeletePrompt(name string) error {
 }
 
 // SendPromptListChangedNotification sends a notification that the prompt list has changed.
-func (s *CommonServer) SendPromptListChangedNotification() {
+func (s *BaseServer) SendPromptListChangedNotification() {
 	// The concrete server implementations will handle broadcasting this.
 	s.sendNoti("", "notifications/prompts/list_changed", nil) // Empty clientID.  Common server doesn't know *who* to send to
 }
 
 // SendToolListChangedNotification sends a notification that the tool list has changed.
-func (s *CommonServer) SendToolListChangedNotification() {
+func (s *BaseServer) SendToolListChangedNotification() {
 	s.sendNoti("", "notifications/tools/list_changed", nil)
 }
 
 // LogMessage logs a message.
-func (s *CommonServer) LogMessage(level LogLevel, loggerName string, data interface{}) {
+func (s *BaseServer) LogMessage(level LogLevel, loggerName string, data interface{}) {
 	if logLevelSeverity[level] > logLevelSeverity[s.minLogLevel] {
 		return
 	}
@@ -243,7 +243,7 @@ func (s *CommonServer) LogMessage(level LogLevel, loggerName string, data interf
 }
 
 // handleRequest handles incoming requests.  This is now common to both server types.
-func (s *CommonServer) handleRequest(clientID string, request *Request) {
+func (s *BaseServer) handleRequest(clientID string, request *Request) {
 	s.logger.Printf("Received request from client %s: method=%s, id=%v", clientID, request.Method, request.ID)
 
 	switch request.Method {
@@ -441,7 +441,7 @@ func (s *CommonServer) handleRequest(clientID string, request *Request) {
 }
 
 // handleNotification handles incoming notifications.  Common to both server types.
-func (s *CommonServer) handleNotification(clientID string, notification *Notification) {
+func (s *BaseServer) handleNotification(clientID string, notification *Notification) {
 	s.logger.Printf("Received notification from client %s: method=%s", clientID, notification.Method)
 	switch notification.Method {
 	case "notifications/initialized": // The client confirms it's initialized.

@@ -14,7 +14,7 @@ import (
 )
 
 func TestNewSSEServer(t *testing.T) {
-	server := NewSSEServer(NewCommonServer(
+	server := NewSSEServer(NewServerBuilder(
 		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 	))
 
@@ -30,7 +30,7 @@ func TestNewSSEServer(t *testing.T) {
 }
 
 func TestSetAddress(t *testing.T) {
-	server := NewSSEServer(NewCommonServer(
+	server := NewSSEServer(NewServerBuilder(
 		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 	))
 	newAddress := ":9090"
@@ -42,7 +42,7 @@ func TestSetAddress(t *testing.T) {
 }
 
 func TestHandleSSEConnection(t *testing.T) {
-	server := NewSSEServer(NewCommonServer(
+	server := NewSSEServer(NewServerBuilder(
 		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 	))
 
@@ -91,7 +91,7 @@ func TestHandleSSEConnection(t *testing.T) {
 }
 
 func TestHandleClientMessage(t *testing.T) {
-	server := NewSSEServer(NewCommonServer(
+	server := NewSSEServer(NewServerBuilder(
 		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 	))
 	clientID := "test-client"
@@ -141,7 +141,7 @@ func TestHandleClientMessage(t *testing.T) {
 }
 
 func TestBroadcastNotification(t *testing.T) {
-	server := NewSSEServer(NewCommonServer(
+	server := NewSSEServer(NewServerBuilder(
 		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 	))
 
@@ -187,7 +187,7 @@ func TestBroadcastNotification(t *testing.T) {
 }
 
 func TestSendMessageToClient(t *testing.T) {
-	server := NewSSEServer(NewCommonServer(
+	server := NewSSEServer(NewServerBuilder(
 		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 	))
 	clientID := "test-client"
@@ -215,7 +215,7 @@ func TestSendMessageToClient(t *testing.T) {
 }
 
 func TestCORSHandling(t *testing.T) {
-	server := NewSSEServer(NewCommonServer(
+	server := NewSSEServer(NewServerBuilder(
 		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 	))
 
@@ -242,7 +242,7 @@ func TestCORSHandling(t *testing.T) {
 }
 
 func TestServerShutdown(t *testing.T) {
-	server := NewSSEServer(NewCommonServer(
+	server := NewSSEServer(NewServerBuilder(
 		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 	))
 	server.SetAddress(":0") // Use random available port
