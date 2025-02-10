@@ -146,7 +146,7 @@ type Resource struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	MimeType    string `json:"mimeType,omitempty"`
-	TextContent string `json:"-"` // Internal use only, not serialized
+	TextContent string `json:"-"`
 }
 
 // ResourceContent represents the actual content of a resource.

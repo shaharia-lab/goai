@@ -25,7 +25,7 @@ type ServerConfig struct {
 	initialPrompts   []Prompt
 	toolManager      *ToolManager
 	promptManager    *PromptManager
-	resources        map[string]Resource
+	resourceManager  *ResourceManager
 }
 
 // ServerConfigOption is a function that modifies ServerConfig
@@ -54,11 +54,9 @@ func UseLogLevel(level LogLevel) ServerConfigOption {
 }
 
 // UseResources sets initial resources
-func UseResources(resources ...Resource) ServerConfigOption {
+func UseResources(resourceManager *ResourceManager) ServerConfigOption {
 	return func(c *ServerConfig) {
-		for _, resource := range resources {
-			c.resources[resource.URI] = resource
-		}
+		c.resourceManager = resourceManager
 	}
 }
 
@@ -85,11 +83,11 @@ type BaseServer struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	}
-	capabilities  map[string]any
-	resources     map[string]Resource
-	minLogLevel   LogLevel
-	toolManager   *ToolManager
-	promptManager *PromptManager
+	capabilities    map[string]any
+	resourceManager *ResourceManager
+	minLogLevel     LogLevel
+	toolManager     *ToolManager
+	promptManager   *PromptManager
 
 	supportsPromptListChanged bool
 	supportsToolListChanged   bool
@@ -122,7 +120,7 @@ func NewBaseServer(opts ...ServerConfigOption) (*BaseServer, error) {
 			Version: cfg.serverVersion,
 		},
 		capabilities:              cfg.capabilities,
-		resources:                 cfg.resources,
+		resourceManager:           cfg.resourceManager,
 		minLogLevel:               cfg.minLogLevel,
 		toolManager:               cfg.toolManager,
 		promptManager:             cfg.promptManager,
@@ -146,6 +144,7 @@ func NewBaseServer(opts ...ServerConfigOption) (*BaseServer, error) {
 func defaultConfig() *ServerConfig {
 	tm, _ := NewToolManager([]ToolHandler{})
 	pm, _ := NewPromptManager([]Prompt{})
+	rm, _ := NewResourceManager([]Resource{})
 
 	return &ServerConfig{
 		logger:          log.Default(),
@@ -166,40 +165,14 @@ func defaultConfig() *ServerConfig {
 				"listChanged": true,
 			},
 		},
-		toolManager:   tm,
-		promptManager: pm,
-		resources:     make(map[string]Resource),
+		toolManager:     tm,
+		promptManager:   pm,
+		resourceManager: rm,
 	}
-}
-
-// AddResource adds a new resource to the server.
-func (s *BaseServer) AddResource(resource Resource) {
-	s.resources[resource.URI] = resource
-}
-
-// AddPrompt adds a new prompt to the server.
-func (s *BaseServer) AddPrompt(prompt Prompt) {
-	err := s.promptManager.AddPrompt(prompt)
-	if err != nil {
-		s.logger.Printf("Error adding prompt: %v", err)
-		return
-	}
-	s.SendPromptListChangedNotification()
-}
-
-// DeletePrompt removes a prompt from the server.
-func (s *BaseServer) DeletePrompt(name string) error {
-	err := s.promptManager.DeletePrompt(name)
-	if err != nil {
-		return err
-	}
-	s.SendPromptListChangedNotification()
-	return nil
 }
 
 // SendPromptListChangedNotification sends a notification that the prompt list has changed.
 func (s *BaseServer) SendPromptListChangedNotification() {
-	// The concrete server implementations will handle broadcasting this.
 	s.sendNoti("", "notifications/prompts/list_changed", nil) // Empty clientID.  Common server doesn't know *who* to send to
 }
 
@@ -280,8 +253,13 @@ func (s *BaseServer) handlePing(clientID string, request *Request) {
 }
 
 func (s *BaseServer) handleResourcesList(clientID string, request *Request) {
-	resourceList := s.buildResourceList()
-	result := ListResourcesResult{Resources: resourceList}
+	var params ListParams
+	if err := json.Unmarshal(request.Params, &params); err != nil {
+		s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
+		return
+	}
+
+	result := s.resourceManager.ListResources(params.Cursor, 0)
 	s.sendResp(clientID, request.ID, result, nil)
 }
 
@@ -292,8 +270,8 @@ func (s *BaseServer) handleResourcesRead(clientID string, request *Request) {
 		return
 	}
 
-	resource, ok := s.resources[params.URI]
-	if !ok {
+	resource, err := s.resourceManager.GetResource(params.URI)
+	if err != nil {
 		s.sendErr(clientID, request.ID, -32002, "Resource not found",
 			map[string]string{"uri": params.URI})
 		return
@@ -391,19 +369,6 @@ func (s *BaseServer) updateSupportedCapabilities() {
 			s.supportsToolListChanged = true
 		}
 	}
-}
-
-func (s *BaseServer) buildResourceList() []Resource {
-	resourceList := make([]Resource, 0, len(s.resources))
-	for _, res := range s.resources {
-		resourceList = append(resourceList, Resource{
-			URI:         res.URI,
-			Name:        res.Name,
-			Description: res.Description,
-			MimeType:    res.MimeType,
-		})
-	}
-	return resourceList
 }
 
 func (s *BaseServer) handlePromptRequest(clientID string, request *Request) {

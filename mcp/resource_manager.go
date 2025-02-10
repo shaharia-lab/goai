@@ -13,11 +13,42 @@ type ResourceManager struct {
 	resources map[string]Resource
 }
 
-// NewResourceManager creates a new ResourceManager instance.
-func NewResourceManager() *ResourceManager {
-	return &ResourceManager{
-		resources: make(map[string]Resource),
+// NewResourceManager creates a new ResourceManager instance with validation.
+func NewResourceManager(resources []Resource) (*ResourceManager, error) {
+	r := make(map[string]Resource)
+	rm := &ResourceManager{
+		resources: r,
 	}
+
+	// Validate and add each resource
+	for _, resource := range resources {
+		if err := validateResource(resource); err != nil {
+			return nil, fmt.Errorf("invalid resource: %v", err)
+		}
+
+		// Set default name if not provided
+		if resource.Name == "" {
+			resource.Name = path.Base(resource.URI)
+		}
+
+		r[resource.URI] = resource
+	}
+
+	return rm, nil
+}
+
+// validateResource checks if a resource is valid
+func validateResource(resource Resource) error {
+	if resource.URI == "" {
+		return fmt.Errorf("resource URI cannot be empty")
+	}
+
+	// Add additional validation rules as needed
+	if resource.MimeType == "" {
+		return fmt.Errorf("resource MIME type cannot be empty")
+	}
+
+	return nil
 }
 
 // ListResourcesResult represents the result of listing resources.
@@ -63,7 +94,17 @@ func (rm *ResourceManager) GetResource(uri string) (Resource, error) {
 // ListResources returns a list of all resources, with optional pagination.
 func (rm *ResourceManager) ListResources(cursor string, limit int) ListResourcesResult {
 	if limit <= 0 {
-		limit = 50 // Default limit
+		limit = 50
+	}
+
+	// Initialize with empty slice instead of nil
+	result := ListResourcesResult{
+		Resources: []Resource{},
+	}
+
+	// If there are no resources, return empty result
+	if len(rm.resources) == 0 {
+		return result
 	}
 
 	var uris []string
@@ -74,12 +115,23 @@ func (rm *ResourceManager) ListResources(cursor string, limit int) ListResources
 
 	startIdx := 0
 	if cursor != "" {
+		cursorFound := false
 		for i, uri := range uris {
 			if uri == cursor {
 				startIdx = i + 1
+				cursorFound = true
 				break
 			}
 		}
+		// Return empty result if cursor not found
+		if !cursorFound {
+			return result
+		}
+	}
+
+	// If start index is beyond array length, return empty result
+	if startIdx >= len(uris) {
+		return result
 	}
 
 	endIdx := startIdx + limit
@@ -87,20 +139,15 @@ func (rm *ResourceManager) ListResources(cursor string, limit int) ListResources
 		endIdx = len(uris)
 	}
 
-	var pageResources []Resource
 	for i := startIdx; i < endIdx; i++ {
-		pageResources = append(pageResources, rm.resources[uris[i]])
+		result.Resources = append(result.Resources, rm.resources[uris[i]])
 	}
 
-	var nextCursor string
 	if endIdx < len(uris) {
-		nextCursor = uris[endIdx-1]
+		result.NextCursor = uris[endIdx-1]
 	}
 
-	return ListResourcesResult{
-		Resources:  pageResources,
-		NextCursor: nextCursor,
-	}
+	return result
 }
 
 // ReadResource reads the content of a resource.

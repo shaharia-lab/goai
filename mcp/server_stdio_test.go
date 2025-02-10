@@ -49,10 +49,6 @@ func TestNewStdIOServer(t *testing.T) {
 	if server.out == nil {
 		t.Error("Expected non-nil output writer")
 	}
-
-	if len(server.resources) != 0 {
-		t.Errorf("Expected 0 initial resources, got %d", len(server.resources))
-	}
 }
 
 func TestSendResponse(t *testing.T) {
@@ -379,19 +375,20 @@ func TestResourceHandling(t *testing.T) {
 		t.Fatalf("Failed to unmarshal list response: %v", err)
 	}
 
-	// Verify resource list
-	result, ok := listResponse.Result.(map[string]interface{})
-	if !ok {
-		t.Fatal("Expected map result for resource list")
+	// Convert the result to ListResourcesResult
+	resultBytes, err := json.Marshal(listResponse.Result)
+	if err != nil {
+		t.Fatalf("Failed to marshal result: %v", err)
 	}
 
-	resources, ok := result["resources"].([]interface{})
-	if !ok {
-		t.Fatal("Expected array of resources")
+	var resourceResult ListResourcesResult
+	if err := json.Unmarshal(resultBytes, &resourceResult); err != nil {
+		t.Fatalf("Failed to unmarshal to ListResourcesResult: %v", err)
 	}
 
-	if len(resources) != 0 {
-		t.Errorf("Expected 0 resources, got %d", len(resources))
+	// Verify the resources
+	if len(resourceResult.Resources) != 0 {
+		t.Errorf("Expected 0 resources, got %d", len(resourceResult.Resources))
 	}
 }
 

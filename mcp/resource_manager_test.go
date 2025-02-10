@@ -1,13 +1,15 @@
 package mcp
 
 import (
-	"testing"
-
+	"encoding/base64"
 	"github.com/stretchr/testify/assert"
+	"testing"
 )
 
 func TestNewResourceManager(t *testing.T) {
-	rm := NewResourceManager()
+	rm, err := NewResourceManager([]Resource{})
+	assert.NoError(t, err)
+
 	if rm == nil {
 		t.Fatal("NewResourceManager returned nil")
 	}
@@ -17,7 +19,7 @@ func TestNewResourceManager(t *testing.T) {
 }
 
 func TestAddResource(t *testing.T) {
-	rm := NewResourceManager()
+	rm, _ := NewResourceManager([]Resource{})
 
 	tests := []struct {
 		name        string
@@ -66,7 +68,7 @@ func TestAddResource(t *testing.T) {
 }
 
 func TestGetResource(t *testing.T) {
-	rm := NewResourceManager()
+	rm, _ := NewResourceManager([]Resource{})
 	testResource := Resource{
 		URI:      "test://example.com/file.txt",
 		Name:     "file.txt",
@@ -110,7 +112,7 @@ func TestGetResource(t *testing.T) {
 }
 
 func TestListResources(t *testing.T) {
-	rm := NewResourceManager()
+	rm, _ := NewResourceManager([]Resource{})
 
 	// Add resources in non-sequential order
 	resources := []Resource{
@@ -143,7 +145,7 @@ func TestListResources(t *testing.T) {
 }
 
 func TestReadResource(t *testing.T) {
-	rm := NewResourceManager()
+	rm, _ := NewResourceManager([]Resource{})
 
 	textResource := Resource{
 		URI:         "test://file.txt",
@@ -221,4 +223,125 @@ func TestReadResource(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateResource(t *testing.T) {
+	tests := []struct {
+		name        string
+		resource    Resource
+		expectError bool
+	}{
+		{
+			name: "valid resource",
+			resource: Resource{
+				URI:      "test://example.com/file.txt",
+				Name:     "file.txt",
+				MimeType: "text/plain",
+			},
+			expectError: false,
+		},
+		{
+			name: "empty MIME type",
+			resource: Resource{
+				URI:  "test://example.com/file.txt",
+				Name: "file.txt",
+			},
+			expectError: true,
+		},
+		{
+			name: "empty URI and MIME type",
+			resource: Resource{
+				Name: "file.txt",
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateResource(tt.resource)
+			if tt.expectError && err == nil {
+				t.Error("expected error but got nil")
+			}
+			if !tt.expectError && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestListResourcesEdgeCases(t *testing.T) {
+	rm, _ := NewResourceManager([]Resource{})
+
+	t.Run("empty_resources", func(t *testing.T) {
+		result := rm.ListResources("", 10)
+		assert.Empty(t, result.Resources)
+		assert.Empty(t, result.NextCursor)
+	})
+
+	t.Run("negative_limit", func(t *testing.T) {
+		resource := Resource{
+			URI:      "test://example.com/file.txt",
+			Name:     "file.txt",
+			MimeType: "text/plain",
+		}
+		rm.AddResource(resource)
+
+		result := rm.ListResources("", -1)
+		assert.Len(t, result.Resources, 1)
+		assert.Empty(t, result.NextCursor)
+	})
+
+	t.Run("invalid_cursor", func(t *testing.T) {
+		result := rm.ListResources("nonexistent", 10)
+		assert.Empty(t, result.Resources)
+		assert.Empty(t, result.NextCursor)
+	})
+}
+
+func TestReadResourceBinaryContent(t *testing.T) {
+	rm, _ := NewResourceManager([]Resource{})
+
+	binaryData := []byte{0x00, 0x01, 0x02, 0x03}
+	binaryResource := Resource{
+		URI:         "test://file.bin",
+		Name:        "file.bin",
+		MimeType:    "application/octet-stream",
+		TextContent: string(binaryData),
+	}
+
+	err := rm.AddResource(binaryResource)
+	assert.NoError(t, err)
+
+	result, err := rm.ReadResource(ReadResourceParams{URI: "test://file.bin"})
+	assert.NoError(t, err)
+	assert.Len(t, result.Contents, 1)
+
+	decodedData, err := base64.StdEncoding.DecodeString(result.Contents[0].Blob)
+	assert.NoError(t, err)
+	assert.Equal(t, binaryData, decodedData)
+}
+
+func TestNewResourceManagerWithMultipleResources(t *testing.T) {
+	resources := []Resource{
+		{
+			URI:      "test://example.com/file1.txt",
+			Name:     "file1.txt",
+			MimeType: "text/plain",
+		},
+		{
+			URI:      "test://example.com/file2.txt",
+			Name:     "file2.txt",
+			MimeType: "text/plain",
+		},
+	}
+
+	rm, err := NewResourceManager(resources)
+	assert.NoError(t, err)
+	assert.Len(t, rm.resources, 2)
+
+	// Test initialization with invalid resource
+	invalidResources := append(resources, Resource{})
+	rm, err = NewResourceManager(invalidResources)
+	assert.Error(t, err)
 }
