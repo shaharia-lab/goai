@@ -259,7 +259,7 @@ func TestHandlePromptGetSSE(t *testing.T) {
 			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": {"name": "code_review", "arguments": {"language": "go", "code": "test code", "focus_areas": "test"}}}`,
 			expectedID: "1",
 			expectedResult: map[string]interface{}{
-				"name": "code_review",
+				"description": "Review code",
 				"messages": []interface{}{
 					map[string]interface{}{
 						"role": "user",
@@ -336,7 +336,8 @@ func TestHandlePromptGetSSE(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create prompt manager with test prompt
 			codeReviewPrompt := Prompt{
-				Name: "code_review",
+				Name:        "code_review",
+				Description: "Review code",
 				Messages: []PromptMessage{
 					{
 						Role: "user",
@@ -352,12 +353,11 @@ func TestHandlePromptGetSSE(t *testing.T) {
 					{Name: "focus_areas", Required: true},
 				},
 			}
-			pm, _ := NewPromptManager([]Prompt{codeReviewPrompt})
 
 			baseServer, _ := NewBaseServer(
 				UseLogger(log.New(io.Discard, "", 0)),
-				UsePrompts(pm),
 			)
+			baseServer.AddPrompts(codeReviewPrompt)
 			server := NewSSEServer(baseServer)
 
 			clientID := "test-client"

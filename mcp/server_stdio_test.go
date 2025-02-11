@@ -604,6 +604,7 @@ func TestHandlePromptGet(t *testing.T) {
 			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": {"name": "code_review", "arguments": {"language": "go", "code": "test code", "focus_areas": "test"}}}`,
 			expectedID: "1",
 			expectedResult: map[string]interface{}{
+				"description": "Review code",
 				"messages": []interface{}{map[string]interface{}{
 					"content": map[string]interface{}{
 						"text": "Please review this code:", "type": "text",
@@ -611,7 +612,6 @@ func TestHandlePromptGet(t *testing.T) {
 					"role": "user",
 				},
 				},
-				"name": "code_review",
 			},
 		},
 		{
@@ -681,7 +681,8 @@ func TestHandlePromptGet(t *testing.T) {
 			out := &bytes.Buffer{}
 
 			codeReviewPrompt := Prompt{
-				Name: "code_review",
+				Name:        "code_review",
+				Description: "Review code",
 				Messages: []PromptMessage{
 					{
 						Role: "user",
@@ -698,14 +699,11 @@ func TestHandlePromptGet(t *testing.T) {
 				},
 			}
 
-			// Initialize PromptManager with the prompt
-			pm, _ := NewPromptManager([]Prompt{codeReviewPrompt})
-
 			// Add the PromptManager when creating the server
 			baseServer, _ := NewBaseServer(
 				UseLogger(log.New(io.Discard, "", 0)),
-				UsePrompts(pm),
 			)
+			baseServer.AddPrompts(codeReviewPrompt)
 
 			server := NewStdIOServer(
 				baseServer,

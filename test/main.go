@@ -135,19 +135,21 @@ func main() {
 	}
 
 	resourceManager, _ := mcp.NewResourceManager(resources)
-	promptManager, _ := mcp.NewPromptManager([]mcp.Prompt{prompt})
 
 	baseServer, err := mcp.NewBaseServer(
 		mcp.UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
 		mcp.UseResources(resourceManager),
-		mcp.UsePrompts(promptManager),
 	)
 	if err != nil {
 		panic(err)
 	}
-	_ = baseServer.AddTools(weatherTool)
 
 	err = baseServer.AddTools(weatherTool)
+	if err != nil {
+		panic(err)
+	}
+
+	err = baseServer.AddPrompts(prompt)
 	if err != nil {
 		panic(err)
 	}

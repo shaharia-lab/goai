@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/xeipuuv/gojsonschema"
 	"log"
-	"reflect"
 	"sort"
 	"strings"
 )
@@ -28,7 +27,7 @@ type ServerConfig struct {
 	initialResources []Resource
 	initialTools     []Tool
 	initialPrompts   []Prompt
-	promptManager    *PromptManager
+	prompts          *Prompt
 	resourceManager  *ResourceManager
 }
 
@@ -64,13 +63,6 @@ func UseResources(resourceManager *ResourceManager) ServerConfigOption {
 	}
 }
 
-// UsePrompts sets initial prompts
-func UsePrompts(promptManager *PromptManager) ServerConfigOption {
-	return func(c *ServerConfig) {
-		c.promptManager = promptManager
-	}
-}
-
 // BaseServer contains the common fields and methods for all MCP server implementations.
 type BaseServer struct {
 	protocolVersion    string
@@ -84,7 +76,7 @@ type BaseServer struct {
 	resourceManager *ResourceManager
 	minLogLevel     LogLevel
 	tools           map[string]Tool
-	promptManager   *PromptManager
+	prompts         map[string]Prompt
 
 	supportsPromptListChanged bool
 	supportsToolListChanged   bool
@@ -119,11 +111,11 @@ func NewBaseServer(opts ...ServerConfigOption) (*BaseServer, error) {
 		capabilities:              cfg.capabilities,
 		resourceManager:           cfg.resourceManager,
 		minLogLevel:               cfg.minLogLevel,
-		promptManager:             cfg.promptManager,
 		supportsPromptListChanged: false,
 		supportsToolListChanged:   false,
 		sendNoti:                  func(clientID string, method string, params interface{}) {},
 		tools:                     make(map[string]Tool),
+		prompts:                   make(map[string]Prompt),
 	}
 
 	// Initialize notifications if needed
@@ -155,8 +147,24 @@ func (s *BaseServer) AddTools(tools ...Tool) error {
 	return nil
 }
 
+func (s *BaseServer) AddPrompts(prompts ...Prompt) error {
+	for _, prompt := range prompts {
+		if _, exists := s.prompts[prompt.Name]; exists {
+			return fmt.Errorf("duplicate prompt: %s", prompt.Name)
+		}
+
+		err := validatePrompt(prompt)
+		if err != nil {
+			return fmt.Errorf("invalid prompt: %v", err)
+		}
+
+		s.prompts[prompt.Name] = prompt
+	}
+
+	return nil
+}
+
 func defaultConfig() *ServerConfig {
-	pm, _ := NewPromptManager([]Prompt{})
 	rm, _ := NewResourceManager([]Resource{})
 
 	return &ServerConfig{
@@ -178,7 +186,6 @@ func defaultConfig() *ServerConfig {
 				"listChanged": true,
 			},
 		},
-		promptManager:   pm,
 		resourceManager: rm,
 	}
 }
@@ -340,6 +347,56 @@ func (s *BaseServer) handleToolsCall(clientID string, request *Request) {
 	s.sendResp(clientID, request.ID, result, nil)
 }
 
+// ListPrompts returns a list of all available prompts, with optional pagination
+func (s *BaseServer) ListPrompts(cursor string, limit int) ListPromptsResult {
+	if limit <= 0 {
+		limit = 50 // Default limit
+	}
+
+	// Get sorted list of prompt names
+	var names []string
+	for name := range s.prompts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	// Find starting index based on cursor
+	startIdx := 0
+	if cursor != "" {
+		for i, name := range names {
+			if name == cursor {
+				startIdx = i + 1
+				break
+			}
+		}
+	}
+
+	// Calculate end index
+	endIdx := startIdx + limit
+	if endIdx > len(names) {
+		endIdx = len(names)
+	}
+
+	// Get the page of prompts
+	pagePrompts := make([]Prompt, 0)
+	for i := startIdx; i < endIdx; i++ {
+		if prompt, exists := s.prompts[names[i]]; exists {
+			pagePrompts = append(pagePrompts, prompt)
+		}
+	}
+
+	// Set next cursor if there are more items
+	var nextCursor string
+	if endIdx < len(names) {
+		nextCursor = names[endIdx]
+	}
+
+	return ListPromptsResult{
+		Prompts:    pagePrompts,
+		NextCursor: nextCursor,
+	}
+}
+
 func (s *BaseServer) handlePromptsList(clientID string, request *Request) {
 	var params ListParams
 	if err := json.Unmarshal(request.Params, &params); err != nil {
@@ -347,7 +404,7 @@ func (s *BaseServer) handlePromptsList(clientID string, request *Request) {
 		return
 	}
 
-	result := s.promptManager.ListPrompts(params.Cursor, 0)
+	result := s.ListPrompts(params.Cursor, 0)
 	s.sendResp(clientID, request.ID, result, nil)
 }
 
@@ -358,14 +415,20 @@ func (s *BaseServer) handlePromptGet(clientID string, request *Request) {
 		return
 	}
 
-	prompt, err := s.promptManager.GetPrompt(params)
-	if err != nil {
+	prompt, exists := s.prompts[params.Name]
+	if !exists {
 		s.sendErr(clientID, request.ID, -32602, "Prompt not found",
 			map[string]string{"prompt": params.Name})
 		return
 	}
 
-	s.sendResp(clientID, request.ID, prompt, nil)
+	processedPrompt, err := processPrompt(prompt, params.Arguments)
+	if err != nil {
+		s.sendErr(clientID, request.ID, -32603, "Failed to process prompt", nil)
+		return
+	}
+
+	s.sendResp(clientID, request.ID, PromptGetResponse{Description: processedPrompt.Description, Messages: processedPrompt.Messages}, nil)
 }
 
 // Helper functions
@@ -392,7 +455,7 @@ func (s *BaseServer) handlePromptRequest(clientID string, request *Request) {
 			return
 		}
 
-		s.sendResp(clientID, request.ID, s.promptManager.ListPrompts(params.Cursor, 0), nil)
+		s.sendResp(clientID, request.ID, s.ListPrompts(params.Cursor, 0), nil)
 
 	case "prompt/get":
 		var getParams GetPromptParams
@@ -401,9 +464,9 @@ func (s *BaseServer) handlePromptRequest(clientID string, request *Request) {
 			return
 		}
 
-		prompt, err := s.promptManager.GetPrompt(getParams)
-		if err != nil {
-			s.sendErr(clientID, request.ID, -32602, "Prompt not found", map[string]string{"prompt": prompt.Name})
+		prompt, exists := s.prompts[getParams.Name]
+		if !exists {
+			s.sendErr(clientID, request.ID, -32602, "Prompt not found", map[string]string{"prompt": getParams.Name})
 			return
 		}
 
@@ -538,28 +601,4 @@ func (s *BaseServer) CallTool(params CallToolParams) (CallToolResult, error) {
 	}
 
 	return result, nil
-}
-
-func validateToolV2(tool Tool) error {
-	if tool.Name == "" {
-		return fmt.Errorf("tool name cannot be empty")
-	}
-
-	if tool.Description == "" {
-		return fmt.Errorf("tool description cannot be empty")
-	}
-
-	if tool.InputSchema != nil {
-		loader := gojsonschema.NewStringLoader(string(tool.InputSchema))
-		_, err := gojsonschema.NewSchema(loader)
-		if err != nil {
-			return fmt.Errorf("invalid input schema: %v", err)
-		}
-	}
-
-	if reflect.ValueOf(tool.Handler).IsNil() {
-		return fmt.Errorf("tool handler cannot be nil")
-	}
-
-	return nil
 }

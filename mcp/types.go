@@ -66,6 +66,11 @@ type Prompt struct {
 	Messages    []PromptMessage  `json:"messages,omitempty"`  // For prompts/get
 }
 
+type PromptGetResponse struct {
+	Description string          `json:"description"`
+	Messages    []PromptMessage `json:"messages"`
+}
+
 type PromptArgument struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
@@ -80,17 +85,16 @@ type PromptMessage struct {
 type PromptContent struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
-	// Add Image, Audio, Resource content types later.
 }
 
 type ListPromptsResult struct {
 	Prompts    []Prompt `json:"prompts"`
-	NextCursor string   `json:"nextCursor,omitempty"` // For pagination (optional, but good practice).
+	NextCursor string   `json:"nextCursor,omitempty"`
 }
 
 type GetPromptParams struct {
 	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments,omitempty"` // Raw JSON for flexibility.
+	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
 // LogLevel represents the severity level of a log message.
@@ -98,21 +102,13 @@ type GetPromptParams struct {
 type LogLevel string
 
 const (
-	// LogLevelDebug represents debug-level messages (detailed debug information)
-	LogLevelDebug LogLevel = "debug"
-	// LogLevelInfo represents informational messages
-	LogLevelInfo LogLevel = "info"
-	// LogLevelNotice represents normal but significant conditions
-	LogLevelNotice LogLevel = "notice"
-	// LogLevelWarning represents warning conditions
-	LogLevelWarning LogLevel = "warning"
-	// LogLevelError represents error conditions
-	LogLevelError LogLevel = "error"
-	// LogLevelCritical represents critical conditions
-	LogLevelCritical LogLevel = "critical"
-	// LogLevelAlert represents conditions that should be corrected immediately
-	LogLevelAlert LogLevel = "alert"
-	// LogLevelEmergency represents system is unusable
+	LogLevelDebug     LogLevel = "debug"
+	LogLevelInfo      LogLevel = "info"
+	LogLevelNotice    LogLevel = "notice"
+	LogLevelWarning   LogLevel = "warning"
+	LogLevelError     LogLevel = "error"
+	LogLevelCritical  LogLevel = "critical"
+	LogLevelAlert     LogLevel = "alert"
 	LogLevelEmergency LogLevel = "emergency"
 )
 

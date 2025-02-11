@@ -202,3 +202,169 @@ func TestToolManager_AddTool(t *testing.T) {
 		})
 	}
 }
+
+func TestValidatePrompt(t *testing.T) {
+	t.Run("valid prompt", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Role: "system",
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello, world!",
+					},
+				},
+			},
+			Arguments: []PromptArgument{
+				{
+					Name:     "arg1",
+					Required: true,
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.NoError(t, err)
+	})
+
+	t.Run("empty prompt name", func(t *testing.T) {
+		prompt := Prompt{
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello!",
+					},
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "prompt name cannot be empty")
+	})
+
+	t.Run("empty messages", func(t *testing.T) {
+		prompt := Prompt{
+			Name:     "test-prompt",
+			Messages: []PromptMessage{},
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "prompt must have at least one message")
+	})
+
+	t.Run("unsupported content type", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "image",
+						Text: "some text",
+					},
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "only text type is supported")
+	})
+
+	t.Run("empty content text", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "",
+					},
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "message content text cannot be empty")
+	})
+
+	t.Run("empty argument name", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello!",
+					},
+				},
+			},
+			Arguments: []PromptArgument{
+				{
+					Name:     "",
+					Required: true,
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "argument name cannot be empty")
+	})
+
+	t.Run("multiple messages validation", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "Message 1",
+					},
+				},
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "", // Invalid
+					},
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "message content text cannot be empty")
+	})
+
+	t.Run("multiple valid arguments", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+			Messages: []PromptMessage{
+				{
+					Content: PromptContent{
+						Type: "text",
+						Text: "Hello {{name}} and {{greeting}}!",
+					},
+				},
+			},
+			Arguments: []PromptArgument{
+				{
+					Name:     "name",
+					Required: true,
+				},
+				{
+					Name:     "greeting",
+					Required: false,
+				},
+			},
+		}
+		err := validatePrompt(prompt)
+		assert.NoError(t, err)
+	})
+
+	t.Run("nil messages", func(t *testing.T) {
+		prompt := Prompt{
+			Name: "test-prompt",
+		}
+		err := validatePrompt(prompt)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "prompt must have at least one message")
+	})
+}
