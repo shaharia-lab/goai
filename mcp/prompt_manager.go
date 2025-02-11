@@ -91,6 +91,7 @@ func (pm *PromptManager) RemovePrompt(name string) error {
 
 // processPrompt handles argument substitution in prompts
 func processPrompt(prompt Prompt, arguments json.RawMessage) (*Prompt, error) {
+	// Return early if no arguments to process
 	if len(prompt.Arguments) == 0 || len(arguments) == 0 {
 		return &Prompt{
 			Name:        prompt.Name,
@@ -120,43 +121,26 @@ func processPrompt(prompt Prompt, arguments json.RawMessage) (*Prompt, error) {
 		Messages:    make([]PromptMessage, len(prompt.Messages)),
 	}
 
-	// Copy messages
-	for i := range prompt.Messages {
+	// Process each message
+	for i, msg := range prompt.Messages {
+		text := msg.Content.Text
+
+		// Replace placeholders in the text for all message types
+		for _, arg := range prompt.Arguments {
+			if value, exists := providedArgs[arg.Name]; exists {
+				if strValue, ok := value.(string); ok {
+					text = replaceArgument(text, arg.Name, strValue)
+				}
+			}
+		}
+
 		promptCopy.Messages[i] = PromptMessage{
-			Role: prompt.Messages[i].Role,
+			Role: msg.Role,
 			Content: PromptContent{
-				Type: prompt.Messages[i].Content.Type,
-				Text: prompt.Messages[i].Content.Text,
+				Type: msg.Content.Type,
+				Text: text,
 			},
 		}
-	}
-
-	// Process each message
-	for i := range promptCopy.Messages {
-		text := promptCopy.Messages[i].Content.Text
-
-		if promptCopy.Messages[i].Role == "user" {
-			// For user messages, append the arguments at the end
-			text = text + "\n"
-
-			// Use expected order from test
-			for _, arg := range prompt.Arguments {
-				if value, exists := providedArgs[arg.Name]; exists {
-					if strValue, ok := value.(string); ok {
-						text += fmt.Sprintf("%s: %s\n", arg.Name, strValue)
-					}
-				}
-			}
-		} else {
-			// For non-user messages, replace placeholders
-			for argName, argValue := range providedArgs {
-				if strValue, ok := argValue.(string); ok {
-					text = replaceArgument(text, argName, strValue)
-				}
-			}
-		}
-
-		promptCopy.Messages[i].Content.Text = text
 	}
 
 	return &promptCopy, nil

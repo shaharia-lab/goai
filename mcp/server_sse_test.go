@@ -275,7 +275,6 @@ func TestHandlePromptGetSSE(t *testing.T) {
 		expectedError  *Error
 		expectedResult map[string]interface{}
 	}{
-		// Using the same test cases as StdIOServer
 		{
 			name:       "valid prompt get request",
 			initFirst:  true,
@@ -288,13 +287,71 @@ func TestHandlePromptGetSSE(t *testing.T) {
 						"role": "user",
 						"content": map[string]interface{}{
 							"type": "text",
-							"text": "Please review this code:\nlanguage: go\ncode: test code\nfocus_areas: test\n",
+							"text": "Please review this code:",
 						},
 					},
 				},
 			},
 		},
-		// ... copy other test cases from StdIOServer test
+		{
+			name:       "request without initialization",
+			initFirst:  false,
+			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": {"id": "test-prompt-1"}}`,
+			expectedID: "1",
+			expectedError: &Error{
+				Code:    -32000,
+				Message: "Server not initialized",
+			},
+		},
+		{
+			name:      "malformed request",
+			initFirst: false,
+			input:     `{"jsonrpc": "2.0", "method": "prompts/get", "id": }`,
+			expectedError: &Error{
+				Code:    -32700,
+				Message: "Parse error",
+			},
+		},
+		{
+			name:       "get prompt with invalid name",
+			initFirst:  true,
+			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": {"name": "nonexistent_prompt"}}`,
+			expectedID: "1",
+			expectedError: &Error{
+				Code:    -32602,
+				Message: "Prompt not found",
+			},
+		},
+		{
+			name:       "get prompt without name parameter",
+			initFirst:  true,
+			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": {}}`,
+			expectedID: "1",
+			expectedError: &Error{
+				Code:    -32602,
+				Message: "Prompt not found",
+			},
+		},
+		{
+			name:       "get prompt with null params",
+			initFirst:  true,
+			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": null}`,
+			expectedID: "1",
+			expectedError: &Error{
+				Code:    -32602,
+				Message: "Prompt not found",
+			},
+		},
+		{
+			name:       "get prompt with invalid params type",
+			initFirst:  true,
+			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": "code_review"}`,
+			expectedID: "1",
+			expectedError: &Error{
+				Code:    -32602,
+				Message: "Invalid params",
+			},
+		},
 	}
 
 	for _, tt := range tests {

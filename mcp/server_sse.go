@@ -18,6 +18,8 @@ type SSEServer struct {
 	clients      map[string]chan []byte // Map client IDs to message channels.
 	clientsMutex sync.RWMutex           // Protect client map access.
 	address      string
+	initialized  bool
+	initMutex    sync.RWMutex
 }
 
 // NewSSEServer creates a new SSEServer.
@@ -26,7 +28,9 @@ func NewSSEServer(baseServer *BaseServer) *SSEServer {
 		BaseServer:   baseServer,
 		clients:      make(map[string]chan []byte),
 		clientsMutex: sync.RWMutex{},
-		address:      ":8080", // Default address
+		address:      ":8080",
+		initialized:  false,
+		initMutex:    sync.RWMutex{},
 	}
 
 	// Set the concrete send methods for SSEServer
@@ -277,13 +281,34 @@ func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) 
 
 	var request Request
 	if err := json.Unmarshal(raw, &request); err == nil && request.Method != "" && request.ID != nil {
-		s.handleRequest(clientID, &request) // Pass the client ID to the request handler.
+		// Check initialization state for requests
+		s.initMutex.RLock()
+		initialized := s.initialized
+		s.initMutex.RUnlock()
+
+		if request.Method != "initialize" && !initialized {
+			s.sendError(clientID, request.ID, -32000, "Server not initialized", nil)
+			return
+		}
+		s.handleRequest(clientID, &request)
 		return
 	}
 
 	var notification Notification
 	if err := json.Unmarshal(raw, &notification); err == nil && notification.Method != "" {
-		s.handleNotification(clientID, &notification) // Pass client ID to notification handler.
+		s.initMutex.RLock()
+		initialized := s.initialized
+		s.initMutex.RUnlock()
+
+		if notification.Method == "notifications/initialized" {
+			s.initMutex.Lock()
+			s.initialized = true
+			s.initMutex.Unlock()
+		} else if !initialized {
+			s.logger.Printf("Received notification before 'initialized': %s", notification.Method)
+			return
+		}
+		s.handleNotification(clientID, &notification)
 		return
 	}
 
@@ -292,6 +317,7 @@ func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) 
 
 // Run starts the MCP SSEServer, listening for incoming HTTP connections.
 func (s *SSEServer) Run(ctx context.Context) error {
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleHTTPRequest)
 

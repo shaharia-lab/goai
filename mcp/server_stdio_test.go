@@ -600,16 +600,14 @@ func TestHandlePromptGet(t *testing.T) {
 			input:      `{"jsonrpc": "2.0", "method": "prompts/get", "id": 1, "params": {"name": "code_review", "arguments": {"language": "go", "code": "test code", "focus_areas": "test"}}}`,
 			expectedID: "1",
 			expectedResult: map[string]interface{}{
-				"name": "code_review",
-				"messages": []interface{}{
-					map[string]interface{}{
-						"role": "user",
-						"content": map[string]interface{}{
-							"type": "text",
-							"text": "Please review this code:\nlanguage: go\ncode: test code\nfocus_areas: test\n",
-						},
+				"messages": []interface{}{map[string]interface{}{
+					"content": map[string]interface{}{
+						"text": "Please review this code:", "type": "text",
 					},
+					"role": "user",
 				},
+				},
+				"name": "code_review",
 			},
 		},
 		{
