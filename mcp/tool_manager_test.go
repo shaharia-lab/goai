@@ -2,8 +2,9 @@ package mcp
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // MockToolHandler implements ToolHandler interface for testing

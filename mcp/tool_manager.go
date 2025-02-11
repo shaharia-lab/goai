@@ -3,9 +3,10 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/xeipuuv/gojsonschema"
 	"sort"
 	"strings"
+
+	"github.com/xeipuuv/gojsonschema"
 )
 
 // ToolManager handles tool-related operations.
