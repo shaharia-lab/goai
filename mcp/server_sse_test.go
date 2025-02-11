@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/stretchr/testify/require"
 	"io"
@@ -45,21 +46,16 @@ func TestHandleSSEConnection(t *testing.T) {
 	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
 	server := NewSSEServer(baseServer)
 
-	// Create test request and response recorder
 	req := httptest.NewRequest("GET", "/events", nil)
 	w := httptest.NewRecorder()
 
-	// Create a context with cancellation
 	ctx, cancel := context.WithCancel(req.Context())
 	req = req.WithContext(ctx)
 
-	// Start handling SSE connection in a goroutine
 	go server.handleSSEConnection(w, req)
 
-	// Give it a moment to initialize
 	time.Sleep(100 * time.Millisecond)
 
-	// Check response headers
 	headers := w.Header()
 	if headers.Get("Content-Type") != "text/event-stream" {
 		t.Errorf("Expected Content-Type: text/event-stream, got %s", headers.Get("Content-Type"))
@@ -68,7 +64,6 @@ func TestHandleSSEConnection(t *testing.T) {
 		t.Errorf("Expected Cache-Control: no-cache, got %s", headers.Get("Cache-Control"))
 	}
 
-	// Check if client was registered
 	server.clientsMutex.RLock()
 	clientCount := len(server.clients)
 	server.clientsMutex.RUnlock()
@@ -76,11 +71,9 @@ func TestHandleSSEConnection(t *testing.T) {
 		t.Errorf("Expected 1 client, got %d", clientCount)
 	}
 
-	// Cleanup
 	cancel()
-	time.Sleep(100 * time.Millisecond) // Give time for cleanup
+	time.Sleep(100 * time.Millisecond)
 
-	// Verify client was removed
 	server.clientsMutex.RLock()
 	clientCount = len(server.clients)
 	server.clientsMutex.RUnlock()
@@ -94,13 +87,11 @@ func TestHandleClientMessage(t *testing.T) {
 	server := NewSSEServer(baseServer)
 	clientID := "test-client"
 
-	// Create a message channel for the test client
 	messageChan := make(chan []byte, 10)
 	server.clientsMutex.Lock()
 	server.clients[clientID] = messageChan
 	server.clientsMutex.Unlock()
 
-	// Test valid request
 	requestBody := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -117,7 +108,6 @@ func TestHandleClientMessage(t *testing.T) {
 		t.Errorf("Expected status OK, got %d", w.Code)
 	}
 
-	// Test missing clientID
 	req = httptest.NewRequest("POST", "/message", bytes.NewBuffer(jsonBody))
 	w = httptest.NewRecorder()
 
@@ -127,7 +117,6 @@ func TestHandleClientMessage(t *testing.T) {
 		t.Errorf("Expected status BadRequest for missing clientID, got %d", w.Code)
 	}
 
-	// Test invalid method
 	req = httptest.NewRequest("GET", "/message?clientID="+clientID, nil)
 	w = httptest.NewRecorder()
 
@@ -142,7 +131,6 @@ func TestBroadcastNotification(t *testing.T) {
 	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
 	server := NewSSEServer(baseServer)
 
-	// Create multiple test clients
 	client1Chan := make(chan []byte, 10)
 	client2Chan := make(chan []byte, 10)
 
@@ -151,13 +139,11 @@ func TestBroadcastNotification(t *testing.T) {
 	server.clients["client2"] = client2Chan
 	server.clientsMutex.Unlock()
 
-	// Broadcast a test notification
 	testMethod := "test/notification"
 	testParams := map[string]string{"message": "test"}
 
 	server.broadcastNotification(testMethod, testParams)
 
-	// Helper function to verify notification
 	verifyNotification := func(ch chan []byte) error {
 		select {
 		case msg := <-ch:
@@ -174,7 +160,6 @@ func TestBroadcastNotification(t *testing.T) {
 		}
 	}
 
-	// Verify both clients received the notification
 	if err := verifyNotification(client1Chan); err != nil {
 		t.Errorf("Client 1 notification error: %v", err)
 	}
@@ -205,16 +190,13 @@ func TestSendMessageToClient(t *testing.T) {
 		t.Error("Timeout waiting for message")
 	}
 
-	// Test sending to non-existent client
 	server.sendMessageToClient("non-existent", testMessage)
-	// Should not panic and just log the error
 }
 
 func TestCORSHandling(t *testing.T) {
 	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
 	server := NewSSEServer(baseServer)
 
-	// Test OPTIONS request
 	req := httptest.NewRequest("OPTIONS", "/events", nil)
 	w := httptest.NewRecorder()
 
@@ -239,26 +221,22 @@ func TestCORSHandling(t *testing.T) {
 func TestServerShutdown(t *testing.T) {
 	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
 	server := NewSSEServer(baseServer)
-	server.SetAddress(":0") // Use random available port
+	server.SetAddress(":0")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errChan := make(chan error)
 
-	// Start server in goroutine
 	go func() {
 		errChan <- server.Run(ctx)
 	}()
 
-	// Give server time to start
 	time.Sleep(100 * time.Millisecond)
 
-	// Trigger shutdown
 	cancel()
 
-	// Wait for shutdown with timeout
 	select {
 	case err := <-errChan:
-		if err != context.Canceled {
+		if !errors.Is(err, context.Canceled) {
 			t.Errorf("Expected context.Canceled error, got %v", err)
 		}
 	case <-time.After(6 * time.Second): // Longer than shutdown timeout
@@ -376,14 +354,12 @@ func TestHandlePromptGetSSE(t *testing.T) {
 			}
 			pm, _ := NewPromptManager([]Prompt{codeReviewPrompt})
 
-			// Create SSE server
 			baseServer, _ := NewBaseServer(
 				UseLogger(log.New(io.Discard, "", 0)),
 				UsePrompts(pm),
 			)
 			server := NewSSEServer(baseServer)
 
-			// Create test client
 			clientID := "test-client"
 			messageChan := make(chan []byte, 10)
 			server.clientsMutex.Lock()
@@ -391,33 +367,28 @@ func TestHandlePromptGetSSE(t *testing.T) {
 			server.clientsMutex.Unlock()
 
 			if tt.initFirst {
-				// Initialize the server
 				initRequest := `{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
 				req := httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBufferString(initRequest))
 				w := httptest.NewRecorder()
 				server.handleClientMessage(w, req)
 				require.Equal(t, http.StatusOK, w.Code)
 
-				// Send initialized notification
 				initNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
 				req = httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBufferString(initNotification))
 				w = httptest.NewRecorder()
 				server.handleClientMessage(w, req)
 				require.Equal(t, http.StatusOK, w.Code)
 
-				// Clear any initialization responses
 				for len(messageChan) > 0 {
 					<-messageChan
 				}
 			}
 
-			// Send the test request
 			req := httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBufferString(tt.input))
 			w := httptest.NewRecorder()
 			server.handleClientMessage(w, req)
 			require.Equal(t, http.StatusOK, w.Code)
 
-			// Wait for and verify response
 			select {
 			case responseBytes := <-messageChan:
 				var response Response
@@ -441,7 +412,6 @@ func TestHandlePromptGetSSE(t *testing.T) {
 				t.Fatal("Timeout waiting for response")
 			}
 
-			// Cleanup
 			server.clientsMutex.Lock()
 			delete(server.clients, clientID)
 			server.clientsMutex.Unlock()
