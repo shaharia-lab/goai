@@ -140,6 +140,10 @@ func NewBaseServer(opts ...ServerConfigOption) (*BaseServer, error) {
 
 func (s *BaseServer) AddTools(tools ...Tool) error {
 	for _, tool := range tools {
+		if _, exists := s.tools[tool.Name]; exists {
+			return fmt.Errorf("duplicate tool: %s", tool.Name)
+		}
+
 		err := validateToolV2(tool)
 		if err != nil {
 			return fmt.Errorf("invalid tool: %v", err)
