@@ -70,7 +70,10 @@ func (wt *WeatherTool) Handler(params mcp.CallToolParams) (mcp.CallToolResult, e
 }
 
 func main() {
-	weatherTool := NewWeatherTool("get_weather", "Get the current weather for a given location.", json.RawMessage(`{
+	weatherTool := mcp.Tool{
+		Name:        "get_weather",
+		Description: "Get the current weather for a given location.",
+		InputSchema: json.RawMessage(`{
 					"type": "object",
 					"properties": {
 						"location": {
@@ -79,7 +82,26 @@ func main() {
 						}
 					},
 					"required": ["location"]
-				}`))
+				}`),
+		Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+			var input struct {
+				Location string `json:"location"`
+			}
+			if err := json.Unmarshal(params.Arguments, &input); err != nil {
+				return mcp.CallToolResult{}, err
+			}
+
+			// Return result
+			return mcp.CallToolResult{
+				Content: []mcp.ToolResultContent{
+					{
+						Type: "text",
+						Text: fmt.Sprintf("Weather in %s: Sunny, 72°F", input.Location),
+					},
+				},
+			}, nil
+		},
+	}
 
 	resources := []mcp.Resource{
 		{
@@ -113,27 +135,31 @@ func main() {
 	}
 
 	resourceManager, _ := mcp.NewResourceManager(resources)
-	toolManager, _ := mcp.NewToolManager([]mcp.ToolHandler{weatherTool})
 	promptManager, _ := mcp.NewPromptManager([]mcp.Prompt{prompt})
 
 	baseServer, err := mcp.NewBaseServer(
 		mcp.UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-		mcp.UseTools(toolManager),
 		mcp.UseResources(resourceManager),
 		mcp.UsePrompts(promptManager),
 	)
 	if err != nil {
 		panic(err)
 	}
+	_ = baseServer.AddTools(weatherTool)
 
-	server := mcp.NewSSEServer(baseServer)
-	server.SetAddress(":8080")
+	err = baseServer.AddTools(weatherTool)
+	if err != nil {
+		panic(err)
+	}
 
-	/*server := mcp.NewStdIOServer(
+	/*server := mcp.NewSSEServer(baseServer)
+	server.SetAddress(":8080")*/
+
+	server := mcp.NewStdIOServer(
 		baseServer,
 		os.Stdin,
 		os.Stdout,
-	)*/
+	)
 	ctx := context.Background()
 	if err := server.Run(ctx); err != nil {
 		panic(err)

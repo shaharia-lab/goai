@@ -1,8 +1,13 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/xeipuuv/gojsonschema"
 	"log"
+	"reflect"
+	"sort"
 	"strings"
 )
 
@@ -23,7 +28,6 @@ type ServerConfig struct {
 	initialResources []Resource
 	initialTools     []Tool
 	initialPrompts   []Prompt
-	toolManager      *ToolManager
 	promptManager    *PromptManager
 	resourceManager  *ResourceManager
 }
@@ -60,13 +64,6 @@ func UseResources(resourceManager *ResourceManager) ServerConfigOption {
 	}
 }
 
-// UseTools sets initial tools
-func UseTools(toolManager *ToolManager) ServerConfigOption {
-	return func(c *ServerConfig) {
-		c.toolManager = toolManager
-	}
-}
-
 // UsePrompts sets initial prompts
 func UsePrompts(promptManager *PromptManager) ServerConfigOption {
 	return func(c *ServerConfig) {
@@ -86,7 +83,7 @@ type BaseServer struct {
 	capabilities    map[string]any
 	resourceManager *ResourceManager
 	minLogLevel     LogLevel
-	toolManager     *ToolManager
+	tools           map[string]Tool
 	promptManager   *PromptManager
 
 	supportsPromptListChanged bool
@@ -122,15 +119,15 @@ func NewBaseServer(opts ...ServerConfigOption) (*BaseServer, error) {
 		capabilities:              cfg.capabilities,
 		resourceManager:           cfg.resourceManager,
 		minLogLevel:               cfg.minLogLevel,
-		toolManager:               cfg.toolManager,
 		promptManager:             cfg.promptManager,
 		supportsPromptListChanged: false,
 		supportsToolListChanged:   false,
 		sendNoti:                  func(clientID string, method string, params interface{}) {},
+		tools:                     make(map[string]Tool),
 	}
 
 	// Initialize notifications if needed
-	if tools := cfg.toolManager.ListTools("", 2); tools.Tools != nil && len(tools.Tools) > 0 {
+	if len(s.tools) > 0 {
 		s.SendToolListChangedNotification()
 	}
 
@@ -141,8 +138,20 @@ func NewBaseServer(opts ...ServerConfigOption) (*BaseServer, error) {
 	return s, nil
 }
 
+func (s *BaseServer) AddTools(tools ...Tool) error {
+	for _, tool := range tools {
+		err := validateToolV2(tool)
+		if err != nil {
+			return fmt.Errorf("invalid tool: %v", err)
+		}
+
+		s.tools[tool.Name] = tool
+	}
+
+	return nil
+}
+
 func defaultConfig() *ServerConfig {
-	tm, _ := NewToolManager([]ToolHandler{})
 	pm, _ := NewPromptManager([]Prompt{})
 	rm, _ := NewResourceManager([]Resource{})
 
@@ -165,7 +174,6 @@ func defaultConfig() *ServerConfig {
 				"listChanged": true,
 			},
 		},
-		toolManager:     tm,
 		promptManager:   pm,
 		resourceManager: rm,
 	}
@@ -309,8 +317,7 @@ func (s *BaseServer) handleToolsList(clientID string, request *Request) {
 		return
 	}
 
-	s.logger.Printf("Total tools: %+v", s.toolManager.ListTools(params.Cursor, 0))
-	s.sendResp(clientID, request.ID, s.toolManager.ListTools(params.Cursor, 0), nil)
+	s.sendResp(clientID, request.ID, s.ListTools(params.Cursor, 0), nil)
 }
 
 func (s *BaseServer) handleToolsCall(clientID string, request *Request) {
@@ -320,7 +327,7 @@ func (s *BaseServer) handleToolsCall(clientID string, request *Request) {
 		return
 	}
 
-	result, err := s.toolManager.CallTool(params)
+	result, err := s.CallTool(params)
 	if err != nil {
 		s.sendErr(clientID, request.ID, -32602, err.Error(), nil)
 		return
@@ -424,4 +431,131 @@ func (s *BaseServer) handleNotification(clientID string, notification *Notificat
 	default:
 		s.logger.Printf("Unhandled notification from client %s: %s", clientID, notification.Method) // Log but don't send error.
 	}
+}
+
+func (s *BaseServer) ListTools(cursor string, limit int) ListToolsResult {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	// Create a map for easier tool lookup
+	toolMap := make(map[string]Tool)
+	var names []string
+	for _, t := range s.tools {
+		names = append(names, t.Name)
+		toolMap[t.Name] = Tool{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+		}
+	}
+	sort.Strings(names)
+
+	startIdx := 0
+	if cursor != "" {
+		// Find the cursor position
+		for i, name := range names {
+			if name == cursor {
+				startIdx = i + 1
+				break
+			}
+		}
+	}
+
+	endIdx := startIdx + limit
+	if endIdx > len(names) {
+		endIdx = len(names)
+	}
+
+	// Get the page of tools
+	pageTools := make([]Tool, 0)
+	for i := startIdx; i < endIdx; i++ {
+		if tool, exists := toolMap[names[i]]; exists {
+			pageTools = append(pageTools, tool)
+		}
+	}
+
+	var nextCursor string
+	if endIdx < len(names) {
+		nextCursor = names[endIdx] // Use the next item's name as cursor
+	}
+
+	return ListToolsResult{
+		Tools:      pageTools,
+		NextCursor: nextCursor,
+	}
+}
+
+func (s *BaseServer) CallTool(params CallToolParams) (CallToolResult, error) {
+	if _, exists := s.tools[params.Name]; !exists {
+		return CallToolResult{}, fmt.Errorf("tool metadata not found: %s", params.Name)
+	}
+
+	if s.tools[params.Name].InputSchema != nil && len(params.Arguments) > 0 {
+		schemaLoader := gojsonschema.NewStringLoader(string(s.tools[params.Name].InputSchema))
+
+		argsJSON, err := json.Marshal(params.Arguments)
+		if err != nil {
+			return CallToolResult{}, fmt.Errorf("failed to marshal arguments: %v", err)
+		}
+
+		documentLoader := gojsonschema.NewStringLoader(string(argsJSON))
+
+		result, err := gojsonschema.Validate(schemaLoader, documentLoader)
+		if err != nil {
+			return CallToolResult{}, fmt.Errorf("validation error: %v", err)
+		}
+
+		if !result.Valid() {
+			var errorMessages []string
+			for _, desc := range result.Errors() {
+				errorMessages = append(errorMessages, desc.String())
+			}
+
+			return CallToolResult{
+				IsError: true,
+				Content: []ToolResultContent{{
+					Type: "text",
+					Text: fmt.Sprintf("Schema validation failed: %s", strings.Join(errorMessages, "; ")),
+				}},
+			}, nil
+		}
+	}
+
+	result, err := s.tools[params.Name].Handler(context.Background(), params)
+	if err != nil {
+		return CallToolResult{
+			IsError: true,
+			Content: []ToolResultContent{{
+				Type: "text",
+				Text: err.Error(),
+			}},
+		}, nil
+	}
+
+	return result, nil
+}
+
+func validateToolV2(tool Tool) error {
+	if tool.Name == "" {
+		return fmt.Errorf("tool name cannot be empty")
+	}
+
+	if tool.Description == "" {
+		return fmt.Errorf("tool description cannot be empty")
+	}
+
+	if tool.InputSchema != nil {
+		loader := gojsonschema.NewStringLoader(string(tool.InputSchema))
+		_, err := gojsonschema.NewSchema(loader)
+		if err != nil {
+			return fmt.Errorf("invalid input schema: %v", err)
+		}
+	}
+
+	if reflect.ValueOf(tool.Handler).IsNil() {
+		return fmt.Errorf("tool handler cannot be nil")
+	}
+
+	return nil
 }

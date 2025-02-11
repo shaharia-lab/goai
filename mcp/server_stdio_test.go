@@ -475,7 +475,7 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 	tests := []struct {
 		name           string
 		input          string
-		tools          []ToolHandler
+		tools          []Tool
 		expectedOutput string
 	}{
 		{
@@ -484,8 +484,11 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 				"method": "tools/list",
 				"params": {"cursor": "optional-cursor-value"}
 			}`,
-			tools: []ToolHandler{
-				NewWeatherTool("get_weather", "Get the current weather for a given location.", json.RawMessage(`{
+			tools: []Tool{
+				{
+					Name:        "get_weather",
+					Description: "Get the current weather for a given location.",
+					InputSchema: json.RawMessage(`{
 					"type": "object",
 					"properties": {
 						"location": {
@@ -494,7 +497,11 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 						}
 					},
 					"required": ["location"]
-				}`)),
+				}`),
+					Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
+						return CallToolResult{}, nil
+					},
+				},
 			},
 			expectedOutput: `{"jsonrpc":"2.0","id":null,"result":{"tools":[{"name":"get_weather","description":"Get the current weather for a given location.","inputSchema":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"}},"required":["location"]}}]}}`,
 		},
@@ -503,15 +510,12 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
-
-			tm, err := NewToolManager(tt.tools)
-			require.NoError(t, err, "Failed to create ToolManager")
-			require.NotNil(t, tm, "ToolManager should not be nil")
-
 			baseServer, _ := NewBaseServer(
 				UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-				UseTools(tm),
 			)
+			err := baseServer.AddTools(tt.tools...)
+			require.NoError(t, err, "Failed to add tools to server")
+
 			server := NewStdIOServer(
 				baseServer,
 				strings.NewReader(tt.input+"\n"),

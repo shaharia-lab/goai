@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 )
 
@@ -160,9 +161,10 @@ type ResourceContent struct {
 
 // Tool represents a callable tool in the MCP system.
 type Tool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema"`
+	Name        string                                                                   `json:"name"`
+	Description string                                                                   `json:"description"`
+	InputSchema json.RawMessage                                                          `json:"inputSchema"`
+	Handler     func(ctx context.Context, params CallToolParams) (CallToolResult, error) `json:"-"`
 }
 
 // ToolResultContent represents the content returned by a tool.
