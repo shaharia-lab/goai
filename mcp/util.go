@@ -121,3 +121,28 @@ func validatePrompt(prompt Prompt) error {
 
 	return nil
 }
+
+// validateResource checks if a resource is valid
+func validateResource(resource Resource) error {
+	if resource.URI == "" {
+		return fmt.Errorf("resource URI cannot be empty")
+	}
+
+	// Add additional validation rules as needed
+	if resource.MimeType == "" {
+		return fmt.Errorf("resource MIME type cannot be empty")
+	}
+
+	return nil
+}
+
+// Helper function to validate URI schemes
+func isValidURIScheme(uri string) bool {
+	validSchemes := []string{"file://", "https://", "git://"}
+	for _, scheme := range validSchemes {
+		if strings.HasPrefix(uri, scheme) {
+			return true
+		}
+	}
+	return false
+}

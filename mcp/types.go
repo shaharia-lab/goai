@@ -97,6 +97,22 @@ type GetPromptParams struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
+// ListResourcesResult represents the result of listing resources.
+type ListResourcesResult struct {
+	Resources  []Resource `json:"resources"`
+	NextCursor string     `json:"nextCursor,omitempty"`
+}
+
+// ReadResourceParams represents parameters for reading a resource.
+type ReadResourceParams struct {
+	URI string `json:"uri"`
+}
+
+// ReadResourceResult represents the result of reading a resource.
+type ReadResourceResult struct {
+	Contents []ResourceContent `json:"contents"`
+}
+
 // LogLevel represents the severity level of a log message.
 // The levels follow standard syslog severity levels.
 type LogLevel string

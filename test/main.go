@@ -134,11 +134,8 @@ func main() {
 		},
 	}
 
-	resourceManager, _ := mcp.NewResourceManager(resources)
-
 	baseServer, err := mcp.NewBaseServer(
 		mcp.UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
-		mcp.UseResources(resourceManager),
 	)
 	if err != nil {
 		panic(err)
@@ -150,6 +147,11 @@ func main() {
 	}
 
 	err = baseServer.AddPrompts(prompt)
+	if err != nil {
+		panic(err)
+	}
+
+	err = baseServer.AddResources(resources...)
 	if err != nil {
 		panic(err)
 	}

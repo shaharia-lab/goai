@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/xeipuuv/gojsonschema"
@@ -28,7 +29,7 @@ type ServerConfig struct {
 	initialTools     []Tool
 	initialPrompts   []Prompt
 	prompts          *Prompt
-	resourceManager  *ResourceManager
+	resources        []Resource
 }
 
 // ServerConfigOption is a function that modifies ServerConfig
@@ -56,13 +57,6 @@ func UseLogLevel(level LogLevel) ServerConfigOption {
 	}
 }
 
-// UseResources sets initial resources
-func UseResources(resourceManager *ResourceManager) ServerConfigOption {
-	return func(c *ServerConfig) {
-		c.resourceManager = resourceManager
-	}
-}
-
 // BaseServer contains the common fields and methods for all MCP server implementations.
 type BaseServer struct {
 	protocolVersion    string
@@ -72,11 +66,11 @@ type BaseServer struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	}
-	capabilities    map[string]any
-	resourceManager *ResourceManager
-	minLogLevel     LogLevel
-	tools           map[string]Tool
-	prompts         map[string]Prompt
+	capabilities map[string]any
+	minLogLevel  LogLevel
+	tools        map[string]Tool
+	prompts      map[string]Prompt
+	resources    map[string]Resource
 
 	supportsPromptListChanged bool
 	supportsToolListChanged   bool
@@ -109,13 +103,13 @@ func NewBaseServer(opts ...ServerConfigOption) (*BaseServer, error) {
 			Version: cfg.serverVersion,
 		},
 		capabilities:              cfg.capabilities,
-		resourceManager:           cfg.resourceManager,
 		minLogLevel:               cfg.minLogLevel,
 		supportsPromptListChanged: false,
 		supportsToolListChanged:   false,
 		sendNoti:                  func(clientID string, method string, params interface{}) {},
 		tools:                     make(map[string]Tool),
 		prompts:                   make(map[string]Prompt),
+		resources:                 make(map[string]Resource),
 	}
 
 	// Initialize notifications if needed
@@ -164,9 +158,24 @@ func (s *BaseServer) AddPrompts(prompts ...Prompt) error {
 	return nil
 }
 
-func defaultConfig() *ServerConfig {
-	rm, _ := NewResourceManager([]Resource{})
+func (s *BaseServer) AddResources(resources ...Resource) error {
+	for _, resource := range resources {
+		if _, exists := s.resources[resource.URI]; exists {
+			return fmt.Errorf("duplicate resource: %s", resource.URI)
+		}
 
+		err := validateResource(resource)
+		if err != nil {
+			return fmt.Errorf("invalid resource: %v", err)
+		}
+
+		s.resources[resource.URI] = resource
+	}
+
+	return nil
+}
+
+func defaultConfig() *ServerConfig {
 	return &ServerConfig{
 		logger:          log.Default(),
 		protocolVersion: ProtocolVersion,
@@ -186,7 +195,6 @@ func defaultConfig() *ServerConfig {
 				"listChanged": true,
 			},
 		},
-		resourceManager: rm,
 	}
 }
 
@@ -278,8 +286,63 @@ func (s *BaseServer) handleResourcesList(clientID string, request *Request) {
 		return
 	}
 
-	result := s.resourceManager.ListResources(params.Cursor, 0)
+	result := s.ListResources(params.Cursor, 0)
 	s.sendResp(clientID, request.ID, result, nil)
+}
+
+// ListResources returns a list of all resources, with optional pagination.
+func (s *BaseServer) ListResources(cursor string, limit int) ListResourcesResult {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	result := ListResourcesResult{
+		Resources: []Resource{},
+	}
+
+	if len(s.resources) == 0 {
+		return result
+	}
+
+	var uris []string
+	for uri := range s.resources {
+		uris = append(uris, uri)
+	}
+	sort.Strings(uris)
+
+	startIdx := 0
+	if cursor != "" {
+		cursorFound := false
+		for i, uri := range uris {
+			if uri == cursor {
+				startIdx = i + 1
+				cursorFound = true
+				break
+			}
+		}
+		if !cursorFound {
+			return result
+		}
+	}
+
+	if startIdx >= len(uris) {
+		return result
+	}
+
+	endIdx := startIdx + limit
+	if endIdx > len(uris) {
+		endIdx = len(uris)
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		result.Resources = append(result.Resources, s.resources[uris[i]])
+	}
+
+	if endIdx < len(uris) {
+		result.NextCursor = uris[endIdx-1]
+	}
+
+	return result
 }
 
 func (s *BaseServer) handleResourcesRead(clientID string, request *Request) {
@@ -289,14 +352,13 @@ func (s *BaseServer) handleResourcesRead(clientID string, request *Request) {
 		return
 	}
 
-	_, err := s.resourceManager.GetResource(params.URI)
-	if err != nil {
+	if _, exists := s.resources[params.URI]; !exists {
 		s.sendErr(clientID, request.ID, -32002, "Resource not found",
 			map[string]string{"uri": params.URI})
 		return
 	}
 
-	result, err := s.resourceManager.ReadResource(params)
+	result, err := s.ReadResource(params)
 	if err != nil {
 		s.sendErr(clientID, request.ID, -32603, "Failed to read resource",
 			map[string]string{"uri": params.URI})
@@ -304,6 +366,33 @@ func (s *BaseServer) handleResourcesRead(clientID string, request *Request) {
 	}
 
 	s.sendResp(clientID, request.ID, result, nil)
+}
+
+// ReadResource implementation with proper error handling and URI validation
+func (s *BaseServer) ReadResource(params ReadResourceParams) (ReadResourceResult, error) {
+	if !isValidURIScheme(params.URI) {
+		return ReadResourceResult{}, fmt.Errorf("invalid URI scheme: %s", params.URI)
+	}
+
+	resource, exists := s.resources[params.URI]
+	if !exists {
+		return ReadResourceResult{}, fmt.Errorf("resource not found: %s", params.URI)
+	}
+
+	content := ResourceContent{
+		URI:      resource.URI,
+		MimeType: resource.MimeType,
+	}
+
+	if strings.HasPrefix(resource.MimeType, "text/") {
+		content.Text = resource.TextContent
+	} else {
+		content.Blob = base64.StdEncoding.EncodeToString([]byte(resource.TextContent))
+	}
+
+	return ReadResourceResult{
+		Contents: []ResourceContent{content},
+	}, nil
 }
 
 func (s *BaseServer) handleLoggingSetLevel(clientID string, request *Request) {
