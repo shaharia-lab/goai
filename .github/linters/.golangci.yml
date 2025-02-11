@@ -6,17 +6,10 @@ linters:
   disable-all: true
   enable:
     - gofmt
-    - revive
     - goimports
   fast: false
 linters-settings:
   gofmt:
     simplify: false
-  revive:
-    rules:
-      - name: package-comments
-        severity: warning
-        arguments:
-          - allowGenerated: true
 issues:
   exclude-use-default: false
