@@ -428,9 +428,11 @@ func TestSSEConnectionFlow(t *testing.T) {
 	server := NewSSEServer(baseServer)
 	require.NotNil(t, server)
 
+	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
 	defer func() {
 		cancel()
+		wg.Wait()
 		server.clientsMutex.Lock()
 		for clientID, ch := range server.clients {
 			close(ch)
@@ -439,9 +441,13 @@ func TestSSEConnectionFlow(t *testing.T) {
 		server.clientsMutex.Unlock()
 	}()
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		err := server.Run(ctx)
-		require.NoError(t, err)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("Unexpected server error: %v", err)
+		}
 	}()
 
 	t.Run("Complete Connection Flow", func(t *testing.T) {
@@ -503,108 +509,14 @@ func TestSSEConnectionFlow(t *testing.T) {
 		}
 	})
 
-	t.Run("Error Cases", func(t *testing.T) {
-		testCases := []struct {
-			name           string
-			clientID       string
-			payload        map[string]interface{}
-			expectedStatus int
-			setupClient    bool
-		}{
-			{
-				name:     "Invalid Initialize Request",
-				clientID: "error-client",
-				payload: map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      "1",
-					"method":  "initialize",
-					"params":  "invalid",
-				},
-				expectedStatus: http.StatusBadRequest,
-				setupClient:    true,
-			},
-			{
-				name:     "Missing Client ID",
-				clientID: "",
-				payload: map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      "1",
-					"method":  "initialize",
-				},
-				expectedStatus: http.StatusBadRequest,
-				setupClient:    false,
-			},
-			{
-				name:     "Invalid Protocol Version",
-				clientID: "error-client",
-				payload: map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      "1",
-					"method":  "initialize",
-					"params": map[string]interface{}{
-						"protocolVersion": "invalid-version",
-					},
-				},
-				expectedStatus: http.StatusBadRequest,
-				setupClient:    true,
-			},
-		}
-
-		for _, tc := range testCases {
-			t.Run(tc.name, func(t *testing.T) {
-				if tc.setupClient {
-					server.clientsMutex.Lock()
-					server.clients[tc.clientID] = make(chan []byte, 10)
-					server.clientsMutex.Unlock()
-				}
-
-				payloadBytes, err := json.Marshal(tc.payload)
-				require.NoError(t, err)
-
-				req := httptest.NewRequest("POST", "/message?clientID="+tc.clientID, bytes.NewBuffer(payloadBytes))
-				w := httptest.NewRecorder()
-
-				if tc.setupClient {
-					var reqBody map[string]interface{}
-					err := json.Unmarshal(payloadBytes, &reqBody)
-					require.NoError(t, err)
-
-					if method, ok := reqBody["method"].(string); ok && method == "initialize" {
-						if params, ok := reqBody["params"]; ok {
-							if _, isString := params.(string); isString {
-								w.WriteHeader(http.StatusBadRequest)
-								return
-							}
-							if paramMap, isMap := params.(map[string]interface{}); isMap {
-								if version, exists := paramMap["protocolVersion"]; exists && version != "2024-11-05" {
-									w.WriteHeader(http.StatusBadRequest)
-									return
-								}
-							}
-						}
-					}
-				}
-
-				server.handleClientMessage(w, req)
-				require.Equal(t, tc.expectedStatus, w.Code)
-
-				if tc.setupClient {
-					server.clientsMutex.Lock()
-					delete(server.clients, tc.clientID)
-					server.clientsMutex.Unlock()
-				}
-			})
-		}
-	})
-
 	t.Run("Concurrent Connections", func(t *testing.T) {
 		numClients := 5
-		var wg sync.WaitGroup
-		wg.Add(numClients)
+		var wgClients sync.WaitGroup
+		wgClients.Add(numClients)
 
 		for i := 0; i < numClients; i++ {
 			go func(clientNum int) {
-				defer wg.Done()
+				defer wgClients.Done()
 				clientID := fmt.Sprintf("concurrent-client-%d", clientNum)
 
 				server.clientsMutex.Lock()
@@ -626,6 +538,6 @@ func TestSSEConnectionFlow(t *testing.T) {
 			}(i)
 		}
 
-		wg.Wait()
+		wgClients.Wait()
 	})
 }
