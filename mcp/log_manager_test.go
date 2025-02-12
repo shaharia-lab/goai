@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/stretchr/testify/assert"
 	"io"
 	"os"
 	"strings"
@@ -114,7 +115,8 @@ func TestLogManager_IsLevelEnabled(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lm := NewLogManager(nil)
-			lm.SetLevel(tt.currentLevel)
+			err := lm.SetLevel(tt.currentLevel)
+			assert.NoError(t, err)
 
 			if enabled := lm.IsLevelEnabled(tt.checkLevel); enabled != tt.expectEnabled {
 				t.Errorf("IsLevelEnabled() = %v, want %v", enabled, tt.expectEnabled)
@@ -172,9 +174,10 @@ func TestLogManager_Log(t *testing.T) {
 func TestLogManager_LogLevelFiltering(t *testing.T) {
 	buf := &bytes.Buffer{}
 	lm := NewLogManager(buf)
-	lm.SetLevel(LogLevelError)
+	err := lm.SetLevel(LogLevelError)
+	assert.NoError(t, err)
 
-	err := lm.Log(LogMessageParams{
+	err = lm.Log(LogMessageParams{
 		Level: LogLevelInfo,
 		Data:  "should not be logged",
 	})

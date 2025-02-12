@@ -299,7 +299,7 @@ func TestErrorHandling(t *testing.T) {
 
 			select {
 			case err := <-errChan:
-				if err != nil && err != context.Canceled {
+				if err != nil && !errors.Is(err, context.Canceled) {
 					t.Errorf("Unexpected error: %v", err)
 				}
 			case <-time.After(2 * time.Second):
@@ -541,53 +541,6 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 			}
 		})
 	}
-}
-
-// An example tool implementation
-type WeatherTool struct {
-	name        string
-	description string
-	inputSchema json.RawMessage
-}
-
-func NewWeatherTool(name, description string, inputSchema json.RawMessage) *WeatherTool {
-	return &WeatherTool{
-		name:        name,
-		description: description,
-		inputSchema: inputSchema,
-	}
-}
-
-func (wt *WeatherTool) GetName() string {
-	return wt.name
-}
-
-func (wt *WeatherTool) GetDescription() string {
-	return wt.description
-}
-
-func (wt *WeatherTool) GetInputSchema() json.RawMessage {
-	return wt.inputSchema
-}
-
-func (wt *WeatherTool) Handler(params CallToolParams) (CallToolResult, error) {
-	// Parse input
-	var input struct {
-		Location string `json:"location"`
-	}
-	if err := json.Unmarshal(params.Arguments, &input); err != nil {
-		return CallToolResult{}, err
-	}
-
-	// Return result
-	return CallToolResult{
-		Content: []ToolResultContent{
-			{
-				Type: "text",
-				Text: fmt.Sprintf("Weather in %s: Sunny, 72°F", input.Location),
-			},
-		},
-	}, nil
 }
 
 func TestHandlePromptGet(t *testing.T) {
