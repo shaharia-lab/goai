@@ -73,10 +73,10 @@ binary content. Resources can be listed and read through the protocol.
 
 ```go
 baseServer, err := mcp.NewBaseServer(
-mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
+    mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
 )
 if err != nil {
-panic(err)
+    panic(err)
 }
 
 server := mcp.NewSSEServer(baseServer)
@@ -89,10 +89,10 @@ server.Run(ctx)
 
 ```go
 baseServer, err := mcp.NewBaseServer(
-mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
+    mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
 )
 if err != nil {
-panic(err)
+    panic(err)
 }
 
 server := mcp.NewStdIOServer(baseServer, os.Stdin, os.Stdout)
