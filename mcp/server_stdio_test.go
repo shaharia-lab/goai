@@ -754,3 +754,51 @@ func TestHandlePromptGet(t *testing.T) {
 		})
 	}
 }
+
+func TestSuccessfulConnectionEstablishedFlow(t *testing.T) {
+	// Setup STDIO server with input/output buffers
+	in := &bytes.Buffer{}
+	out := &bytes.Buffer{}
+	baseServer, err := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP Server] ", log.LstdFlags|log.Lmsgprefix)))
+	require.NoError(t, err)
+
+	server := NewStdIOServer(baseServer, in, out)
+	require.NotNil(t, server)
+
+	// Start server in background
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		err := server.Run(ctx)
+		require.NoError(t, err)
+	}()
+
+	// Send initialize request with supported protocol version
+	initializeRequest := `{"jsonrpc":"2.0","id":"1","method":"initialize","params":{"protocolVersion":"2024-11-05","processId":12345,"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
+	_, err = fmt.Fprintln(in, initializeRequest)
+	require.NoError(t, err)
+
+	// Wait and verify initialize response
+	initResponse := waitForResponse(t, out, 1*time.Second)
+	require.NotNil(t, initResponse)
+	require.Nil(t, initResponse.Error)
+	require.NotNil(t, initResponse.Result)
+
+	// Verify server capabilities in the initialize response
+	serverInfo, ok := initResponse.Result.(map[string]interface{})
+	require.True(t, ok)
+	require.Contains(t, serverInfo, "serverInfo")
+	require.Contains(t, serverInfo, "capabilities")
+
+	// Clear the output buffer
+	out.Reset()
+
+	// Send initialized notification
+	initializedNotification := `{"jsonrpc":"2.0","method":"initialized","params":{}}`
+	_, err = fmt.Fprintln(in, initializedNotification)
+	require.NoError(t, err)
+
+	// Since there is no specific response to the notification, just ensure no error
+	require.NoError(t, err)
+}
