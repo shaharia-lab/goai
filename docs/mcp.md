@@ -7,16 +7,16 @@ You can learn more about [Model Context Procol (MCP)](https://modelcontextprotoc
 
 ## Features
 
-- **Server Types**: SSE (for web applications) and StdIO (for CLI applications)
-- **Tools**: Create custom handlers with JSON schema validation
-- **Prompts**: Template system with argument substitution
-- **Resources**: Support for various MIME types and URIs
-- **Logging**: Configurable logging levels (debug to emergency)
-- **Protocol**: JSON-RPC based communication
-- **Validation**: Input schema validation using gojsonschema
-- **Pagination**: Built-in cursor-based pagination for listing resources/tools
-- **Notifications**: Support for server-to-client notifications
-- **Error Handling**: Standardized error responses and codes
+- Server Types: SSE (for web applications) and StdIO (for CLI applications)
+- Tools: Create custom handlers with JSON schema validation
+- Prompts: Template system with argument substitution
+- Resources: Support for various MIME types and URIs
+- Logging: Configurable logging levels (debug to emergency)
+- Protocol: JSON-RPC based communication
+- Validation: Input schema validation using gojsonschema
+- Pagination: Built-in cursor-based pagination for listing resources/tools
+- Notifications: Support for server-to-client notifications
+- Error Handling: Standardized error responses and codes
 
 ## Installation
 
@@ -27,17 +27,21 @@ go get github.com/shaharia-lab/goai/mcp
 ## Core Components
 
 ### Tools
-Tools are custom functions that can be called through the MCP protocol. Each tool has a name, description, input schema, and a handler function. Tools are validated against their input schema before execution.
+
+Tools are custom functions that can be called through the MCP protocol. Each tool has a name, description, input schema,
+and a handler function. Tools are validated against their input schema before execution.
 
 ### Prompts
-Prompts are templates with argument substitution capabilities. They support dynamic message generation based on provided arguments, useful for creating reusable message templates.
+
+Prompts are templates with argument substitution capabilities. They support dynamic message generation based on provided
+arguments, useful for creating reusable message templates.
 
 ### Resources
-Resources represent content accessible via URIs. They support various MIME types and can be used to serve both text and binary content. Resources can be listed and read through the protocol.
+
+Resources represent content accessible via URIs. They support various MIME types and can be used to serve both text and
+binary content. Resources can be listed and read through the protocol.
 
 ### MCP Server Compatibility Matrix
-
-Okay, here's the feature compatibility matrix in markdown, as requested:
 
 | Feature                          | Status             | Notes                                                                                                |
 |----------------------------------|--------------------|------------------------------------------------------------------------------------------------------|
@@ -61,10 +65,9 @@ Okay, here's the feature compatibility matrix in markdown, as requested:
 
 **Notes:**
 
-*   ✅ Fully Compatible - Feature is fully implemented and conforms to the specification.
-*   🔲 Partial - Feature is partially implemented or has some limitations.
-*   🚫 Not Implemented - Feature is not implemented.
-
+- ✅ Fully Compatible - Feature is fully implemented and conforms to the specification.
+- 🔲 Partial - Feature is partially implemented or has some limitations.
+- 🚫 Not Implemented - Feature is not implemented.
 
 ## Server Setup
 
