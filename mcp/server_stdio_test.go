@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -755,17 +756,40 @@ func TestHandlePromptGet(t *testing.T) {
 	}
 }
 
+type syncBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (n int, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(p)
+}
+
+func (b *syncBuffer) Read(p []byte) (n int, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Read(p)
+}
+
+func (b *syncBuffer) ReadAll() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	data := b.buffer.Bytes()
+	b.buffer.Reset()
+	return data
+}
+
 func TestSuccessfulConnectionEstablishedFlow(t *testing.T) {
-	// Setup STDIO server with input/output buffers
-	in := &bytes.Buffer{}
-	out := &bytes.Buffer{}
 	baseServer, err := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP Server] ", log.LstdFlags|log.Lmsgprefix)))
 	require.NoError(t, err)
 
+	in := &syncBuffer{}
+	out := &syncBuffer{}
 	server := NewStdIOServer(baseServer, in, out)
 	require.NotNil(t, server)
 
-	// Start server in background
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -774,31 +798,54 @@ func TestSuccessfulConnectionEstablishedFlow(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	// Send initialize request with supported protocol version
-	initializeRequest := `{"jsonrpc":"2.0","id":"1","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
-	_, err = fmt.Fprintln(in, initializeRequest)
-	require.NoError(t, err)
+	waitForResponse := func(t *testing.T, output *syncBuffer, timeout time.Duration) *Response {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
 
-	// Wait and verify initialize response
-	initResponse := waitForResponse(t, out, 1*time.Second)
-	require.NotNil(t, initResponse)
-	require.Nil(t, initResponse.Error)
-	require.NotNil(t, initResponse.Result)
+		for {
+			select {
+			case <-timer.C:
+				return nil
+			default:
+				outputBytes := output.ReadAll()
+				if len(outputBytes) > 0 {
+					var response Response
+					if err := json.Unmarshal(outputBytes, &response); err == nil {
+						return &response
+					}
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}
 
-	// Verify server capabilities in the initialize response
-	serverInfo, ok := initResponse.Result.(map[string]interface{})
-	require.True(t, ok)
-	require.Contains(t, serverInfo, "serverInfo")
-	require.Contains(t, serverInfo, "capabilities")
+	t.Run("Initialization Flow", func(t *testing.T) {
+		initializeRequest := `{"jsonrpc":"2.0","id":"1","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
+		_, err := in.Write([]byte(initializeRequest + "\n"))
+		require.NoError(t, err)
 
-	// Clear the output buffer
-	out.Reset()
+		initResponse := waitForResponse(t, out, 1*time.Second)
+		require.NotNil(t, initResponse)
+		require.Nil(t, initResponse.Error)
+		require.NotNil(t, initResponse.Result)
 
-	// Send initialized notification
-	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
-	_, err = fmt.Fprintln(in, initializedNotification)
-	require.NoError(t, err)
+		serverInfo, ok := initResponse.Result.(map[string]interface{})
+		require.True(t, ok)
+		require.Contains(t, serverInfo, "serverInfo")
+		require.Contains(t, serverInfo, "capabilities")
 
-	// Since there is no specific response to the notification, just ensure no error
-	require.NoError(t, err)
+		_, err = in.Write([]byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n"))
+		require.NoError(t, err)
+		time.Sleep(100 * time.Millisecond)
+	})
+
+	t.Run("Notification Handling", func(t *testing.T) {
+		notificationRequest := `{"jsonrpc":"2.0","method":"notifications/test-notification"}`
+		_, err := in.Write([]byte(notificationRequest + "\n"))
+		require.NoError(t, err)
+
+		// Notifications don't return a direct response; ensure no errors occurred
+		time.Sleep(100 * time.Millisecond)
+		require.Equal(t, 0, len(out.ReadAll())) // Ensure no unexpected output
+	})
 }
