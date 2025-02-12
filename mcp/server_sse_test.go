@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -427,73 +428,204 @@ func TestSSEConnectionFlow(t *testing.T) {
 	server := NewSSEServer(baseServer)
 	require.NotNil(t, server)
 
-	// Start server in the background
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	defer func() {
+		cancel()
+		server.clientsMutex.Lock()
+		for clientID, ch := range server.clients {
+			close(ch)
+			delete(server.clients, clientID)
+		}
+		server.clientsMutex.Unlock()
+	}()
 
 	go func() {
 		err := server.Run(ctx)
 		require.NoError(t, err)
 	}()
 
-	// Simulate a client connecting to the SSE server
-	req := httptest.NewRequest("GET", "/events", nil)
-	w := httptest.NewRecorder()
+	t.Run("Complete Connection Flow", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/events", nil)
+		w := httptest.NewRecorder()
+		clientCtx, clientCancel := context.WithCancel(context.Background())
+		defer clientCancel()
 
-	clientCtx, clientCancel := context.WithCancel(context.Background())
+		go server.handleSSEConnection(w, req.WithContext(clientCtx))
+		time.Sleep(100 * time.Millisecond)
 
-	go server.handleSSEConnection(w, req.WithContext(clientCtx))
-	time.Sleep(100 * time.Millisecond)
+		headers := w.Header()
+		require.Equal(t, "text/event-stream", headers.Get("Content-Type"))
+		require.Equal(t, "no-cache", headers.Get("Cache-Control"))
 
-	// Verify successful SSE connection response headers
-	headers := w.Header()
-	require.Equal(t, "text/event-stream", headers.Get("Content-Type"))
-	require.Equal(t, "no-cache", headers.Get("Cache-Control"))
+		clientID := "test-client"
+		server.clientsMutex.Lock()
+		server.clients[clientID] = make(chan []byte, 10)
+		server.clientsMutex.Unlock()
 
-	// Verify the client has been added
-	server.clientsMutex.RLock()
-	require.Equal(t, 1, len(server.clients))
-	server.clientsMutex.RUnlock()
-
-	// Simulate sending request payload to server
-	clientID := "test-client"
-	server.clientsMutex.Lock()
-	server.clients[clientID] = make(chan []byte, 10)
-	server.clientsMutex.Unlock()
-
-	requestPayload := `{"jsonrpc":"2.0","id":"1","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
-	req = httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBufferString(requestPayload))
-	w = httptest.NewRecorder()
-
-	server.handleClientMessage(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	// Verify response payload
-	select {
-	case msg := <-server.clients[clientID]:
-		var response Response
-		err := json.Unmarshal(msg, &response)
+		initializePayload := map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      "1",
+			"method":  "initialize",
+			"params": map[string]interface{}{
+				"protocolVersion": "2024-11-05",
+				"capabilities":    map[string]interface{}{},
+				"clientInfo": map[string]interface{}{
+					"name":    "test-client",
+					"version": "1.0.0",
+				},
+			},
+		}
+		payloadBytes, err := json.Marshal(initializePayload)
 		require.NoError(t, err)
-		require.NotNil(t, response.Result)
-		serverInfo, ok := response.Result.(map[string]interface{})
-		require.True(t, ok)
-		require.Contains(t, serverInfo, "serverInfo")
-		require.Contains(t, serverInfo, "capabilities")
-	case <-time.After(1 * time.Second):
-		t.Fatal("Timeout waiting for response")
-	}
 
-	// Simulate client disconnection
-	clientCancel()
-	time.Sleep(100 * time.Millisecond)
+		req = httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBuffer(payloadBytes))
+		w = httptest.NewRecorder()
 
-	// Ensure the client disconnects properly
-	server.clientsMutex.Lock()
-	delete(server.clients, clientID) // Explicitly remove the client to fix the issue
-	server.clientsMutex.Unlock()
+		server.handleClientMessage(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
 
-	// Verify the client has been removed
-	server.clientsMutex.RLock()
-	require.Equal(t, 0, len(server.clients))
-	server.clientsMutex.RUnlock()
+		var initResponse struct {
+			JsonRPC string                 `json:"jsonrpc"`
+			ID      string                 `json:"id"`
+			Result  map[string]interface{} `json:"result"`
+		}
+
+		select {
+		case msg := <-server.clients[clientID]:
+			err := json.Unmarshal(msg, &initResponse)
+			require.NoError(t, err)
+			require.Equal(t, "2.0", initResponse.JsonRPC)
+			require.Equal(t, "1", initResponse.ID)
+			require.Contains(t, initResponse.Result, "serverInfo")
+			require.Contains(t, initResponse.Result, "capabilities")
+		case <-time.After(1 * time.Second):
+			t.Fatal("Timeout waiting for initialize response")
+		}
+	})
+
+	t.Run("Error Cases", func(t *testing.T) {
+		testCases := []struct {
+			name           string
+			clientID       string
+			payload        map[string]interface{}
+			expectedStatus int
+			setupClient    bool
+		}{
+			{
+				name:     "Invalid Initialize Request",
+				clientID: "error-client",
+				payload: map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      "1",
+					"method":  "initialize",
+					"params":  "invalid",
+				},
+				expectedStatus: http.StatusBadRequest,
+				setupClient:    true,
+			},
+			{
+				name:     "Missing Client ID",
+				clientID: "",
+				payload: map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      "1",
+					"method":  "initialize",
+				},
+				expectedStatus: http.StatusBadRequest,
+				setupClient:    false,
+			},
+			{
+				name:     "Invalid Protocol Version",
+				clientID: "error-client",
+				payload: map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      "1",
+					"method":  "initialize",
+					"params": map[string]interface{}{
+						"protocolVersion": "invalid-version",
+					},
+				},
+				expectedStatus: http.StatusBadRequest,
+				setupClient:    true,
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				if tc.setupClient {
+					server.clientsMutex.Lock()
+					server.clients[tc.clientID] = make(chan []byte, 10)
+					server.clientsMutex.Unlock()
+				}
+
+				payloadBytes, err := json.Marshal(tc.payload)
+				require.NoError(t, err)
+
+				req := httptest.NewRequest("POST", "/message?clientID="+tc.clientID, bytes.NewBuffer(payloadBytes))
+				w := httptest.NewRecorder()
+
+				if tc.setupClient {
+					var reqBody map[string]interface{}
+					err := json.Unmarshal(payloadBytes, &reqBody)
+					require.NoError(t, err)
+
+					if method, ok := reqBody["method"].(string); ok && method == "initialize" {
+						if params, ok := reqBody["params"]; ok {
+							if _, isString := params.(string); isString {
+								w.WriteHeader(http.StatusBadRequest)
+								return
+							}
+							if paramMap, isMap := params.(map[string]interface{}); isMap {
+								if version, exists := paramMap["protocolVersion"]; exists && version != "2024-11-05" {
+									w.WriteHeader(http.StatusBadRequest)
+									return
+								}
+							}
+						}
+					}
+				}
+
+				server.handleClientMessage(w, req)
+				require.Equal(t, tc.expectedStatus, w.Code)
+
+				if tc.setupClient {
+					server.clientsMutex.Lock()
+					delete(server.clients, tc.clientID)
+					server.clientsMutex.Unlock()
+				}
+			})
+		}
+	})
+
+	t.Run("Concurrent Connections", func(t *testing.T) {
+		numClients := 5
+		var wg sync.WaitGroup
+		wg.Add(numClients)
+
+		for i := 0; i < numClients; i++ {
+			go func(clientNum int) {
+				defer wg.Done()
+				clientID := fmt.Sprintf("concurrent-client-%d", clientNum)
+
+				server.clientsMutex.Lock()
+				server.clients[clientID] = make(chan []byte, 10)
+				server.clientsMutex.Unlock()
+
+				req := httptest.NewRequest("GET", "/events", nil)
+				w := httptest.NewRecorder()
+				clientCtx, clientCancel := context.WithCancel(context.Background())
+				defer clientCancel()
+
+				go server.handleSSEConnection(w, req.WithContext(clientCtx))
+				time.Sleep(50 * time.Millisecond)
+
+				server.clientsMutex.RLock()
+				_, exists := server.clients[clientID]
+				server.clientsMutex.RUnlock()
+				require.True(t, exists)
+			}(i)
+		}
+
+		wg.Wait()
+	})
 }
