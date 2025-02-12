@@ -69,15 +69,14 @@ binary content. Resources can be listed and read through the protocol.
 - 🔲 Partial - Feature is partially implemented or has some limitations.
 - 🚫 Not Implemented - Feature is not implemented.
 
-## Server Setup
-
 ### SSE Server
+
 ```go
 baseServer, err := mcp.NewBaseServer(
-    mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
+mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
 )
 if err != nil {
-    panic(err)
+panic(err)
 }
 
 server := mcp.NewSSEServer(baseServer)
@@ -87,12 +86,13 @@ server.Run(ctx)
 ```
 
 ### StdIO Server
+
 ```go
 baseServer, err := mcp.NewBaseServer(
-    mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
+mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
 )
 if err != nil {
-    panic(err)
+panic(err)
 }
 
 server := mcp.NewStdIOServer(baseServer, os.Stdin, os.Stdout)
@@ -100,12 +100,11 @@ ctx := context.Background()
 server.Run(ctx)
 ```
 
-## Adding Components
-
 ### Custom Tool
+
 ```go
 tool := mcp.Tool{
-    Name: "get_weather",
+    Name:        "get_weather",
     Description: "Get weather for location",
     InputSchema: json.RawMessage(`{
         "type": "object",
@@ -131,12 +130,13 @@ baseServer.AddTools(tool)
 ```
 
 ### Prompt
+
 ```go
 prompt := mcp.Prompt{
-    Name: "greet",
+    Name:        "greet",
     Description: "Greeting prompt",
     Arguments: []mcp.PromptArgument{{
-        Name: "name",
+        Name:     "name",
         Required: true,
     }},
     Messages: []mcp.PromptMessage{{
@@ -151,6 +151,7 @@ baseServer.AddPrompts(prompt)
 ```
 
 ### Resource
+
 ```go
 resource := mcp.Resource{
     URI: "file:///example.txt",
@@ -167,56 +168,56 @@ baseServer.AddResources(resource)
 package main
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"log"
-	"os"
-	"github.com/shaharia-lab/goai/mcp"
+    "context"
+    "encoding/json"
+    "fmt"
+    "log"
+    "os"
+    "github.com/shaharia-lab/goai/mcp"
 )
 
 func main() {
-	// Create base server
-	baseServer, err := mcp.NewBaseServer(
-		mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
-	)
-	if err != nil {
-		panic(err)
-	}
+    // Create base server
+    baseServer, err := mcp.NewBaseServer(
+        mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
+    )
+    if err != nil {
+        panic(err)
+    }
 
-	// Add tool
-	tool := mcp.Tool{
-		Name: "greet",
-		Description: "Greet user",
-		InputSchema: json.RawMessage(`{
+    // Add tool
+    tool := mcp.Tool{
+        Name: "greet",
+        Description: "Greet user",
+        InputSchema: json.RawMessage(`{
             "type": "object",
             "properties": {
                 "name": {"type": "string"}
             },
             "required": ["name"]
         }`),
-		Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
-			var input struct {
-				Name string `json:"name"`
-			}
-			json.Unmarshal(params.Arguments, &input)
-			return mcp.CallToolResult{
-				Content: []mcp.ToolResultContent{{
-					Type: "text",
-					Text: fmt.Sprintf("Hello, %s!", input.Name),
-				}},
-			}, nil
-		},
-	}
-	baseServer.AddTools(tool)
+        Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+            var input struct {
+                Name string `json:"name"`
+            }
+            json.Unmarshal(params.Arguments, &input)
+            return mcp.CallToolResult{
+                Content: []mcp.ToolResultContent{{
+                    Type: "text",
+                    Text: fmt.Sprintf("Hello, %s!", input.Name),
+                }},
+            }, nil
+        },
+    }
+    baseServer.AddTools(tool)
 
-	// Create and run SSE server
-	server := mcp.NewSSEServer(baseServer)
-	server.SetAddress(":8080")
+    // Create and run SSE server
+    server := mcp.NewSSEServer(baseServer)
+    server.SetAddress(":8080")
 
-	ctx := context.Background()
-	if err := server.Run(ctx); err != nil {
-		panic(err)
-	}
+    ctx := context.Background()
+    if err := server.Run(ctx); err != nil {
+        panic(err)
+    }
 }
 ```
