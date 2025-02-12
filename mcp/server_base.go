@@ -76,7 +76,6 @@ type BaseServer struct {
 	supportsPromptListChanged bool
 	supportsToolListChanged   bool
 
-	// Abstract send methods.
 	sendResp func(clientID string, id *json.RawMessage, result interface{}, err *Error)
 	sendErr  func(clientID string, id *json.RawMessage, code int, message string, data interface{})
 	sendNoti func(clientID string, method string, params interface{})
@@ -84,15 +83,12 @@ type BaseServer struct {
 
 // NewBaseServer creates a new BaseServer instance with the given options
 func NewBaseServer(opts ...ServerConfigOption) (*BaseServer, error) {
-	// Get default configuration
 	cfg := defaultConfig()
 
-	// Apply options
 	for _, opt := range opts {
 		opt(cfg)
 	}
 
-	// Create server instance
 	s := &BaseServer{
 		protocolVersion: cfg.protocolVersion,
 		logger:          cfg.logger,
@@ -113,7 +109,6 @@ func NewBaseServer(opts ...ServerConfigOption) (*BaseServer, error) {
 		resources:                 make(map[string]Resource),
 	}
 
-	// Initialize notifications if needed
 	if len(s.tools) > 0 {
 		s.SendToolListChangedNotification()
 	}
@@ -201,7 +196,7 @@ func defaultConfig() *ServerConfig {
 
 // SendPromptListChangedNotification sends a notification that the prompt list has changed.
 func (s *BaseServer) SendPromptListChangedNotification() {
-	s.sendNoti("", "notifications/prompts/list_changed", nil) // Empty clientID.  Common server doesn't know *who* to send to
+	s.sendNoti("", "notifications/prompts/list_changed", nil)
 }
 
 // SendToolListChangedNotification sends a notification that the tool list has changed.
@@ -220,7 +215,7 @@ func (s *BaseServer) LogMessage(level LogLevel, loggerName string, data interfac
 		Logger: loggerName,
 		Data:   data,
 	}
-	s.sendNoti("", "notifications/message", params) // Empty client ID - it's a broadcast
+	s.sendNoti("", "notifications/message", params)
 }
 
 // handleRequest handles incoming requests.  Common to both server types.

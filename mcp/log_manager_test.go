@@ -155,7 +155,6 @@ func TestLogManager_Log(t *testing.T) {
 		t.Errorf("Failed to parse JSON output: %v", err)
 	}
 
-	// Verify fields
 	if loggedMsg.Level != LogLevelInfo {
 		t.Errorf("Wrong log level in output: got %v, want %v", loggedMsg.Level, LogLevelInfo)
 	}

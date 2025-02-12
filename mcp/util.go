@@ -35,7 +35,6 @@ func validateToolV2(tool Tool) error {
 
 // processPrompt handles argument substitution in prompts
 func processPrompt(prompt Prompt, arguments json.RawMessage) (*Prompt, error) {
-	// Return early if no arguments to process
 	if len(prompt.Arguments) == 0 || len(arguments) == 0 {
 		return &Prompt{
 			Name:        prompt.Name,
@@ -49,7 +48,6 @@ func processPrompt(prompt Prompt, arguments json.RawMessage) (*Prompt, error) {
 		return nil, fmt.Errorf("invalid arguments format: %w", err)
 	}
 
-	// Verify required arguments
 	for _, arg := range prompt.Arguments {
 		if arg.Required {
 			if _, exists := providedArgs[arg.Name]; !exists {
@@ -58,18 +56,15 @@ func processPrompt(prompt Prompt, arguments json.RawMessage) (*Prompt, error) {
 		}
 	}
 
-	// Create processed copy without arguments field
 	promptCopy := Prompt{
 		Name:        prompt.Name,
 		Description: prompt.Description,
 		Messages:    make([]PromptMessage, len(prompt.Messages)),
 	}
 
-	// Process each message
 	for i, msg := range prompt.Messages {
 		text := msg.Content.Text
 
-		// Replace placeholders in the text for all message types
 		for _, arg := range prompt.Arguments {
 			if value, exists := providedArgs[arg.Name]; exists {
 				if strValue, ok := value.(string); ok {
@@ -95,7 +90,6 @@ func replaceArgument(text, argName, value string) string {
 	return strings.Replace(text, placeholder, value, -1)
 }
 
-// validatePrompt validates a prompt's structure and content
 func validatePrompt(prompt Prompt) error {
 	if prompt.Name == "" {
 		return fmt.Errorf("prompt name cannot be empty")
@@ -123,13 +117,11 @@ func validatePrompt(prompt Prompt) error {
 	return nil
 }
 
-// validateResource checks if a resource is valid
 func validateResource(resource Resource) error {
 	if resource.URI == "" {
 		return fmt.Errorf("resource URI cannot be empty")
 	}
 
-	// Add additional validation rules as needed
 	if resource.MimeType == "" {
 		return fmt.Errorf("resource MIME type cannot be empty")
 	}
@@ -137,7 +129,6 @@ func validateResource(resource Resource) error {
 	return nil
 }
 
-// Helper function to validate URI schemes
 func isValidURIScheme(uri string) bool {
 	validSchemes := []string{"file://", "https://", "git://"}
 	for _, scheme := range validSchemes {

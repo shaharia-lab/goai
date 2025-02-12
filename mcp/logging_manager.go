@@ -21,7 +21,7 @@ func NewLogManager(output io.Writer) *LogManager {
 		output = os.Stderr
 	}
 	return &LogManager{
-		currentLevel: LogLevelInfo, // Default level
+		currentLevel: LogLevelInfo,
 		output:       output,
 	}
 }

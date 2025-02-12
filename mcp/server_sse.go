@@ -15,9 +15,9 @@ import (
 
 // SSEServer is the MCP server implementation using Server-Sent Events.
 type SSEServer struct {
-	*BaseServer                         // Embed the common server
-	clients      map[string]chan []byte // Map client IDs to message channels.
-	clientsMutex sync.RWMutex           // Protect client map access.
+	*BaseServer
+	clients      map[string]chan []byte
+	clientsMutex sync.RWMutex
 	address      string
 	initialized  bool
 	initMutex    sync.RWMutex
@@ -47,7 +47,6 @@ func (s *SSEServer) SetAddress(address string) {
 	s.address = address
 }
 
-// broadcastNotification sends a notification to all connected clients.
 func (s *SSEServer) broadcastNotification(method string, params interface{}) {
 	notification := Notification{
 		JSONRPC: "2.0",
@@ -71,7 +70,6 @@ func (s *SSEServer) broadcastNotification(method string, params interface{}) {
 	s.clientsMutex.RLock()
 	defer s.clientsMutex.RUnlock()
 	for _, clientChan := range s.clients {
-		// Non-blocking send.  If a client's buffer is full, we drop the message.
 		select {
 		case clientChan <- jsonNotification:
 		default:
@@ -80,7 +78,6 @@ func (s *SSEServer) broadcastNotification(method string, params interface{}) {
 	}
 }
 
-// sendResponse sends a JSON-RPC response (SSE implementation).
 func (s *SSEServer) sendResponse(clientID string, id *json.RawMessage, result interface{}, err *Error) {
 	response := Response{
 		JSONRPC: "2.0",
@@ -99,7 +96,6 @@ func (s *SSEServer) sendResponse(clientID string, id *json.RawMessage, result in
 	s.sendMessageToClient(clientID, jsonResponse)
 }
 
-// sendError sends a JSON-RPC error response (SSE implementation).
 func (s *SSEServer) sendError(clientID string, id *json.RawMessage, code int, message string, data interface{}) {
 	errorResponse := Response{
 		JSONRPC: "2.0",
@@ -118,9 +114,7 @@ func (s *SSEServer) sendError(clientID string, id *json.RawMessage, code int, me
 	s.sendMessageToClient(clientID, jsonErrorResponse)
 }
 
-// sendNotification sends a JSON-RPC notification (SSE implementation).
 func (s *SSEServer) sendNotification(clientID string, method string, params interface{}) {
-	// If clientID is empty, it's a broadcast
 	if clientID == "" {
 		s.broadcastNotification(method, params)
 		return
@@ -158,7 +152,6 @@ func (s *SSEServer) sendMessageToClient(clientID string, message []byte) {
 		case clientChan <- message: // Send without blocking
 		default:
 			s.logger.Printf("Client message buffer full, dropping message for: %s", clientID)
-			// Consider closing the connection or implementing backpressure.
 		}
 	} else {
 		s.logger.Printf("Client not found: %s", clientID)

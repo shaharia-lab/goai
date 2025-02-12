@@ -62,8 +62,8 @@ type Notification struct {
 type Prompt struct {
 	Name        string           `json:"name"`
 	Description string           `json:"description,omitempty"`
-	Arguments   []PromptArgument `json:"arguments,omitempty"` // Keep arguments
-	Messages    []PromptMessage  `json:"messages,omitempty"`  // For prompts/get
+	Arguments   []PromptArgument `json:"arguments,omitempty"`
+	Messages    []PromptMessage  `json:"messages,omitempty"`
 }
 
 type PromptGetResponse struct {
@@ -160,7 +160,7 @@ type Resource struct {
 	Description string `json:"description,omitempty"`
 	MimeType    string `json:"mimeType,omitempty"`
 	Size        int    `json:"size,omitempty"`
-	TextContent string `json:"-"` // Internal use only
+	TextContent string `json:"-"`
 }
 
 // ResourceContent represents the actual content of a resource.
@@ -168,7 +168,7 @@ type ResourceContent struct {
 	URI      string `json:"uri"`
 	MimeType string `json:"mimeType"`
 	Text     string `json:"text,omitempty"`
-	Blob     string `json:"blob,omitempty"` // Base64 encoded
+	Blob     string `json:"blob,omitempty"`
 }
 
 // Tool represents a callable tool in the MCP system.
