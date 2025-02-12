@@ -775,7 +775,7 @@ func TestSuccessfulConnectionEstablishedFlow(t *testing.T) {
 	}()
 
 	// Send initialize request with supported protocol version
-	initializeRequest := `{"jsonrpc":"2.0","id":"1","method":"initialize","params":{"protocolVersion":"2024-11-05","processId":12345,"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
+	initializeRequest := `{"jsonrpc":"2.0","id":"1","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
 	_, err = fmt.Fprintln(in, initializeRequest)
 	require.NoError(t, err)
 
@@ -795,7 +795,7 @@ func TestSuccessfulConnectionEstablishedFlow(t *testing.T) {
 	out.Reset()
 
 	// Send initialized notification
-	initializedNotification := `{"jsonrpc":"2.0","method":"initialized","params":{}}`
+	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
 	_, err = fmt.Fprintln(in, initializedNotification)
 	require.NoError(t, err)
 

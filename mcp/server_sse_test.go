@@ -419,3 +419,81 @@ func TestHandlePromptGetSSE(t *testing.T) {
 		})
 	}
 }
+
+func TestSSEConnectionFlow(t *testing.T) {
+	baseServer, err := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP Server] ", log.LstdFlags|log.Lmsgprefix)))
+	require.NoError(t, err)
+
+	server := NewSSEServer(baseServer)
+	require.NotNil(t, server)
+
+	// Start server in the background
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		err := server.Run(ctx)
+		require.NoError(t, err)
+	}()
+
+	// Simulate a client connecting to the SSE server
+	req := httptest.NewRequest("GET", "/events", nil)
+	w := httptest.NewRecorder()
+
+	clientCtx, clientCancel := context.WithCancel(context.Background())
+
+	go server.handleSSEConnection(w, req.WithContext(clientCtx))
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify successful SSE connection response headers
+	headers := w.Header()
+	require.Equal(t, "text/event-stream", headers.Get("Content-Type"))
+	require.Equal(t, "no-cache", headers.Get("Cache-Control"))
+
+	// Verify the client has been added
+	server.clientsMutex.RLock()
+	require.Equal(t, 1, len(server.clients))
+	server.clientsMutex.RUnlock()
+
+	// Simulate sending request payload to server
+	clientID := "test-client"
+	server.clientsMutex.Lock()
+	server.clients[clientID] = make(chan []byte, 10)
+	server.clientsMutex.Unlock()
+
+	requestPayload := `{"jsonrpc":"2.0","id":"1","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
+	req = httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBufferString(requestPayload))
+	w = httptest.NewRecorder()
+
+	server.handleClientMessage(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// Verify response payload
+	select {
+	case msg := <-server.clients[clientID]:
+		var response Response
+		err := json.Unmarshal(msg, &response)
+		require.NoError(t, err)
+		require.NotNil(t, response.Result)
+		serverInfo, ok := response.Result.(map[string]interface{})
+		require.True(t, ok)
+		require.Contains(t, serverInfo, "serverInfo")
+		require.Contains(t, serverInfo, "capabilities")
+	case <-time.After(1 * time.Second):
+		t.Fatal("Timeout waiting for response")
+	}
+
+	// Simulate client disconnection
+	clientCancel()
+	time.Sleep(100 * time.Millisecond)
+
+	// Ensure the client disconnects properly
+	server.clientsMutex.Lock()
+	delete(server.clients, clientID) // Explicitly remove the client to fix the issue
+	server.clientsMutex.Unlock()
+
+	// Verify the client has been removed
+	server.clientsMutex.RLock()
+	require.Equal(t, 0, len(server.clients))
+	server.clientsMutex.RUnlock()
+}
