@@ -3,9 +3,10 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/xeipuuv/gojsonschema"
 	"reflect"
 	"strings"
+
+	"github.com/xeipuuv/gojsonschema"
 )
 
 func validateToolV2(tool Tool) error {

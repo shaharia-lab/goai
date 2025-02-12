@@ -3,10 +3,11 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"github.com/stretchr/testify/assert"
 	"log"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestListTools(t *testing.T) {

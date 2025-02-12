@@ -5,10 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/xeipuuv/gojsonschema"
 	"log"
 	"sort"
 	"strings"
+
+	"github.com/xeipuuv/gojsonschema"
 )
 
 const (
