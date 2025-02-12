@@ -3,214 +3,166 @@
 The Model Context Protocol (MCP) enables AI models to interact with external tools
 and data sources in a standardized way. This document covers the Go implementation of an MCP server.
 
-## Build & Run MCP Server
+You can learn more about [Model Context Procol (MCP)](https://modelcontextprotocol.io/) from the official website.
 
-### Installation
+## Features
 
-First, install the package:
+- Server Types: SSE (for web applications) and StdIO (for CLI applications)
+- Tools: Create custom handlers with JSON schema validation
+- Prompts: Template system with argument substitution
+- Resources: Support for various MIME types and URIs
+- Logging: Configurable logging levels (debug to emergency)
+- Protocol: JSON-RPC based communication
+- Validation: Input schema validation using gojsonschema
+- Pagination: Built-in cursor-based pagination for listing resources/tools
+- Notifications: Support for server-to-client notifications
+- Error Handling: Standardized error responses and codes
+
+## Installation
 
 ```bash
-go get github.com/shaharia-lab/goai
+go get github.com/shaharia-lab/goai/mcp
 ```
 
-### Basic Implementation
+## Core Components
 
-Here's a minimal example of setting up an MCP server:
+### Tools
+
+Tools are custom functions that can be called through the MCP protocol. Each tool has a name, description, input schema,
+and a handler function. Tools are validated against their input schema before execution.
+
+### Prompts
+
+Prompts are templates with argument substitution capabilities. They support dynamic message generation based on provided
+arguments, useful for creating reusable message templates.
+
+### Resources
+
+Resources represent content accessible via URIs. They support various MIME types and can be used to serve both text and
+binary content. Resources can be listed and read through the protocol.
+
+### MCP Server Compatibility Matrix
+
+| Feature                          | Status             | Notes                                                                                                |
+|----------------------------------|--------------------|------------------------------------------------------------------------------------------------------|
+| **Base Protocol**                | ✅ Fully Compatible | Implements JSON-RPC 2.0, stateful connections, and capability negotiation.                           |
+| **Lifecycle Management**         | ✅ Fully Compatible | Supports initialization, operation, shutdown, version & capability negotiation.                      |
+| **Resources**                    | ✅ Fully Compatible | Supports listing, reading resources, and resource list change notifications.                         |
+| **Prompts**                      | ✅ Fully Compatible | Supports listing and getting prompts and prompt list change notifications.                           |
+| **Tools**                        | ✅ Fully Compatible | Supports listing and calling tools, and tool list change notifications.                              |
+| **Sampling**                     | 🚫 Not Implemented | No implementation for server-initiated sampling.  Sampling is a client feature.                      |
+| **Logging**                      | ✅ Fully Compatible | Supports structured log messages and setting log levels                                              |
+| **Ping**                         | ✅ Fully Compatible | Implemented                                                                                          |
+| **Cancellation**                 | 🔲 Partial         | Placeholder exists, but not fully implemented. Supports cancellation notifications but ignores them. |
+| **Progress Tracking**            | 🔲 Partial         | Mentioned in spec, but no implementation in the Go server code.                                      |
+| **Pagination**                   | ✅ Fully Compatible | Implemented for listing resources, prompts, and tools.                                               |
+| **Completion**                   | 🚫 Not Implemented | No implementation in the code                                                                        |
+| **StdIO Transport**              | ✅ Fully Compatible | Implemented                                                                                          |
+| **SSE Transport**                | ✅ Fully Compatible | Implemented                                                                                          |
+| **Custom Transports**            | 🔲 Partial         | Protocol allows for custom transports, but no implementation is in the sources.                      |
+| **Authentication/Authorization** | 🚫 Not Implemented | Not implemented in the core protocol, custom strategies can be negotiated.                           |
+| **Roots**                        | 🚫 Not Implemented | Not a server feature                                                                                 |
+
+**Notes:**
+
+- ✅ Fully Compatible - Feature is fully implemented and conforms to the specification.
+- 🔲 Partial - Feature is partially implemented or has some limitations.
+- 🚫 Not Implemented - Feature is not implemented.
+
+### SSE Server
 
 ```go
-package main
-
-import (
-    "context"
-    "github.com/shaharia-lab/goai"
-    "log"
-    "net/http"
+baseServer, err := mcp.NewBaseServer(
+    mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
 )
-
-func main() {
-    // Create registry
-    registry := goai.NewMCPToolRegistry()
-
-    // Use default configuration
-    config := goai.DefaultMCPServerConfig()
-
-    // Create server
-    server := goai.NewMCPServer(registry, config)
-
-    // Set up HTTP handlers
-    mux := http.NewServeMux()
-    server.AddMCPHandlers(context.Background(), mux)
-
-    // Start server
-    log.Fatal(http.ListenAndServe(":8080", mux))
-}
-```
-
-### Server Configuration
-
-The MCP server can be configured in several ways:
-
-#### Basic Configuration (No Logging/Tracing)
-
-```go
-config := goai.DefaultMCPServerConfig()
-server := goai.NewMCPServer(registry, config)
-```
-
-#### With Logging
-
-```go
-config := goai.DefaultMCPServerConfig()
-config.Logger = logrus.New()
-server := goai.NewMCPServer(registry, config)
-```
-
-#### With OpenTelemetry Tracing
-
-```go
-config := goai.DefaultMCPServerConfig()
-config.Tracer = otel.Tracer("my-mcp-server")
-server := goai.NewMCPServer(registry, config)
-```
-
-#### Full Configuration
-
-```go
-config := goai.MCPServerConfig{
-    Logger:              logrus.New(),
-    Tracer:             otel.Tracer("my-mcp-server"),
-    EnableMetrics:      true,
-    MaxToolExecutionTime: 30 * time.Second,
-}
-server := goai.NewMCPServer(registry, config)
-```
-
-### Creating Tools
-
-To create a tool, implement the `MCPToolExecutor` interface. Here's an example tool that performs word counting:
-
-```go
-type WordCountTool struct{}
-
-func (t *WordCountTool) GetDefinition() goai.MCPTool {
-    return goai.MCPTool{
-        Name:        "word_count",
-        Description: "Counts words in a text",
-        Version:     "1.0.0",
-        InputSchema: json.RawMessage(`{
-            "type": "object",
-            "properties": {
-                "text": {
-                    "type": "string",
-                    "description": "Text to analyze"
-                }
-            },
-            "required": ["text"]
-        }`),
-    }
+if err != nil {
+    panic(err)
 }
 
-func (t *WordCountTool) Execute(ctx context.Context, input json.RawMessage) (goai.MCPToolResponse, error) {
-    // Parse input
-    var params struct {
-        Text string `json:"text"`
-    }
-    if err := json.Unmarshal(input, &params); err != nil {
-        return goai.MCPToolResponse{}, fmt.Errorf("invalid input: %w", err)
-    }
+server := mcp.NewSSEServer(baseServer)
+server.SetAddress(":8080")
+ctx := context.Background()
+server.Run(ctx)
+```
 
-    // Count words
-    words := len(strings.Fields(params.Text))
+### StdIO Server
 
-    // Return response
-    return goai.MCPToolResponse{
-        Content: []goai.MCPContentItem{{
+```go
+baseServer, err := mcp.NewBaseServer(
+    mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
+)
+if err != nil {
+    panic(err)
+}
+
+server := mcp.NewStdIOServer(baseServer, os.Stdin, os.Stdout)
+ctx := context.Background()
+server.Run(ctx)
+```
+
+### Custom Tool
+
+```go
+tool := mcp.Tool{
+    Name:        "get_weather",
+    Description: "Get weather for location",
+    InputSchema: json.RawMessage(`{
+        "type": "object",
+        "properties": {
+            "location": {"type": "string"}
+        },
+        "required": ["location"]
+    }`),
+    Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+        var input struct {
+            Location string `json:"location"`
+        }
+        json.Unmarshal(params.Arguments, &input)
+        return mcp.CallToolResult{
+            Content: []mcp.ToolResultContent{{
+                Type: "text",
+                Text: fmt.Sprintf("Weather in %s: Sunny", input.Location),
+            }},
+        }, nil
+    },
+}
+baseServer.AddTools(tool)
+```
+
+### Prompt
+
+```go
+prompt := mcp.Prompt{
+    Name:        "greet",
+    Description: "Greeting prompt",
+    Arguments: []mcp.PromptArgument{{
+        Name:     "name",
+        Required: true,
+    }},
+    Messages: []mcp.PromptMessage{{
+        Role: "user",
+        Content: mcp.PromptContent{
             Type: "text",
-            Text: fmt.Sprintf("Word count: %d", words),
-        }},
-    }, nil
+            Text: "Hello {{name}}!",
+        },
+    }},
 }
+baseServer.AddPrompts(prompt)
 ```
 
-### HTTP Server Integration
-
-The MCP server can be integrated with any HTTP router:
-
-#### Standard HTTP Server
+### Resource
 
 ```go
-mux := http.NewServeMux()
-server.AddMCPHandlers(context.Background(), mux)
-log.Fatal(http.ListenAndServe(":8080", mux))
-```
-
-#### Chi Router
-
-```go
-import "github.com/go-chi/chi/v5"
-
-r := chi.NewRouter()
-handlers := server.GetMCPHandlers()
-r.Get("/tools/list", handlers.ListTools)
-r.Post("/tools/call", handlers.ToolCall)
-log.Fatal(http.ListenAndServe(":8080", r))
-```
-
-### Graceful Shutdown
-
-The MCP server supports graceful shutdown in two modes:
-
-#### Basic Shutdown
-
-For simple servers, just call Shutdown:
-
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-defer cancel()
-
-if err := server.Shutdown(ctx); err != nil {
-    log.Printf("Shutdown error: %v", err)
+resource := mcp.Resource{
+    URI: "file:///example.txt",
+    Name: "Example",
+    MimeType: "text/plain",
+    TextContent: "Sample content",
 }
+baseServer.AddResources(resource)
 ```
 
-#### HTTP Server Shutdown
-
-For servers using `http.Server`, register it for full shutdown handling:
-
-```go
-httpServer := &http.Server{
-    Addr:    ":8080",
-    Handler: mux,
-}
-
-// Register HTTP server
-server.WithHTTPServer(httpServer)
-
-// Handle shutdown signals
-go func() {
-    sigCh := make(chan os.Signal, 1)
-    signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-    <-sigCh
-
-    // Create shutdown context with timeout
-    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-    defer cancel()
-
-    // Perform graceful shutdown
-    if err := server.Shutdown(ctx); err != nil {
-        log.Printf("Shutdown error: %v", err)
-    }
-}()
-
-// Start server
-if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
-    log.Fatalf("HTTP server error: %v", err)
-}
-```
-
-### Complete Example
-
-Here's a complete example bringing everything together:
+## Complete Example
 
 ```go
 package main
@@ -219,106 +171,53 @@ import (
     "context"
     "encoding/json"
     "fmt"
-    "github.com/shaharia-lab/goai"
-    "github.com/sirupsen/logrus"
-    "net/http"
+    "log"
     "os"
-    "os/signal"
-    "syscall"
-    "time"
+    "github.com/shaharia-lab/goai/mcp"
 )
 
-// Define tool
-type WordCountTool struct{}
-
-// ... (WordCountTool implementation from above) ...
-
 func main() {
-    // Create registry
-    registry := goai.NewMCPToolRegistry()
-
-    // Register tool
-    if err := registry.Register(&WordCountTool{}); err != nil {
-        log.Fatal(err)
+    // Create base server
+    baseServer, err := mcp.NewBaseServer(
+        mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
+    )
+    if err != nil {
+        panic(err)
     }
 
-    // Configure server with logging
-    config := goai.DefaultMCPServerConfig()
-    config.Logger = logrus.New()
-
-    // Create server
-    server := goai.NewMCPServer(registry, config)
-
-    // Set up HTTP server
-    mux := http.NewServeMux()
-    server.AddMCPHandlers(context.Background(), mux)
-
-    // Create HTTP server
-    httpServer := &http.Server{
-        Addr:    ":8080",
-        Handler: mux,
+    // Add tool
+    tool := mcp.Tool{
+        Name: "greet",
+        Description: "Greet user",
+        InputSchema: json.RawMessage(`{
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"}
+            },
+            "required": ["name"]
+        }`),
+        Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+            var input struct {
+                Name string `json:"name"`
+            }
+            json.Unmarshal(params.Arguments, &input)
+            return mcp.CallToolResult{
+                Content: []mcp.ToolResultContent{{
+                    Type: "text",
+                    Text: fmt.Sprintf("Hello, %s!", input.Name),
+                }},
+            }, nil
+        },
     }
+    baseServer.AddTools(tool)
 
-    // Register for shutdown
-    server.WithHTTPServer(httpServer)
+    // Create and run SSE server
+    server := mcp.NewSSEServer(baseServer)
+    server.SetAddress(":8080")
 
-    // Handle shutdown signals
-    go func() {
-        sigCh := make(chan os.Signal, 1)
-        signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-        <-sigCh
-
-        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-        defer cancel()
-
-        if err := server.Shutdown(ctx); err != nil {
-            log.Printf("Shutdown error: %v", err)
-        }
-    }()
-
-    // Start server
-    fmt.Println("Server starting on :8080...")
-    if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
-        log.Fatalf("HTTP server error: %v", err)
+    ctx := context.Background()
+    if err := server.Run(ctx); err != nil {
+        panic(err)
     }
 }
 ```
-
-### Testing Your Server
-
-Once your server is running, you can test it using curl:
-
-```bash
-# List available tools
-curl http://localhost:8080/tools/list
-
-# Call a tool
-curl -X POST http://localhost:8080/tools/call \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "word_count",
-    "arguments": {
-      "text": "Hello, Model Context Protocol!"
-    }
-  }'
-```
-
-### Best Practices
-
-When implementing MCP tools:
-
-1. **Input Validation**: Always validate tool inputs thoroughly
-2. **Error Handling**: Return clear, actionable error messages
-3. **Context Awareness**: Respect context cancellation for long-running operations
-4. **Thread Safety**: Ensure your tool implementation is thread-safe
-5. **Documentation**: Provide clear descriptions and input schemas
-6. **Versioning**: Include version information in your tool definition
-7. **Logging**: Use appropriate log levels when logging is enabled
-8. **Tracing**: Add meaningful spans when tracing is enabled
-9. **Shutdown**: Implement proper cleanup in your tools if needed
-10. **Testing**: Add comprehensive tests for your tools
-
-### Learn More
-
-To learn more about the Model Context Protocol and its capabilities,
-visit the official documentation at [https://modelcontextprotocol.io/](https://modelcontextprotocol.io/).
