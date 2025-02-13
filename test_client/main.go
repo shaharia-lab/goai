@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/shaharia-lab/goai/mcp"
 	"io/ioutil"
 	"net/http"
 	"strings"
@@ -15,37 +16,6 @@ type VeryFirstEvent struct {
 	Event           string
 	MessageEndpoint string
 	ClientID        string
-}
-
-type InitializeMethodResponse struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      int    `json:"id"`
-	Result  Result `json:"result"`
-}
-
-type Result struct {
-	ProtocolVersion string       `json:"protocolVersion"`
-	Capabilities    Capabilities `json:"capabilities"`
-	ServerInfo      ServerInfo   `json:"serverInfo"`
-}
-
-type Capabilities struct {
-	Logging struct{} `json:"logging"`
-	Prompts struct {
-		ListChanged bool `json:"listChanged"`
-	} `json:"prompts"`
-	Resources struct {
-		ListChanged bool `json:"listChanged"`
-		Subscribe   bool `json:"subscribe"`
-	} `json:"resources"`
-	Tools struct {
-		ListChanged bool `json:"listChanged"`
-	} `json:"tools"`
-}
-
-type ServerInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
 }
 
 func main() {
@@ -66,7 +36,7 @@ func main() {
 		} else if strings.HasPrefix(line, "data:") {
 			data := strings.TrimSpace(line[len("data:"):])
 			if strings.HasPrefix(data, "{") && strings.HasSuffix(data, "}") {
-				var initResponse InitializeMethodResponse
+				var initResponse mcp.InitializeResponse
 				if err := json.Unmarshal([]byte(data), &initResponse); err != nil {
 					fmt.Printf("Error decoding response: %v\n", err)
 					continue
@@ -133,7 +103,7 @@ func main() {
 					fmt.Println("Empty response body")
 				} else {
 					// Parse the response into InitializeMethodResponse struct
-					var initResponse InitializeMethodResponse
+					var initResponse mcp.ResponseToStartupClientRequest
 					if err := json.Unmarshal(bodyBytes, &initResponse); err != nil {
 						fmt.Printf("Error decoding response: %v\n", err)
 						return
