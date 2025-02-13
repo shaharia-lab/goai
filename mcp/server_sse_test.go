@@ -423,7 +423,10 @@ func TestHandlePromptGetSSE(t *testing.T) {
 }
 
 func TestSSEConnectionFlow(t *testing.T) {
-	baseServer, err := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP Server] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, err := NewBaseServer(
+		UseLogger(log.New(os.Stderr, "[MCP Server] ", log.LstdFlags|log.Lmsgprefix)),
+		UseSSEServerPort(":0"),
+	)
 	require.NoError(t, err)
 
 	server := NewSSEServer(baseServer)

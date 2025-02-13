@@ -3,7 +3,10 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
+
+const pingInterval = 30 * time.Second
 
 type InitializeParams struct {
 	ProtocolVersion string         `json:"protocolVersion"`
@@ -16,12 +19,16 @@ type InitializeParams struct {
 
 // InitializeResult represents the result of server initialization.
 type InitializeResult struct {
-	ProtocolVersion string         `json:"protocolVersion"`
-	Capabilities    map[string]any `json:"capabilities"`
-	ServerInfo      struct {
-		Name    string `json:"name"`
-		Version string `json:"version"`
-	} `json:"serverInfo"`
+	ProtocolVersion string       `json:"protocolVersion"`
+	Capabilities    Capabilities `json:"capabilities"`
+	ServerInfo      ServerInfo   `json:"serverInfo"`
+}
+
+type InitializeResponse struct {
+	JSONRPC string           `json:"jsonrpc"`
+	ID      *json.RawMessage `json:"id"`
+	Result  InitializeResult `json:"result,omitempty"`
+	Error   *Error           `json:"error,omitempty"`
 }
 
 // ServerInfo represents server information.
@@ -43,6 +50,43 @@ type Response struct {
 	ID      *json.RawMessage `json:"id"`
 	Result  interface{}      `json:"result,omitempty"`
 	Error   *Error           `json:"error,omitempty"`
+}
+
+type Capabilities struct {
+	Logging   CapabilitiesLogging   `json:"logging"`
+	Prompts   CapabilitiesPrompts   `json:"prompts"`
+	Resources CapabilitiesResources `json:"resources"`
+	Tools     CapabilitiesTools     `json:"tools"`
+}
+
+type CapabilitiesLogging struct{}
+
+type CapabilitiesPrompts struct {
+	ListChanged bool `json:"listChanged"`
+}
+
+type CapabilitiesResources struct {
+	ListChanged bool `json:"listChanged"`
+	Subscribe   bool `json:"subscribe"`
+}
+
+type CapabilitiesTools struct {
+	ListChanged bool `json:"listChanged"`
+}
+
+// ResponseToStartupClientRequest represents a JSON-RPC response message.
+type ResponseToStartupClientRequest struct {
+	JSONRPC string           `json:"jsonrpc"`
+	ID      *json.RawMessage `json:"id"`
+	Result  struct {
+		ProtocolVersion string                 `json:"protocolVersion"`
+		Capabilities    map[string]interface{} `json:"capabilities"`
+		ServerInfo      struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"serverInfo"`
+	} `json:"result,omitempty"`
+	Error *Error `json:"error,omitempty"`
 }
 
 // Error represents a JSON-RPC error object.
