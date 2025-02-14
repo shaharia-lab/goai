@@ -426,7 +426,7 @@ func (s *BaseServer) handleToolsList(clientID string, request *Request) {
 		return
 	}
 
-	s.sendResp(clientID, request.ID, s.ListTools(params.Cursor, 0), nil)
+	s.sendResp(clientID, request.ID, s.ListTools(params.Cursor, 1), nil)
 }
 
 func (s *BaseServer) handleToolsCall(clientID string, request *Request) {
