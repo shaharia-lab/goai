@@ -45,12 +45,19 @@ type SSEClient struct {
 	retryAttempt       int
 }
 
-func NewSSEClient(url string) *SSEClient {
+type SSEClientConfig struct {
+	URL           string
+	RetryDelay    time.Duration
+	StopChan      chan struct{}
+	ReconnectChan chan struct{}
+}
+
+func NewSSEClient(config SSEClientConfig) *SSEClient {
 	return &SSEClient{
-		url:           url,
-		retryDelay:    baseRetryDelay,
-		stopChan:      make(chan struct{}),
-		reconnectChan: make(chan struct{}, 1),
+		url:           config.URL,
+		retryDelay:    config.RetryDelay,
+		stopChan:      config.StopChan,
+		reconnectChan: config.ReconnectChan,
 	}
 }
 
@@ -308,7 +315,12 @@ func (c *SSEClient) Stop() {
 }
 
 func main() {
-	client := NewSSEClient(baseURL)
+	client := NewSSEClient(SSEClientConfig{
+		URL:           baseURL,
+		RetryDelay:    baseRetryDelay,
+		StopChan:      make(chan struct{}),
+		ReconnectChan: make(chan struct{}),
+	})
 
 	done := make(chan struct{})
 	go func() {
