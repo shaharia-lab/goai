@@ -42,6 +42,7 @@ type SSEClient struct {
 	stopChan           chan struct{}
 	reconnectChan      chan struct{}
 	mu                 sync.Mutex
+	retryAttempt       int
 }
 
 func NewSSEClient(url string) *SSEClient {
@@ -66,10 +67,33 @@ func (c *SSEClient) Start() {
 		default:
 			if err := c.establishConnection(); err != nil {
 				log.Printf("Connection error: %v", err)
-				c.triggerReconnect()
+
+				delay := c.calculateBackoff()
+				log.Printf("Waiting %v before reconnection attempt %d", delay, c.retryAttempt)
+
+				select {
+				case <-time.After(delay):
+					c.retryAttempt++
+				case <-c.stopChan:
+					return
+				}
+			} else {
+				c.retryAttempt = 0
 			}
 		}
 	}
+}
+
+func (c *SSEClient) calculateBackoff() time.Duration {
+	delay := baseRetryDelay * time.Duration(1<<uint(c.retryAttempt))
+
+	if delay > maxRetryDelay {
+		delay = maxRetryDelay
+		c.retryAttempt = 0
+		log.Printf("Maximum retry delay reached, resetting backoff")
+	}
+
+	return delay
 }
 
 func (c *SSEClient) establishConnection() error {
@@ -139,21 +163,39 @@ func (c *SSEClient) sendInitializeRequest(endpoint string) error {
 
 	response, err := c.sendRequest(endpoint, payload)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to send initialize request: %v", err)
 	}
 
+	log.Printf("Raw initialize response: %s", string(response))
+
 	if len(response) > 0 {
-		var initResponse map[string]interface{}
+		var initResponse struct {
+			Result struct {
+				ProtocolVersion string                 `json:"protocolVersion"`
+				Capabilities    map[string]interface{} `json:"capabilities"`
+			} `json:"result"`
+		}
+
 		if err := json.Unmarshal(response, &initResponse); err != nil {
 			return fmt.Errorf("failed to parse initialize response: %v", err)
 		}
 
-		c.mu.Lock()
-		c.serverCapabilities = ServerCapabilities{
-			ProtocolVersion: "2024-11-05",
-			Capabilities:    initResponse,
+		if initResponse.Result.ProtocolVersion == "" {
+			log.Println("Warning: Server did not return a protocol version")
 		}
-		c.mu.Unlock()
+		if initResponse.Result.Capabilities == nil {
+			log.Println("Warning: Server did not return any capabilities")
+		}
+
+		c.serverCapabilities = ServerCapabilities{
+			ProtocolVersion: initResponse.Result.ProtocolVersion,
+			Capabilities:    initResponse.Result.Capabilities,
+		}
+
+		log.Printf("Server Protocol Version: %s", c.serverCapabilities.ProtocolVersion)
+		log.Printf("Server Capabilities: %+v", c.serverCapabilities.Capabilities)
+	} else {
+		log.Println("Warning: Received empty response from initialize request")
 	}
 
 	return nil
@@ -170,24 +212,28 @@ func (c *SSEClient) sendInitializedNotification(endpoint string) error {
 }
 
 func (c *SSEClient) sendRequest(endpoint string, payload interface{}) ([]byte, error) {
-	payloadBytes, err := json.Marshal(payload)
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal payload: %v", err)
 	}
 
-	resp, err := http.Post(endpoint, "application/json", bytes.NewBuffer(payloadBytes))
+	log.Printf("Sending request to %s with payload: %s", endpoint, string(jsonData))
+
+	resp, err := http.Post(endpoint, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to send request: %v", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
+	log.Printf("Response status: %s", resp.Status)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	if len(body) > 0 {
+		log.Printf("Response body: %s", string(body))
 	}
 
 	return body, nil
@@ -237,16 +283,16 @@ func (c *SSEClient) checkPingStatus() {
 func (c *SSEClient) triggerReconnect() {
 	select {
 	case c.reconnectChan <- struct{}{}:
-		log.Printf("Attempting to reconnect in %v", c.retryDelay)
-		time.Sleep(c.retryDelay)
+		delay := c.calculateBackoff()
+		log.Printf("Connection lost. Attempting to reconnect in %v (attempt %d)", delay, c.retryAttempt)
 
-		// Implement exponential backoff
-		c.retryDelay *= 2
-		if c.retryDelay > maxRetryDelay {
-			c.retryDelay = baseRetryDelay
+		select {
+		case <-time.After(delay):
+			c.retryAttempt++
+		case <-c.stopChan:
+			return
 		}
 	default:
-		// Reconnection already in progress
 	}
 }
 
@@ -264,13 +310,11 @@ func (c *SSEClient) Stop() {
 func main() {
 	client := NewSSEClient(baseURL)
 
-	// Handle program termination
 	done := make(chan struct{})
 	go func() {
 		client.Start()
 		close(done)
 	}()
 
-	// Wait for program termination
 	<-done
 }
