@@ -42,7 +42,8 @@ Resources represent content accessible via URIs. They support various MIME types
 binary content. Resources can be listed and read through the protocol.
 
 ### MCP Server Compatibility Matrix
-<!--nolint-->
+
+<!-- markdownlint-disable -->
 | Feature                          | Status             | Notes                                                                           |
 |----------------------------------|--------------------|---------------------------------------------------------------------------------|
 | **Base Protocol**                | ✅ Fully Compatible | Implements JSON-RPC 2.0, stateful connections, and capability negotiation.      |
@@ -62,7 +63,8 @@ binary content. Resources can be listed and read through the protocol.
 | **Custom Transports**            | 🔲 Partial         | Protocol allows for custom transports, but no implementation in sources.        |
 | **Authentication/Authorization** | 🚫 Not Implemented | Not implemented in core protocol, custom strategies can be negotiated.          |
 | **Roots**                        | 🚫 Not Implemented | Not a server feature                                                            |
-<!--nolint-->
+
+<!-- markdownlint-enable -->
 
 **Notes:**
 
@@ -271,7 +273,8 @@ func main() {
 
 ### StdIO Client
 
-<!--nolint-->
+<!-- markdownlint-disable -->
+
 ```go
 package main
 
@@ -336,4 +339,4 @@ func main() {
 	fmt.Scanln()
 }
 ```
-<!--nolint-->
+<!-- markdownlint-enable -->
