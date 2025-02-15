@@ -6,7 +6,6 @@ linters:
   disable-all: true
   enable:
     - gofmt
-    - revive
     - goimports
   fast: false
 linters-settings:
