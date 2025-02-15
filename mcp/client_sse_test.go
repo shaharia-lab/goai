@@ -1,8 +1,9 @@
 package mcp
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -10,223 +11,232 @@ import (
 	"time"
 )
 
-func TestSSEClient_ConnectionFlow(t *testing.T) {
-	tests := []struct {
-		name           string
-		serverBehavior func(w http.ResponseWriter, r *http.Request)
-		expectedError  bool
-	}{
-		{
-			name: "successful_connection_flow",
-			serverBehavior: func(w http.ResponseWriter, r *http.Request) {
-				flusher, ok := w.(http.Flusher)
-				if !ok {
-					t.Fatal("Expected ResponseWriter to be a Flusher")
-				}
+type mockSSEServer struct {
+	server      *httptest.Server
+	connections map[string]chan string
+	mu          sync.RWMutex
+	t           *testing.T
+}
 
-				w.Header().Set("Content-Type", "text/event-stream")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.Header().Set("Connection", "keep-alive")
-
-				// Create message endpoint server
-				messageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					w.Write([]byte(`{
-						"jsonrpc": "2.0",
-						"result": {
-							"protocolVersion": "2024-11-05",
-							"capabilities": {
-								"tools": {"listChanged": true}
-							}
-						}
-					}`))
-				}))
-				defer messageServer.Close()
-
-				// Send the initial event with actual message endpoint
-				_, _ = w.Write([]byte("event: connect\n"))
-				_, _ = w.Write([]byte("data: " + messageServer.URL + "\n\n"))
-				flusher.Flush()
-
-				// Simulate server sending periodic pings
-				for i := 0; i < 3; i++ {
-					_, _ = w.Write([]byte(":ping\n\n"))
-					flusher.Flush()
-					time.Sleep(100 * time.Millisecond)
-				}
-			},
-			expectedError: false,
-		},
+func newMockSSEServer(t *testing.T) *mockSSEServer {
+	mock := &mockSSEServer{
+		connections: make(map[string]chan string),
+		t:           t,
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(tt.serverBehavior))
-			defer server.Close()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/events", mock.handleSSE)
+	mux.HandleFunc("/message", mock.handleMessage)
 
-			stopChan := make(chan struct{})
-			reconnectChan := make(chan struct{})
-			client := NewSSEClient(SSEClientConfig{
-				URL:           server.URL,
-				RetryDelay:    100 * time.Millisecond,
-				StopChan:      stopChan,
-				ReconnectChan: reconnectChan,
-			})
+	mock.server = httptest.NewServer(mux)
+	return mock
+}
 
-			// Start client in goroutine
-			errChan := make(chan error, 1)
-			go func() {
-				client.Start()
-				close(errChan)
-			}()
+func (m *mockSSEServer) close() {
+	m.server.Close()
+}
 
-			// Let it run for a short while
-			time.Sleep(500 * time.Millisecond)
+func (m *mockSSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+		return
+	}
 
-			// Stop client
-			client.Stop()
-		})
+	clientID := fmt.Sprintf("test-client-%d", time.Now().UnixNano())
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	msgChan := make(chan string, 10)
+	m.mu.Lock()
+	m.connections[clientID] = msgChan
+	m.mu.Unlock()
+
+	defer func() {
+		m.mu.Lock()
+		delete(m.connections, clientID)
+		close(msgChan)
+		m.mu.Unlock()
+	}()
+
+	// Send initial endpoint message
+	messageEndpoint := fmt.Sprintf("%s/message?clientID=%s", m.server.URL, clientID)
+	fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", messageEndpoint)
+	flusher.Flush()
+
+	// Start ping ticker
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	notify := r.Context().Done()
+	for {
+		select {
+		case <-notify:
+			return
+		case <-ticker.C:
+			fmt.Fprint(w, ":ping\n\n")
+			flusher.Flush()
+		case msg := <-msgChan:
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", msg)
+			flusher.Flush()
+		}
 	}
 }
 
-func TestSSEClient_RetryMechanism(t *testing.T) {
-	type serverResponse struct {
-		statusCode int
-		delay      time.Duration
-		body       string
+func (m *mockSSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
 
-	// Create message endpoint server first
-	messageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
-            "jsonrpc": "2.0",
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "tools": {"listChanged": true}
-                }
-            }
-        }`))
-	}))
-	defer messageServer.Close()
+	clientID := r.URL.Query().Get("clientID")
+	if clientID == "" {
+		http.Error(w, "Missing clientID", http.StatusBadRequest)
+		return
+	}
 
-	tests := []struct {
-		name            string
-		serverResponses []serverResponse
-		expectedRetries int
-		timeout         time.Duration
-	}{
-		{
-			name: "successful_after_retries",
-			serverResponses: []serverResponse{
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var request Request
+	if err := json.Unmarshal(body, &request); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	m.mu.RLock()
+	msgChan, exists := m.connections[clientID]
+	m.mu.RUnlock()
+
+	if !exists {
+		http.Error(w, "Client not found", http.StatusNotFound)
+		return
+	}
+
+	// Handle different request methods
+	var response interface{}
+	switch request.Method {
+	case "initialize":
+		response = InitializeResult{
+			ProtocolVersion: "2024-11-05",
+			Capabilities: Capabilities{
+				Logging:   CapabilitiesLogging{},
+				Prompts:   CapabilitiesPrompts{ListChanged: true},
+				Resources: CapabilitiesResources{ListChanged: true, Subscribe: true},
+				Tools:     CapabilitiesTools{ListChanged: true},
+			},
+			ServerInfo: ServerInfo{
+				Name:    "test-server",
+				Version: "1.0.0",
+			},
+		}
+	case "tools/list":
+		response = ListToolsResult{
+			Tools: []Tool{
 				{
-					statusCode: http.StatusInternalServerError,
-					delay:      0,
-				},
-				{
-					statusCode: http.StatusInternalServerError,
-					delay:      0,
-				},
-				{
-					statusCode: http.StatusOK,
-					body:       fmt.Sprintf("event: connect\ndata: %s\n\n", messageServer.URL),
+					Name:        "test-tool",
+					Description: "A test tool",
+					InputSchema: json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"}}}`),
 				},
 			},
-			expectedRetries: 2,
-			timeout:         30 * time.Second,
-		},
+		}
+	case "notifications/initialized":
+		w.WriteHeader(http.StatusOK)
+		return
+	default:
+		http.Error(w, "Method not found", http.StatusNotFound)
+		return
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var (
-				responseIndex = 0
-				retryCount    = 0
-				mu            sync.Mutex
-			)
-
-			// Create test server
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				mu.Lock()
-				currentIndex := responseIndex
-				if currentIndex < len(tt.serverResponses) {
-					responseIndex++
-				}
-				mu.Unlock()
-
-				if currentIndex < len(tt.serverResponses) {
-					response := tt.serverResponses[currentIndex]
-
-					if response.delay > 0 {
-						time.Sleep(response.delay)
-					}
-
-					if response.statusCode != http.StatusOK {
-						mu.Lock()
-						retryCount++
-						mu.Unlock()
-						w.WriteHeader(response.statusCode)
-						return
-					}
-
-					// Success case
-					w.Header().Set("Content-Type", "text/event-stream")
-					w.Header().Set("Cache-Control", "no-cache")
-					w.Header().Set("Connection", "keep-alive")
-					_, _ = w.Write([]byte(response.body))
-					if f, ok := w.(http.Flusher); ok {
-						f.Flush()
-					}
-
-					// Keep connection open
-					<-r.Context().Done()
-				}
-			}))
-			defer server.Close()
-
-			// Create client with testing configuration
-			stopChan := make(chan struct{})
-			reconnectChan := make(chan struct{})
-
-			client := NewSSEClient(SSEClientConfig{
-				URL:           server.URL,
-				RetryDelay:    time.Second, // Use a shorter delay for testing
-				StopChan:      stopChan,
-				ReconnectChan: reconnectChan,
-				MaxRetries:    3,
-			})
-
-			// Create context with timeout
-			_, cancel := context.WithTimeout(context.Background(), tt.timeout)
-			defer cancel()
-
-			// Start client in goroutine
-			go func() {
-				client.Start()
-			}()
-
-			// Wait for expected number of retries or timeout
-			deadline := time.After(tt.timeout)
-			for {
-				mu.Lock()
-				currentRetries := retryCount
-				mu.Unlock()
-
-				if currentRetries == tt.expectedRetries {
-					close(stopChan)
-					return
-				}
-
-				select {
-				case <-deadline:
-					close(stopChan)
-					t.Errorf("Test timed out. Got %d retries, expected %d", currentRetries, tt.expectedRetries)
-					return
-				case <-time.After(100 * time.Millisecond):
-					continue
-				}
-			}
-		})
+	if request.ID != nil {
+		jsonResponse := Response{
+			JSONRPC: "2.0",
+			ID:      request.ID,
+			Result:  response,
+		}
+		responseBytes, _ := json.Marshal(jsonResponse)
+		msgChan <- string(responseBytes)
 	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func TestConnectionFlow(t *testing.T) {
+	mockServer := newMockSSEServer(t)
+	defer mockServer.close()
+
+	client := NewSSEClient(SSEClientConfig{
+		URL:           mockServer.server.URL + "/events",
+		RetryDelay:    time.Second,
+		MaxRetries:    1,
+		ClientName:    "test-client",
+		ClientVersion: "1.0.0",
+	})
+
+	// Test connection
+	err := client.Connect()
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+
+	// Verify connection state
+	client.mu.RLock()
+	state := client.state
+	initialized := client.initialized
+	client.mu.RUnlock()
+
+	if state != Connected {
+		t.Errorf("Expected client state to be Connected, got %v", state)
+	}
+
+	if !initialized {
+		t.Error("Expected client to be initialized")
+	}
+
+	client.Close()
+}
+
+func TestToolsList(t *testing.T) {
+	mockServer := newMockSSEServer(t)
+	defer mockServer.close()
+
+	client := NewSSEClient(SSEClientConfig{
+		URL:           mockServer.server.URL + "/events",
+		RetryDelay:    time.Second,
+		MaxRetries:    1,
+		ClientName:    "test-client",
+		ClientVersion: "1.0.0",
+	})
+
+	// Connect first
+	err := client.Connect()
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+
+	// Test ListTools
+	tools, err := client.ListTools()
+	if err != nil {
+		t.Fatalf("Failed to list tools: %v", err)
+	}
+
+	if len(tools) != 1 {
+		t.Fatalf("Expected 1 tool, got %d", len(tools))
+	}
+
+	if tools[0].Name != "test-tool" {
+		t.Errorf("Expected tool name test-tool, got %s", tools[0].Name)
+	}
+
+	if tools[0].Description != "A test tool" {
+		t.Errorf("Expected tool description 'A test tool', got %s", tools[0].Description)
+	}
+
+	client.Close()
 }
