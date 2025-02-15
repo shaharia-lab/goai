@@ -6,9 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
+	"math/rand"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -37,24 +38,14 @@ type SSEClientConfig struct {
 	ClientVersion string
 	Logger        *log.Logger
 }
-
 type SSEClient struct {
-	config           SSEClientConfig
-	messageEndpoint  string
-	clientID         string
-	lastPingTime     time.Time
-	missedPings      int
-	retryAttempt     int
-	state            ConnectionState
-	stopChan         chan struct{}
-	initialized      bool
-	capabilities     Capabilities
-	protocolVersion  string
-	mu               sync.RWMutex
-	responseHandlers map[string]chan *Response
-	nextRequestID    int
-	eventStream      *http.Response
-	streamReader     *bufio.Reader
+	*BaseClient
+	config          SSEClientConfig
+	messageEndpoint string
+	clientID        string
+	lastPingTime    time.Time
+	missedPings     int
+	logger          *log.Logger
 }
 
 func NewSSEClient(config SSEClientConfig) *SSEClient {
@@ -75,95 +66,95 @@ func NewSSEClient(config SSEClientConfig) *SSEClient {
 	}
 
 	return &SSEClient{
-		config:           config,
-		stopChan:         make(chan struct{}),
-		state:            Disconnected,
-		responseHandlers: make(map[string]chan *Response),
-		nextRequestID:    1,
+		BaseClient: NewBaseClient(),
+		config:     config,
+		logger:     config.Logger,
 	}
 }
 
 func (c *SSEClient) Connect() error {
-	c.mu.Lock()
-	if c.state != Disconnected {
-		c.mu.Unlock()
+	if c.GetState() != Disconnected {
 		return fmt.Errorf("client is already connected or connecting")
 	}
-	c.state = Connecting
-	c.mu.Unlock()
 
-	c.config.Logger.Println("Starting connection process...")
+	c.setState(Connecting)
+	c.logger.Println("Starting connection process...")
 
-	// Step 1: Connect to SSE endpoint
-	c.config.Logger.Printf("Connecting to SSE endpoint: %s", c.config.URL)
+	retryCount := 0
+	for {
+		err := c.establishConnection()
+		if err == nil {
+			c.resetRetryAttempt()
+			return nil
+		}
+
+		retryCount++
+		if retryCount >= c.config.MaxRetries {
+			return fmt.Errorf("max retries reached: %v", err)
+		}
+
+		delay := c.calculateBackoff(retryCount)
+		c.logger.Printf("Connection attempt failed: %v. Retrying in %v...", err, delay)
+		time.Sleep(delay)
+	}
+}
+
+func (c *SSEClient) establishConnection() error {
+	c.logger.Printf("Connecting to SSE endpoint: %s", c.config.URL)
 	resp, err := http.Get(c.config.URL)
 	if err != nil {
 		return fmt.Errorf("failed to connect to events endpoint: %v", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		return fmt.Errorf("unexpected status code from events endpoint: %d", resp.StatusCode)
+	scanner := bufio.NewScanner(resp.Body)
+	messageEndpointChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer resp.Body.Close()
+		c.processEventStream(scanner, messageEndpointChan, errChan)
+	}()
+
+	select {
+	case endpoint := <-messageEndpointChan:
+		c.messageEndpoint = endpoint
+		c.clientID = c.extractClientID(endpoint)
+		c.logger.Printf("Received message endpoint: %s with client ID: %s", endpoint, c.clientID)
+	case err := <-errChan:
+		return fmt.Errorf("failed to get message endpoint: %v", err)
+	case <-time.After(30 * time.Second):
+		return fmt.Errorf("timeout waiting for message endpoint")
 	}
 
-	c.eventStream = resp
-	c.streamReader = bufio.NewReader(resp.Body)
-
-	// Start processing SSE stream
-	go c.processEventStream()
-
-	// Wait for message endpoint
-	c.config.Logger.Println("Waiting for message endpoint...")
-	if err := c.waitForMessageEndpoint(); err != nil {
-		return err
-	}
-	c.config.Logger.Println("Message endpoint received")
-
-	// Step 2: Send initialize request
-	c.config.Logger.Println("Sending initialize request...")
 	if err := c.sendInitializeRequest(); err != nil {
 		return fmt.Errorf("initialization failed: %v", err)
 	}
-	c.config.Logger.Println("Initialize request successful")
 
-	// Step 3: Send initialized notification
-	c.config.Logger.Println("Sending initialized notification...")
-	notification := Request{
-		JSONRPC: "2.0",
-		Method:  "notifications/initialized",
-	}
-	if err := c.sendMessage(&notification); err != nil {
+	if err := c.sendInitializedNotification(); err != nil {
 		return fmt.Errorf("failed to send initialized notification: %v", err)
 	}
-	c.config.Logger.Println("Initialized notification sent successfully")
 
-	c.mu.Lock()
-	c.state = Connected
-	c.initialized = true
-	c.mu.Unlock()
+	c.setState(Connected)
+	c.setInitialized(true)
+	c.lastPingTime = time.Now()
 
 	go c.monitorPings()
 
-	c.config.Logger.Println("Connection established successfully!")
+	c.logger.Println("Connection established successfully!")
 	return nil
 }
 
-func (c *SSEClient) processEventStream() {
-	scanner := bufio.NewScanner(c.eventStream.Body)
-	for {
+func (c *SSEClient) processEventStream(scanner *bufio.Scanner, messageEndpointChan chan string, errChan chan error) {
+	defer c.logger.Println("Event stream processing stopped")
+
+	var endpointSent bool
+	for scanner.Scan() {
 		select {
 		case <-c.stopChan:
 			return
 		default:
-			if !scanner.Scan() {
-				if err := scanner.Err(); err != nil {
-					c.config.Logger.Printf("SSE stream error: %v", err)
-				}
-				return
-			}
-
 			line := scanner.Text()
-			c.config.Logger.Printf("SSE Raw line: %s", line)
+			c.logger.Printf("SSE Raw line: %s", line)
 
 			if line == "" {
 				continue
@@ -177,73 +168,40 @@ func (c *SSEClient) processEventStream() {
 			if strings.HasPrefix(line, "data: ") {
 				data := strings.TrimPrefix(line, "data: ")
 				if strings.HasPrefix(data, "http://") || strings.HasPrefix(data, "https://") {
-					c.handleMessageEndpoint(data)
-				} else {
-					c.handleResponse(data)
+					if !endpointSent {
+						messageEndpointChan <- data
+						endpointSent = true
+					}
+					continue
+				}
+
+				var response Response
+				if err := json.Unmarshal([]byte(data), &response); err != nil {
+					c.logger.Printf("Failed to parse response: %v", err)
+					continue
+				}
+
+				if response.ID != nil {
+					idStr := strings.Trim(string(*response.ID), "\"")
+					if ch, exists := c.getResponseHandler(idStr); exists {
+						ch <- &response
+					}
 				}
 			}
 		}
 	}
-}
 
-func (c *SSEClient) waitForMessageEndpoint() error {
-	timeout := time.After(30 * time.Second)
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
+	if err := scanner.Err(); err != nil {
+		errChan <- err
+		c.setState(Disconnected)
+		c.setInitialized(false)
 
-	for {
-		select {
-		case <-timeout:
-			return fmt.Errorf("timeout waiting for message endpoint")
-		case <-ticker.C:
-			c.mu.RLock()
-			if c.messageEndpoint != "" {
-				c.mu.RUnlock()
-				return nil
+		go func() {
+			c.logger.Printf("Connection lost, attempting to reconnect...")
+			if err := c.Connect(); err != nil {
+				c.logger.Printf("Failed to reconnect: %v", err)
 			}
-			c.mu.RUnlock()
-		case <-c.stopChan:
-			return fmt.Errorf("client stopped")
-		}
-	}
-}
-
-func (c *SSEClient) handleMessageEndpoint(endpoint string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.messageEndpoint = endpoint
-	c.clientID = c.extractClientID(endpoint)
-	c.config.Logger.Printf("Received message endpoint: %s with client ID: %s", endpoint, c.clientID)
-}
-
-func (c *SSEClient) handleResponse(data string) {
-	c.config.Logger.Printf("Handling response data: %s", data)
-
-	var response Response
-	if err := json.Unmarshal([]byte(data), &response); err != nil {
-		c.config.Logger.Printf("Failed to parse response: %v", err)
-		return
-	}
-
-	if response.ID != nil {
-		idStr := strings.Trim(string(*response.ID), "\"")
-		c.config.Logger.Printf("Processing response for request ID: %s", idStr)
-
-		c.mu.RLock()
-		ch, exists := c.responseHandlers[idStr]
-		c.mu.RUnlock()
-
-		if exists {
-			c.config.Logger.Printf("Found handler for request ID: %s", idStr)
-			select {
-			case ch <- &response:
-				c.config.Logger.Printf("Response sent to handler for request ID: %s", idStr)
-			default:
-				c.config.Logger.Printf("Handler channel full for request ID: %s", idStr)
-			}
-		} else {
-			c.config.Logger.Printf("No handler found for request ID: %s", idStr)
-		}
+		}()
 	}
 }
 
@@ -252,16 +210,8 @@ func (c *SSEClient) sendInitializeRequest() error {
 	requestID := "init"
 	rawID := json.RawMessage(`"init"`)
 
-	// Register response handler before sending request
-	c.mu.Lock()
-	c.responseHandlers[requestID] = responseChan
-	c.mu.Unlock()
-
-	defer func() {
-		c.mu.Lock()
-		delete(c.responseHandlers, requestID)
-		c.mu.Unlock()
-	}()
+	c.addResponseHandler(requestID, responseChan)
+	defer c.removeResponseHandler(requestID)
 
 	params := InitializeParams{
 		ProtocolVersion: "2024-11-05",
@@ -291,21 +241,15 @@ func (c *SSEClient) sendInitializeRequest() error {
 	}
 	request.Params = paramsBytes
 
-	c.config.Logger.Printf("Registered handler for request ID: %s", requestID)
 	if err := c.sendMessage(&request); err != nil {
 		return err
 	}
 
-	c.config.Logger.Println("Waiting for initialize response...")
 	select {
 	case response := <-responseChan:
-		c.config.Logger.Println("Received initialize response")
 		if response.Error != nil {
-			return fmt.Errorf("server error: %s (code: %d)",
-				response.Error.Message, response.Error.Code)
+			return fmt.Errorf("server error: %s (code: %d)", response.Error.Message, response.Error.Code)
 		}
-
-		c.config.Logger.Printf("Response Result: %+v", response.Result)
 
 		var result InitializeResult
 		resultBytes, err := json.Marshal(response.Result)
@@ -317,12 +261,10 @@ func (c *SSEClient) sendInitializeRequest() error {
 			return fmt.Errorf("failed to parse initialize result: %v", err)
 		}
 
-		c.mu.Lock()
-		c.capabilities = result.Capabilities
-		c.protocolVersion = result.ProtocolVersion
-		c.mu.Unlock()
+		c.setCapabilities(result.Capabilities)
+		c.setProtocolVersion(result.ProtocolVersion)
 
-		c.config.Logger.Printf("Server capabilities received: %+v", result.Capabilities)
+		c.logger.Printf("Server capabilities received: %+v", result.Capabilities)
 		return nil
 
 	case <-time.After(30 * time.Second):
@@ -331,7 +273,7 @@ func (c *SSEClient) sendInitializeRequest() error {
 }
 
 func (c *SSEClient) sendInitializedNotification() error {
-	notification := Request{
+	notification := Notification{
 		JSONRPC: "2.0",
 		Method:  "notifications/initialized",
 	}
@@ -339,29 +281,19 @@ func (c *SSEClient) sendInitializedNotification() error {
 }
 
 func (c *SSEClient) ListTools() ([]Tool, error) {
-	c.mu.RLock()
-	if c.state != Connected || !c.initialized {
-		c.mu.RUnlock()
+	if c.GetState() != Connected || !c.IsInitialized() {
 		return nil, fmt.Errorf("client is not connected and initialized")
 	}
-	c.mu.RUnlock()
 
-	c.config.Logger.Println("Requesting tools list...")
+	c.logger.Println("Requesting tools list...")
 
 	responseChan := make(chan *Response, 1)
 	requestID := "tools-list"
-
-	c.mu.Lock()
-	c.responseHandlers[requestID] = responseChan
-	c.mu.Unlock()
-
-	defer func() {
-		c.mu.Lock()
-		delete(c.responseHandlers, requestID)
-		c.mu.Unlock()
-	}()
-
 	rawID := json.RawMessage(fmt.Sprintf(`"%s"`, requestID))
+
+	c.addResponseHandler(requestID, responseChan)
+	defer c.removeResponseHandler(requestID)
+
 	request := Request{
 		JSONRPC: "2.0",
 		Method:  "tools/list",
@@ -373,28 +305,23 @@ func (c *SSEClient) ListTools() ([]Tool, error) {
 		return nil, fmt.Errorf("failed to send tools/list request: %v", err)
 	}
 
-	c.config.Logger.Println("Waiting for tools list response...")
-
 	select {
 	case response := <-responseChan:
 		if response.Error != nil {
-			return nil, fmt.Errorf("server error: %s (code: %d)",
-				response.Error.Message, response.Error.Code)
+			return nil, fmt.Errorf("server error: %s (code: %d)", response.Error.Message, response.Error.Code)
 		}
 
-		c.config.Logger.Printf("Response Result: %+v", response.Result)
-
+		var result ListToolsResult
 		resultBytes, err := json.Marshal(response.Result)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal result: %v", err)
 		}
 
-		var result ListToolsResult
 		if err := json.Unmarshal(resultBytes, &result); err != nil {
 			return nil, fmt.Errorf("failed to parse tools list: %v", err)
 		}
 
-		c.config.Logger.Printf("Received %d tools from server", len(result.Tools))
+		c.logger.Printf("Received %d tools from server", len(result.Tools))
 		return result.Tools, nil
 
 	case <-time.After(30 * time.Second):
@@ -403,11 +330,7 @@ func (c *SSEClient) ListTools() ([]Tool, error) {
 }
 
 func (c *SSEClient) sendMessage(message interface{}) error {
-	c.mu.RLock()
-	endpoint := c.messageEndpoint
-	c.mu.RUnlock()
-
-	if endpoint == "" {
+	if c.messageEndpoint == "" {
 		return fmt.Errorf("no message endpoint available")
 	}
 
@@ -416,9 +339,9 @@ func (c *SSEClient) sendMessage(message interface{}) error {
 		return fmt.Errorf("failed to marshal message: %v", err)
 	}
 
-	c.config.Logger.Printf("Sending message: %s", string(jsonData))
+	c.logger.Printf("Sending message: %s", string(jsonData))
 
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest(http.MethodPost, c.messageEndpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}
@@ -438,22 +361,13 @@ func (c *SSEClient) sendMessage(message interface{}) error {
 }
 
 func (c *SSEClient) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.state == Disconnected {
+	if c.GetState() == Disconnected {
 		return nil
 	}
 
 	close(c.stopChan)
-
-	if c.eventStream != nil {
-		c.eventStream.Body.Close()
-		c.eventStream = nil
-	}
-
-	c.state = Disconnected
-	c.initialized = false
+	c.setState(Disconnected)
+	c.setInitialized(false)
 	return nil
 }
 
@@ -462,7 +376,7 @@ func (c *SSEClient) handlePing() {
 	c.lastPingTime = time.Now()
 	c.missedPings = 0
 	c.mu.Unlock()
-	c.config.Logger.Println("Received ping from server")
+	c.logger.Println("Received ping from server")
 }
 
 func (c *SSEClient) monitorPings() {
@@ -485,14 +399,36 @@ func (c *SSEClient) checkPingStatus() {
 
 	if time.Since(c.lastPingTime) > 2*pingInterval {
 		c.missedPings++
-		c.config.Logger.Printf("Missed ping #%d", c.missedPings)
+		c.logger.Printf("Missed ping #%d", c.missedPings)
 
 		if c.missedPings >= defaultMaxMissedPings {
-			c.config.Logger.Printf("Connection lost (missed %d pings)", c.missedPings)
+			c.logger.Printf("Connection lost (missed %d pings)", c.missedPings)
 			c.state = Disconnected
 			c.initialized = false
+
+			go func() {
+				c.logger.Println("Attempting to reconnect...")
+				if err := c.Connect(); err != nil {
+					c.logger.Printf("Failed to reconnect: %v", err)
+				}
+			}()
 		}
 	}
+}
+
+func (c *SSEClient) calculateBackoff(attempt int) time.Duration {
+	baseDelay := c.config.RetryDelay
+	maxDelay := defaultMaxRetryDelay
+
+	backoff := float64(baseDelay) * math.Pow(2, float64(attempt-1))
+	if backoff > float64(maxDelay) {
+		backoff = float64(maxDelay)
+	}
+
+	jitter := 0.1
+	backoff = backoff * (1 + jitter*(2*rand.Float64()-1))
+
+	return time.Duration(backoff)
 }
 
 func (c *SSEClient) extractClientID(endpoint string) string {

@@ -4,53 +4,39 @@ import (
 	"github.com/shaharia-lab/goai/mcp"
 	"log"
 	"os"
-	"os/exec"
+	"time"
 )
 
 func main() {
-	logger := log.New(os.Stderr, "Client: ", log.LstdFlags)
+	logger := log.New(os.Stdout, "[SSE Client] ", log.LstdFlags)
 
-	// Start the server process
-	serverCmd := exec.Command("go", "run", "./test") // Path to your server binary
-
-	// Get pipes to the server process
-	serverIn, err := serverCmd.StdinPipe()
-	if err != nil {
-		logger.Fatalf("Failed to get server stdin pipe: %v", err)
+	config := mcp.SSEClientConfig{
+		URL:           "http://localhost:8080/events",
+		RetryDelay:    5 * time.Second,
+		MaxRetries:    5,
+		ClientName:    "example-client",
+		ClientVersion: "1.0.0",
+		Logger:        logger,
 	}
 
-	serverOut, err := serverCmd.StdoutPipe()
-	if err != nil {
-		logger.Fatalf("Failed to get server stdout pipe: %v", err)
-	}
+	client := mcp.NewSSEClient(config)
 
-	// Start the server
-	if err := serverCmd.Start(); err != nil {
-		logger.Fatalf("Failed to start server: %v", err)
-	}
+	defer client.Close()
 
-	// Create and connect client
-	clientConfig := mcp.StdIOClientConfig{
-		Logger: logger,
-		Reader: serverOut,
-		Writer: serverIn,
-	}
-
-	client := mcp.NewStdIOClient(clientConfig)
-
+	// Connect to the server
 	if err := client.Connect(); err != nil {
-		logger.Fatalf("Failed to connect client: %v", err)
+		logger.Fatalf("Failed to connect: %v", err)
 	}
+	logger.Println("Successfully connected to the server")
 
-	// Use the client
+	// List available tools
 	tools, err := client.ListTools()
 	if err != nil {
-		logger.Fatalf("Failed to list tools: %v", err)
+		logger.Printf("Failed to list tools: %v", err)
+	} else {
+		logger.Printf("Found %d tools", len(tools))
+		for _, tool := range tools {
+			logger.Printf("Tool: %s - %s", tool.Name, tool.Description)
+		}
 	}
-	logger.Printf("Available tools: %+v", tools)
-
-	// Cleanup
-	client.Close()
-	serverCmd.Process.Kill()
-	serverCmd.Wait()
 }
