@@ -42,26 +42,27 @@ Resources represent content accessible via URIs. They support various MIME types
 binary content. Resources can be listed and read through the protocol.
 
 ### MCP Server Compatibility Matrix
-
-| Feature | Status | Notes |
-|---------|---------|-------|
-| **Base Protocol** | ✅ Fully Compatible | Implements JSON-RPC 2.0, stateful connections, and capability negotiation. |
-| **Lifecycle Management** | ✅ Fully Compatible | Supports initialization, operation, shutdown, version & capability negotiation. |
-| **Resources** | ✅ Fully Compatible | Supports listing, reading resources, and resource list change notifications. |
-| **Prompts** | ✅ Fully Compatible | Supports listing and getting prompts and prompt list change notifications. |
-| **Tools** | ✅ Fully Compatible | Supports listing and calling tools, and tool list change notifications. |
-| **Sampling** | 🚫 Not Implemented | No implementation for server-initiated sampling. Sampling is a client feature. |
-| **Logging** | ✅ Fully Compatible | Supports structured log messages and setting log levels |
-| **Ping** | ✅ Fully Compatible | Implemented |
-| **Cancellation** | 🔲 Partial | Supports cancellation notifications but ignores them. |
-| **Progress Tracking** | 🔲 Partial | Mentioned in spec, but no implementation in the Go server code. |
-| **Pagination** | ✅ Fully Compatible | Implemented for listing resources, prompts, and tools. |
-| **Completion** | 🚫 Not Implemented | No implementation in the code |
-| **StdIO Transport** | ✅ Fully Compatible | Implemented |
-| **SSE Transport** | ✅ Fully Compatible | Implemented |
-| **Custom Transports** | 🔲 Partial | Protocol allows for custom transports, but no implementation in sources. |
-| **Authentication/Authorization** | 🚫 Not Implemented | Not implemented in core protocol, custom strategies can be negotiated. |
-| **Roots** | 🚫 Not Implemented | Not a server feature |
+<!--nolint-->
+| Feature                          | Status             | Notes                                                                           |
+|----------------------------------|--------------------|---------------------------------------------------------------------------------|
+| **Base Protocol**                | ✅ Fully Compatible | Implements JSON-RPC 2.0, stateful connections, and capability negotiation.      |
+| **Lifecycle Management**         | ✅ Fully Compatible | Supports initialization, operation, shutdown, version & capability negotiation. |
+| **Resources**                    | ✅ Fully Compatible | Supports listing, reading resources, and resource list change notifications.    |
+| **Prompts**                      | ✅ Fully Compatible | Supports listing and getting prompts and prompt list change notifications.      |
+| **Tools**                        | ✅ Fully Compatible | Supports listing and calling tools, and tool list change notifications.         |
+| **Sampling**                     | 🚫 Not Implemented | No implementation for server-initiated sampling. Sampling is a client feature.  |
+| **Logging**                      | ✅ Fully Compatible | Supports structured log messages and setting log levels                         |
+| **Ping**                         | ✅ Fully Compatible | Implemented                                                                     |
+| **Cancellation**                 | 🔲 Partial         | Supports cancellation notifications but ignores them.                           |
+| **Progress Tracking**            | 🔲 Partial         | Mentioned in spec, but no implementation in the Go server code.                 |
+| **Pagination**                   | ✅ Fully Compatible | Implemented for listing resources, prompts, and tools.                          |
+| **Completion**                   | 🚫 Not Implemented | No implementation in the code                                                   |
+| **StdIO Transport**              | ✅ Fully Compatible | Implemented                                                                     |
+| **SSE Transport**                | ✅ Fully Compatible | Implemented                                                                     |
+| **Custom Transports**            | 🔲 Partial         | Protocol allows for custom transports, but no implementation in sources.        |
+| **Authentication/Authorization** | 🚫 Not Implemented | Not implemented in core protocol, custom strategies can be negotiated.          |
+| **Roots**                        | 🚫 Not Implemented | Not a server feature                                                            |
+<!--nolint-->
 
 **Notes:**
 
@@ -270,6 +271,7 @@ func main() {
 
 ### StdIO Client
 
+<!--nolint-->
 ```go
 package main
 
@@ -334,3 +336,4 @@ func main() {
 	fmt.Scanln()
 }
 ```
+<!--nolint-->
