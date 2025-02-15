@@ -1,44 +1,56 @@
 package main
 
 import (
+	"github.com/shaharia-lab/goai/mcp"
 	"log"
 	"os"
-	"time"
-
-	"github.com/shaharia-lab/goai/mcp"
+	"os/exec"
 )
 
 func main() {
-	logger := log.New(os.Stdout, "[SSE Client] ", log.LstdFlags)
+	logger := log.New(os.Stderr, "Client: ", log.LstdFlags)
 
-	client := mcp.NewSSEClient(mcp.SSEClientConfig{
-		URL:           "http://localhost:8080/events",
-		RetryDelay:    5 * time.Second,
-		MaxRetries:    5,
-		ClientName:    "example-client",
-		ClientVersion: "1.0.0",
-		Logger:        logger,
-	})
+	// Start the server process
+	serverCmd := exec.Command("go", "run", "./test") // Path to your server binary
 
-	defer client.Close()
-
-	// Connect to the server
-	if err := client.Connect(); err != nil {
-		logger.Fatalf("Failed to connect: %v", err)
+	// Get pipes to the server process
+	serverIn, err := serverCmd.StdinPipe()
+	if err != nil {
+		logger.Fatalf("Failed to get server stdin pipe: %v", err)
 	}
 
-	logger.Println("Successfully connected to the server")
+	serverOut, err := serverCmd.StdoutPipe()
+	if err != nil {
+		logger.Fatalf("Failed to get server stdout pipe: %v", err)
+	}
 
-	// List available tools
+	// Start the server
+	if err := serverCmd.Start(); err != nil {
+		logger.Fatalf("Failed to start server: %v", err)
+	}
+
+	// Create and connect client
+	clientConfig := mcp.StdIOClientConfig{
+		Logger: logger,
+		Reader: serverOut,
+		Writer: serverIn,
+	}
+
+	client := mcp.NewStdIOClient(clientConfig)
+
+	if err := client.Connect(); err != nil {
+		logger.Fatalf("Failed to connect client: %v", err)
+	}
+
+	// Use the client
 	tools, err := client.ListTools()
 	if err != nil {
-		logger.Printf("Failed to list tools: %v", err)
-	} else {
-		logger.Printf("Available tools: %d", len(tools))
-		for _, tool := range tools {
-			logger.Printf("Tool: %s", tool.Name)
-			logger.Printf("  Description: %s", tool.Description)
-			logger.Printf("  Input Schema: %s", string(tool.InputSchema))
-		}
+		logger.Fatalf("Failed to list tools: %v", err)
 	}
+	logger.Printf("Available tools: %+v", tools)
+
+	// Cleanup
+	client.Close()
+	serverCmd.Process.Kill()
+	serverCmd.Wait()
 }

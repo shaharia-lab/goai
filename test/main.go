@@ -156,14 +156,14 @@ func main() {
 		panic(err)
 	}
 
-	server := mcp.NewSSEServer(baseServer)
-	server.SetAddress(":8080")
+	/*server := mcp.NewSSEServer(baseServer)
+	server.SetAddress(":8080")*/
 
-	/*server := mcp.NewStdIOServer(
+	server := mcp.NewStdIOServer(
 		baseServer,
 		os.Stdin,
 		os.Stdout,
-	)*/
+	)
 	ctx := context.Background()
 	if err := server.Run(ctx); err != nil {
 		panic(err)
