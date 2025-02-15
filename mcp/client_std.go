@@ -11,8 +11,6 @@ import (
 	"sync"
 )
 
-// --- StdIO Transport ---
-
 type StdIOTransport struct {
 	config          StdIOConfig
 	logger          *log.Logger
@@ -27,7 +25,7 @@ type StdIOTransport struct {
 func NewStdIOTransport() *StdIOTransport {
 	return &StdIOTransport{
 		stopChan: make(chan struct{}),
-		logger:   log.Default(), // Default
+		logger:   log.Default(),
 		state:    Disconnected,
 	}
 }
@@ -35,8 +33,6 @@ func NewStdIOTransport() *StdIOTransport {
 func (t *StdIOTransport) SetReceiveMessageCallback(callback func(message []byte)) {
 	t.receiveCallback = callback
 }
-
-// Remove RegisterResponseHandler and RemoveResponseHandler
 
 func (t *StdIOTransport) Connect(config ClientConfig) error {
 	t.config = config.StdIO
@@ -70,7 +66,7 @@ func (t *StdIOTransport) processIncomingMessages() {
 			t.receiveCallback([]byte(line))
 		}
 	}
-	// Handle scanner errors (but not "file already closed")
+
 	if err := scanner.Err(); err != nil && !strings.Contains(err.Error(), "file already closed") {
 		t.logger.Printf("Scanner error: %v", err)
 	}
@@ -82,7 +78,7 @@ func (t *StdIOTransport) SendMessage(message interface{}) error {
 		return fmt.Errorf("failed to marshal message: %v", err)
 	}
 
-	jsonData = append(jsonData, '\n') // Add newline for StdIO
+	jsonData = append(jsonData, '\n')
 	t.logger.Printf("Sending message: %s", string(jsonData))
 
 	_, err = t.writer.Write(jsonData)

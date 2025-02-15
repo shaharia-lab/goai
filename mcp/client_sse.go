@@ -13,7 +13,7 @@ import (
 )
 
 type SSETransport struct {
-	client          *http.Client // Use a dedicated client for better control
+	client          *http.Client
 	config          SSEConfig
 	logger          *log.Logger
 	stopChan        chan struct{}
@@ -30,7 +30,7 @@ func NewSSETransport() *SSETransport {
 	return &SSETransport{
 		client:          &http.Client{},
 		stopChan:        make(chan struct{}),
-		logger:          log.Default(), // Default logger
+		logger:          log.Default(),
 		messageEndpoint: defaultMessageEndpoint,
 		state:           Disconnected,
 	}
@@ -39,8 +39,6 @@ func NewSSETransport() *SSETransport {
 func (t *SSETransport) SetReceiveMessageCallback(callback func(message []byte)) {
 	t.receiveCallback = callback
 }
-
-// Remove RegisterResponseHandler and RemoveResponseHandler
 
 func (t *SSETransport) Connect(config ClientConfig) error {
 	t.config = config.SSE
@@ -60,7 +58,6 @@ func (t *SSETransport) Connect(config ClientConfig) error {
 			t.logger.Printf("Connection attempt failed: %v, Retrying in %v...", err, delay)
 			select {
 			case <-time.After(delay):
-				//continue retry
 			case <-t.stopChan:
 				return fmt.Errorf("connection cancelled")
 			}
@@ -118,7 +115,7 @@ func (t *SSETransport) processEventStream(scanner *bufio.Scanner, messageEndpoin
 			config.Logger.Printf("SSE Raw line: %s", line)
 
 			if line == "" {
-				continue // Skip empty lines
+				continue
 			}
 
 			if line == ":ping" {
@@ -136,7 +133,7 @@ func (t *SSETransport) processEventStream(scanner *bufio.Scanner, messageEndpoin
 					continue
 				}
 
-				t.receiveCallback([]byte(data)) // Centralized handling
+				t.receiveCallback([]byte(data))
 			}
 		}
 	}
@@ -144,7 +141,6 @@ func (t *SSETransport) processEventStream(scanner *bufio.Scanner, messageEndpoin
 	if err := scanner.Err(); err != nil {
 		errChan <- err
 		t.state = Disconnected
-		//Do not reconnect here. client.Connect() handles it.
 	}
 }
 
@@ -166,7 +162,7 @@ func (t *SSETransport) SendMessage(message interface{}) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req) // Consider using t.client for consistency
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send message: %v", err)
 	}
@@ -223,8 +219,7 @@ func (t *SSETransport) checkPingStatus() {
 
 		if t.missedPings >= defaultMaxMissedPings {
 			t.logger.Printf("Connection lost (missed %d pings)", t.missedPings)
-			t.state = Disconnected // Set state to Disconnected.
-			// Do not reconnect here, let client.Connect() handles it.
+			t.state = Disconnected
 		}
 	}
 }

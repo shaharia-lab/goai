@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// Constants (Consolidated)
 const (
 	defaultBaseRetryDelay  = 5 * time.Second
 	defaultMaxRetryDelay   = 30 * time.Second
@@ -19,7 +18,7 @@ const (
 	defaultMaxMissedPings  = 2
 	defaultClientName      = "mcp-client"
 	defaultClientVersion   = "1.0.0"
-	defaultMessageEndpoint = "" //Default value for message endpoint
+	defaultMessageEndpoint = ""
 )
 
 type ConnectionState int
@@ -35,7 +34,7 @@ type SSEConfig struct {
 }
 
 type StdIOConfig struct {
-	Reader io.Reader // Use interfaces for testability
+	Reader io.Reader
 	Writer io.Writer
 }
 
@@ -49,8 +48,6 @@ type ClientConfig struct {
 	StdIO           StdIOConfig
 	MessageEndpoint string
 }
-
-// --- Transport Interface ---
 
 type Transport interface {
 	Connect(config ClientConfig) error
@@ -173,7 +170,7 @@ func (c *Client) processReceivedMessage(message []byte) {
 			case ch <- &response:
 				c.logger.Printf("Response sent to handler for request ID: %s", idStr)
 			default:
-				c.logger.Printf("Handler channel full for request ID: %s", idStr) // Consider buffering or error
+				c.logger.Printf("Handler channel full for request ID: %s", idStr)
 			}
 		} else {
 			c.logger.Printf("No handler found for request ID: %s", idStr)
@@ -228,18 +225,16 @@ func (c *Client) sendInitializeRequest() error {
 
 	select {
 	case genericResponse := <-responseChan:
-		defer c.wg.Done() // Decrement WaitGroup
+		defer c.wg.Done()
 		if genericResponse.Error != nil {
 			return fmt.Errorf("server error: %s (code: %d)", genericResponse.Error.Message, genericResponse.Error.Code)
 		}
 
-		// 1. MARSHAL the interface{} back into JSON (a []byte)
 		rawResult, err := json.Marshal(genericResponse.Result)
 		if err != nil {
 			return fmt.Errorf("failed to marshal result into raw message: %v", err)
 		}
 
-		// 2. NOW unmarshal the raw JSON into the specific InitializeResponse
 		var initResponse InitializeResponse
 		if err := json.Unmarshal(rawResult, &initResponse); err != nil {
 			return fmt.Errorf("failed to unmarshal raw message into initialize response: %v", err)
@@ -254,7 +249,7 @@ func (c *Client) sendInitializeRequest() error {
 		return nil
 
 	case <-time.After(30 * time.Second):
-		defer c.wg.Done() // Decrement WaitGroup on timeout
+		defer c.wg.Done()
 		return fmt.Errorf("initialize request timeout")
 	}
 }
@@ -281,11 +276,10 @@ func (c *Client) ListTools() ([]Tool, error) {
 	requestID := "tools-list"
 	rawID := json.RawMessage(fmt.Sprintf(`"%s"`, requestID))
 
-	// Use the Client's methods for handler management:
 	c.registerResponseHandler(requestID, responseChan)
 	defer c.removeResponseHandler(requestID)
 
-	c.wg.Add(1) // Increment WaitGroup
+	c.wg.Add(1)
 
 	request := Request{
 		JSONRPC: "2.0",
@@ -295,24 +289,21 @@ func (c *Client) ListTools() ([]Tool, error) {
 	}
 
 	if err := c.transport.SendMessage(&request); err != nil {
-		c.wg.Done() // Decrement if sending fails
+		c.wg.Done()
 		return nil, fmt.Errorf("failed to send tools/list request: %v", err)
 	}
 
 	select {
 	case response := <-responseChan:
-		defer c.wg.Done() // Decrement WaitGroup
+		defer c.wg.Done()
 		if response.Error != nil {
 			return nil, fmt.Errorf("server error: %s (code: %d)", response.Error.Message, response.Error.Code)
 		}
 
-		// 1. MARSHAL the interface{} back into JSON (a []byte)
 		rawResult, err := json.Marshal(response.Result)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal result into raw message: %v", err)
 		}
-
-		// 2. NOW unmarshal the raw JSON into the specific ListToolsResult
 
 		var result ListToolsResult
 		if err := json.Unmarshal(rawResult, &result); err != nil {
@@ -321,7 +312,7 @@ func (c *Client) ListTools() ([]Tool, error) {
 		return result.Tools, nil
 
 	case <-time.After(30 * time.Second):
-		defer c.wg.Done() // Decrement WaitGroup on timeout
+		defer c.wg.Done()
 		return nil, fmt.Errorf("tools/list request timeout")
 	}
 }
@@ -335,7 +326,7 @@ func (c *Client) Close() error {
 
 	c.logger.Println("Shutting down client...")
 
-	c.wg.Wait() // Wait for all outstanding requests
+	c.wg.Wait()
 
 	if err := c.transport.Close(); err != nil {
 		c.mu.Unlock()
@@ -349,35 +340,30 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// GetState is a convenience method to get the client's state.
 func (c *Client) GetState() ConnectionState {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.state
 }
 
-// IsInitialized checks if the client has been initialized.
 func (c *Client) IsInitialized() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.initialized
 }
 
-// GetCapabilities returns the client's capabilities.
 func (c *Client) GetCapabilities() Capabilities {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.capabilities
 }
 
-// GetProtocolVersion returns the protocol version in use.
 func (c *Client) GetProtocolVersion() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.protocolVersion
 }
 
-// Helper function to calculate exponential backoff with jitter.
 func calculateBackoff(baseDelay time.Duration, attempt int) time.Duration {
 	maxDelay := defaultMaxRetryDelay
 
@@ -386,7 +372,7 @@ func calculateBackoff(baseDelay time.Duration, attempt int) time.Duration {
 		backoff = float64(maxDelay)
 	}
 
-	jitter := 0.1 // Add +/- 10% jitter
+	jitter := 0.1
 	backoff = backoff * (1 + jitter*(2*rand.Float64()-1))
 
 	return time.Duration(backoff)
