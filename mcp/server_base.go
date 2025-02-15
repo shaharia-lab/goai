@@ -25,12 +25,13 @@ type ServerConfig struct {
 	serverName       string
 	serverVersion    string
 	minLogLevel      LogLevel
-	capabilities     map[string]any
+	capabilities     Capabilities
 	initialResources []Resource
 	initialTools     []Tool
 	initialPrompts   []Prompt
 	prompts          *Prompt
 	resources        []Resource
+	sseServerPort    string
 }
 
 // ServerConfigOption is a function that modifies ServerConfig
@@ -58,6 +59,18 @@ func UseLogLevel(level LogLevel) ServerConfigOption {
 	}
 }
 
+func UseCapabilities(capabilities Capabilities) ServerConfigOption {
+	return func(c *ServerConfig) {
+		c.capabilities = capabilities
+	}
+}
+
+func UseSSEServerPort(port string) ServerConfigOption {
+	return func(c *ServerConfig) {
+		c.sseServerPort = port
+	}
+}
+
 // BaseServer contains the common fields and methods for all MCP server implementations.
 type BaseServer struct {
 	protocolVersion    string
@@ -67,11 +80,12 @@ type BaseServer struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	}
-	capabilities map[string]any
-	minLogLevel  LogLevel
-	tools        map[string]Tool
-	prompts      map[string]Prompt
-	resources    map[string]Resource
+	sseServerPort string
+	capabilities  Capabilities
+	minLogLevel   LogLevel
+	tools         map[string]Tool
+	prompts       map[string]Prompt
+	resources     map[string]Resource
 
 	supportsPromptListChanged bool
 	supportsToolListChanged   bool
@@ -92,10 +106,7 @@ func NewBaseServer(opts ...ServerConfigOption) (*BaseServer, error) {
 	s := &BaseServer{
 		protocolVersion: cfg.protocolVersion,
 		logger:          cfg.logger,
-		ServerInfo: struct {
-			Name    string `json:"name"`
-			Version string `json:"version"`
-		}{
+		ServerInfo: ServerInfo{
 			Name:    cfg.serverName,
 			Version: cfg.serverVersion,
 		},
@@ -107,6 +118,7 @@ func NewBaseServer(opts ...ServerConfigOption) (*BaseServer, error) {
 		tools:                     make(map[string]Tool),
 		prompts:                   make(map[string]Prompt),
 		resources:                 make(map[string]Resource),
+		sseServerPort:             cfg.sseServerPort,
 	}
 
 	if len(s.tools) > 0 {
@@ -177,18 +189,19 @@ func defaultConfig() *ServerConfig {
 		protocolVersion: ProtocolVersion,
 		serverName:      defaultServerName,
 		serverVersion:   serverVersion,
+		sseServerPort:   ":8080",
 		minLogLevel:     LogLevelInfo,
-		capabilities: map[string]any{
-			"resources": map[string]any{
-				"listChanged": true,
-				"subscribe":   true,
+		capabilities: Capabilities{
+			Resources: CapabilitiesResources{
+				ListChanged: true,
+				Subscribe:   true,
 			},
-			"logging": map[string]any{},
-			"tools": map[string]any{
-				"listChanged": true,
+			Logging: CapabilitiesLogging{},
+			Tools: CapabilitiesTools{
+				ListChanged: true,
 			},
-			"prompts": map[string]any{
-				"listChanged": true,
+			Prompts: CapabilitiesPrompts{
+				ListChanged: true,
 			},
 		},
 	}
@@ -413,7 +426,7 @@ func (s *BaseServer) handleToolsList(clientID string, request *Request) {
 		return
 	}
 
-	s.sendResp(clientID, request.ID, s.ListTools(params.Cursor, 0), nil)
+	s.sendResp(clientID, request.ID, s.ListTools(params.Cursor, 1), nil)
 }
 
 func (s *BaseServer) handleToolsCall(clientID string, request *Request) {
@@ -518,15 +531,11 @@ func (s *BaseServer) handlePromptGet(clientID string, request *Request) {
 
 // Helper functions
 func (s *BaseServer) updateSupportedCapabilities() {
-	if promptCaps, ok := s.capabilities["prompts"].(map[string]any); ok {
-		if listChanged, ok := promptCaps["listChanged"].(bool); ok && listChanged {
-			s.supportsPromptListChanged = true
-		}
+	if s.capabilities.Prompts.ListChanged {
+		s.supportsPromptListChanged = true
 	}
-	if toolCaps, ok := s.capabilities["tools"].(map[string]any); ok {
-		if listChanged, ok := toolCaps["listChanged"].(bool); ok && listChanged {
-			s.supportsToolListChanged = true
-		}
+	if s.capabilities.Tools.ListChanged {
+		s.supportsToolListChanged = true
 	}
 }
 

@@ -43,25 +43,28 @@ binary content. Resources can be listed and read through the protocol.
 
 ### MCP Server Compatibility Matrix
 
-| Feature                          | Status             | Notes                                                                                                |
-|----------------------------------|--------------------|------------------------------------------------------------------------------------------------------|
-| **Base Protocol**                | ✅ Fully Compatible | Implements JSON-RPC 2.0, stateful connections, and capability negotiation.                           |
-| **Lifecycle Management**         | ✅ Fully Compatible | Supports initialization, operation, shutdown, version & capability negotiation.                      |
-| **Resources**                    | ✅ Fully Compatible | Supports listing, reading resources, and resource list change notifications.                         |
-| **Prompts**                      | ✅ Fully Compatible | Supports listing and getting prompts and prompt list change notifications.                           |
-| **Tools**                        | ✅ Fully Compatible | Supports listing and calling tools, and tool list change notifications.                              |
-| **Sampling**                     | 🚫 Not Implemented | No implementation for server-initiated sampling.  Sampling is a client feature.                      |
-| **Logging**                      | ✅ Fully Compatible | Supports structured log messages and setting log levels                                              |
-| **Ping**                         | ✅ Fully Compatible | Implemented                                                                                          |
-| **Cancellation**                 | 🔲 Partial         | Placeholder exists, but not fully implemented. Supports cancellation notifications but ignores them. |
-| **Progress Tracking**            | 🔲 Partial         | Mentioned in spec, but no implementation in the Go server code.                                      |
-| **Pagination**                   | ✅ Fully Compatible | Implemented for listing resources, prompts, and tools.                                               |
-| **Completion**                   | 🚫 Not Implemented | No implementation in the code                                                                        |
-| **StdIO Transport**              | ✅ Fully Compatible | Implemented                                                                                          |
-| **SSE Transport**                | ✅ Fully Compatible | Implemented                                                                                          |
-| **Custom Transports**            | 🔲 Partial         | Protocol allows for custom transports, but no implementation is in the sources.                      |
-| **Authentication/Authorization** | 🚫 Not Implemented | Not implemented in the core protocol, custom strategies can be negotiated.                           |
-| **Roots**                        | 🚫 Not Implemented | Not a server feature                                                                                 |
+<!-- markdownlint-disable -->
+| Feature                          | Status             | Notes                                                                           |
+|----------------------------------|--------------------|---------------------------------------------------------------------------------|
+| **Base Protocol**                | ✅ Fully Compatible | Implements JSON-RPC 2.0, stateful connections, and capability negotiation.      |
+| **Lifecycle Management**         | ✅ Fully Compatible | Supports initialization, operation, shutdown, version & capability negotiation. |
+| **Resources**                    | ✅ Fully Compatible | Supports listing, reading resources, and resource list change notifications.    |
+| **Prompts**                      | ✅ Fully Compatible | Supports listing and getting prompts and prompt list change notifications.      |
+| **Tools**                        | ✅ Fully Compatible | Supports listing and calling tools, and tool list change notifications.         |
+| **Sampling**                     | 🚫 Not Implemented | No implementation for server-initiated sampling. Sampling is a client feature.  |
+| **Logging**                      | ✅ Fully Compatible | Supports structured log messages and setting log levels                         |
+| **Ping**                         | ✅ Fully Compatible | Implemented                                                                     |
+| **Cancellation**                 | 🔲 Partial         | Supports cancellation notifications but ignores them.                           |
+| **Progress Tracking**            | 🔲 Partial         | Mentioned in spec, but no implementation in the Go server code.                 |
+| **Pagination**                   | ✅ Fully Compatible | Implemented for listing resources, prompts, and tools.                          |
+| **Completion**                   | 🚫 Not Implemented | No implementation in the code                                                   |
+| **StdIO Transport**              | ✅ Fully Compatible | Implemented                                                                     |
+| **SSE Transport**                | ✅ Fully Compatible | Implemented                                                                     |
+| **Custom Transports**            | 🔲 Partial         | Protocol allows for custom transports, but no implementation in sources.        |
+| **Authentication/Authorization** | 🚫 Not Implemented | Not implemented in core protocol, custom strategies can be negotiated.          |
+| **Roots**                        | 🚫 Not Implemented | Not a server feature                                                            |
+
+<!-- markdownlint-enable -->
 
 **Notes:**
 
@@ -69,7 +72,9 @@ binary content. Resources can be listed and read through the protocol.
 - 🔲 Partial - Feature is partially implemented or has some limitations.
 - 🚫 Not Implemented - Feature is not implemented.
 
-### SSE Server
+## Server
+
+### SSE (Server-Sent Events) Server
 
 ```go
 baseServer, err := mcp.NewBaseServer(
@@ -100,7 +105,7 @@ ctx := context.Background()
 server.Run(ctx)
 ```
 
-### Custom Tool
+### Integrate Custom Tool
 
 ```go
 tool := mcp.Tool{
@@ -162,7 +167,7 @@ resource := mcp.Resource{
 baseServer.AddResources(resource)
 ```
 
-## Complete Example
+### Complete Example for Server
 
 ```go
 package main
@@ -221,3 +226,117 @@ func main() {
     }
 }
 ```
+
+## Client
+
+### SSE (Server-Sent Events) Client
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "os"
+    "time"
+
+    "github.com/shaharia-lab/goai/mcp"
+)
+
+func main() {
+    sseConfig := mcp.ClientConfig{
+        ClientName:    "MySSEClient",
+        ClientVersion: "1.0.0",
+        Logger:        log.New(os.Stdout, "[SSE] ", log.LstdFlags),
+        RetryDelay:    5 * time.Second,
+        MaxRetries:    3,
+        SSE: mcp.SSEConfig{
+            URL: "http://localhost:8080/events", // Replace with your SSE endpoint
+        },
+    }
+
+    sseTransport := mcp.NewSSETransport()
+    sseClient := mcp.NewClient(sseTransport, sseConfig)
+
+    if err := sseClient.Connect(); err != nil {
+        log.Fatalf("SSE Client failed to connect: %v", err)
+    }
+    defer sseClient.Close()
+
+    tools, err := sseClient.ListTools()
+    if err != nil {
+        log.Fatalf("Failed to list tools (SSE): %v", err)
+    }
+    fmt.Printf("SSE Tools: %+v\n", tools)
+}
+```
+
+### StdIO Client
+
+<!-- markdownlint-disable -->
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/shaharia-lab/goai/mcp"
+)
+
+func main() {
+	serverCmd := exec.Command("go", "run", "./test") // IMPORTANT: Change this!
+
+	serverIn, err := serverCmd.StdinPipe()
+	if err != nil {
+		log.Fatalf("Failed to get server stdin pipe: %v", err)
+	}
+
+	serverOut, err := serverCmd.StdoutPipe()
+	if err != nil {
+		log.Fatalf("Failed to get server stdout pipe: %v", err)
+	}
+
+	if err := serverCmd.Start(); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
+
+	defer func() {
+		if serverCmd.Process != nil {
+			_ = serverCmd.Process.Kill()
+		}
+		_ = serverCmd.Wait()
+	}()
+
+	stdIOConfig := mcp.ClientConfig{
+		ClientName:    "MyStdIOClient",
+		ClientVersion: "1.0.0",
+		Logger:        log.New(os.Stdout, "[StdIO] ", log.LstdFlags),
+		StdIO: mcp.StdIOConfig{
+			Reader: serverOut,
+			Writer: serverIn,
+		},
+	}
+
+	stdIOTransport := mcp.NewStdIOTransport()
+	stdIOClient := mcp.NewClient(stdIOTransport, stdIOConfig)
+
+	if err := stdIOClient.Connect(); err != nil {
+		log.Fatalf("StdIO Client failed to connect: %v", err)
+	}
+	defer stdIOClient.Close()
+
+	tools2, err := stdIOClient.ListTools()
+	if err != nil {
+		log.Fatalf("Failed to list tools (StdIO): %v", err)
+	}
+
+	fmt.Printf("StdIO Tools: %+v\n", tools2)
+
+	fmt.Println("Press Enter to exit.")
+	fmt.Scanln()
+}
+```
+<!-- markdownlint-enable -->

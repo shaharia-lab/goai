@@ -29,7 +29,7 @@ func NewSSEServer(baseServer *BaseServer) *SSEServer {
 		BaseServer:   baseServer,
 		clients:      make(map[string]chan []byte),
 		clientsMutex: sync.RWMutex{},
-		address:      ":8080",
+		address:      baseServer.sseServerPort,
 		initialized:  false,
 		initMutex:    sync.RWMutex{},
 	}
@@ -192,11 +192,11 @@ func (s *SSEServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*") // CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	// Each client gets a unique ID.
 	clientID := uuid.NewString()
-	messageChan := make(chan []byte, 10) // Buffered channel
+	messageChan := make(chan []byte, 10)
 
 	s.clientsMutex.Lock()
 	s.clients[clientID] = messageChan
@@ -212,10 +212,8 @@ func (s *SSEServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) 
 
 	s.logger.Printf("Client connected: %s", clientID)
 
-	// Send the initial 'endpoint' event.  Critically, this includes the client ID.
 	endpointURL := fmt.Sprintf("http://%s/message?clientID=%s", r.Host, clientID)
-	// Send *just* the URL string, not a JSON object.
-	endpointEvent := fmt.Sprintf("event: endpoint\ndata: %s\n\n", endpointURL) // SIMPLIFIED
+	endpointEvent := fmt.Sprintf("event: endpoint\ndata: %s\n\n", endpointURL)
 	if _, err := fmt.Fprint(w, endpointEvent); err != nil {
 		s.logger.Printf("error sending endpoint data. Error: %v", err)
 	}
@@ -226,16 +224,14 @@ func (s *SSEServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) 
 	for {
 		select {
 		case <-ctx.Done():
-			// Client disconnected.
 			return
 		case msg := <-messageChan:
-			// Got a message to send to the client.
 			event := fmt.Sprintf("event: message\ndata: %s\n\n", string(msg))
 			if _, err := fmt.Fprint(w, event); err != nil {
 				s.logger.Printf("error sending sse data. Error: %v", err)
 			}
 			flusher.Flush()
-		case <-time.After(30 * time.Second):
+		case <-time.After(pingInterval):
 			// Keep-alive.
 			if _, err := fmt.Fprint(w, ":ping\n\n"); err != nil {
 				s.logger.Printf("error sending keepalive data. Error: %v", err)
