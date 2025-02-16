@@ -101,8 +101,6 @@ func (p *OpenAILLMProvider) createCompletionParams(messages []openai.ChatComplet
 //	fmt.Printf("Response: %s\n", response.Text)
 func (p *OpenAILLMProvider) GetResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
 	startTime := time.Now()
-	ctx := context.Background()
-
 	openAIMessages := p.convertToOpenAIMessages(messages)
 	params := p.createCompletionParams(openAIMessages, config)
 

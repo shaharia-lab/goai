@@ -96,7 +96,6 @@ func (p *AnthropicLLMProvider) prepareMessageParams(messages []LLMMessage, confi
 // System messages are handled separately through Anthropic's system parameter.
 func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
 	startTime := time.Now()
-	ctx := context.Background()
 
 	// Initialize token counters
 	var totalInputTokens, totalOutputTokens int64
