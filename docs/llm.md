@@ -195,7 +195,7 @@ For more details about OpenAI API can be found [here](https://platform.openai.co
 llmProvider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{
     Client: goai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY")),
     Model:  anthropic.ModelClaude3_5Sonnet20241022,
-}, toolRegistry) // Optional tool registry for function calling
+})
 ```
 
 For more details about Anthropic API can be found [here](https://docs.anthropic.com/en/api/getting-started)
