@@ -59,7 +59,7 @@ func (p *ToolsProvider) ExecuteTool(ctx context.Context, params mcp.CallToolPara
 
 	for _, tool := range p.toolsList {
 		if tool.Name == params.Name {
-			return tool.Handler(nil, params)
+			return tool.Handler(ctx, params)
 		}
 	}
 
