@@ -436,7 +436,7 @@ func (s *BaseServer) handleToolsCall(ctx context.Context, clientID string, reque
 		return
 	}
 
-	result, err := s.CallTool(params)
+	result, err := s.CallTool(ctx, params)
 	if err != nil {
 		s.sendErr(clientID, request.ID, -32602, err.Error(), nil)
 		return
@@ -644,7 +644,7 @@ func (s *BaseServer) ListTools(ctx context.Context, cursor string, limit int) Li
 	}
 }
 
-func (s *BaseServer) CallTool(params CallToolParams) (CallToolResult, error) {
+func (s *BaseServer) CallTool(ctx context.Context, params CallToolParams) (CallToolResult, error) {
 	if _, exists := s.tools[params.Name]; !exists {
 		return CallToolResult{}, fmt.Errorf("tool metadata not found: %s", params.Name)
 	}
@@ -680,7 +680,7 @@ func (s *BaseServer) CallTool(params CallToolParams) (CallToolResult, error) {
 		}
 	}
 
-	result, err := s.tools[params.Name].Handler(context.Background(), params)
+	result, err := s.tools[params.Name].Handler(ctx, params)
 	if err != nil {
 		return CallToolResult{
 			IsError: true,
