@@ -13,10 +13,10 @@ func TestNewRequestConfig(t *testing.T) {
 		{
 			name: "no options - should use defaults",
 			expected: LLMRequestConfig{
-				MaxToken:    1000,
-				TopP:        0.9,
-				Temperature: 0.7,
-				TopK:        50,
+				MaxToken:    500,
+				TopP:        0.5,
+				Temperature: 0.5,
+				TopK:        40,
 			},
 		},
 		{
@@ -26,9 +26,9 @@ func TestNewRequestConfig(t *testing.T) {
 			},
 			expected: LLMRequestConfig{
 				MaxToken:    2000,
-				TopP:        0.9,
-				Temperature: 0.7,
-				TopK:        50,
+				TopP:        0.5,
+				Temperature: 0.5,
+				TopK:        40,
 			},
 		},
 		{
@@ -55,10 +55,10 @@ func TestNewRequestConfig(t *testing.T) {
 				WithTopK(0),
 			},
 			expected: LLMRequestConfig{
-				MaxToken:    1000,
-				TopP:        0.9,
-				Temperature: 0.7,
-				TopK:        50,
+				MaxToken:    500,
+				TopP:        0.5,
+				Temperature: 0.5,
+				TopK:        40,
 			},
 		},
 		{
@@ -70,25 +70,25 @@ func TestNewRequestConfig(t *testing.T) {
 				WithTopK(-10),
 			},
 			expected: LLMRequestConfig{
-				MaxToken:    1000,
-				TopP:        0.9,
-				Temperature: 0.7,
-				TopK:        50,
+				MaxToken:    500,
+				TopP:        0.5,
+				Temperature: 0.5,
+				TopK:        40,
 			},
 		},
 		{
 			name: "with mixed valid and invalid values",
 			opts: []RequestOption{
 				WithMaxToken(2000),
-				WithTopP(-0.5), // invalid
+				WithTopP(-0.5),
 				WithTemperature(0.8),
-				WithTopK(0), // invalid
+				WithTopK(0),
 			},
 			expected: LLMRequestConfig{
 				MaxToken:    2000,
-				TopP:        0.9, // keeps default
+				TopP:        0.5,
 				Temperature: 0.8,
-				TopK:        50, // keeps default
+				TopK:        40,
 			},
 		},
 	}

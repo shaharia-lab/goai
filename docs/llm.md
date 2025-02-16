@@ -2,9 +2,10 @@
 
 The `goai` package provides a flexible interface for working with various
 Large Language Models (LLMs). This module supports multiple providers
-and offers features like streaming responses and configurable parameters.
+and offers features like streaming responses, configurable parameters,
+and tool calling capabilities.
 
-## Example
+## Basic Example
 
 Here's a complete example using OpenAI's GPT-3.5:
 
@@ -45,10 +46,84 @@ func main() {
 }
 ```
 
+## Tool Calling
+
+The package supports tool calling capabilities, currently available with the Anthropic & OpenAI provider.
+This allows the LLM to interact with custom tools during the conversation.
+
+### Implementing Tools
+
+To create a tool, define your tool according to the following definition:
+
+<!-- markdownlint-disable -->
+```go
+// import "github.com/shaharia-lab/goai/mcp"
+// mcp.Tool
+type Tool struct {
+	Name        string
+	Description string
+	InputSchema json.RawMessage
+	Handler     func(ctx context.Context, params CallToolParams) (CallToolResult, error)
+}
+```
+
+```go
+import "github.com/shaharia-lab/goai/mcp"
+
+tools := []mcp.Tool{
+		{
+			Name:        "get_weather",
+			Description: "Get weather for location",
+			InputSchema: json.RawMessage(`{
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"}
+                },
+                "required": ["location"]
+            }`),
+			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+				var input struct {
+					Location string `json:"location"`
+				}
+				json.Unmarshal(params.Arguments, &input)
+				return mcp.CallToolResult{
+					Content: []mcp.ToolResultContent{{
+						Type: "text",
+						Text: fmt.Sprintf("Weather in %s: Sunny", input.Location),
+					}},
+				}, nil
+			},
+		},
+	}
+
+toolsProvider := goai.NewToolsProvider()
+err := toolsProvider.AddTools(tools)
+```
+<!-- markdownlint-enable -->
+
+### Using Tools with LLM Provider
+
+<!-- markdownlint-disable -->
+```go
+func main() {
+	llmConfig := goai.NewRequestConfig(
+        goai.WithMaxToken(100),
+        goai.WithTemperature(0.7),
+        goai.UseToolsProvider(toolsProvider),   // Use tools provider
+    )
+
+    llm := goai.NewLLMRequest(llmConfig, llmProvider)
+    // rest of the code
+    // ....
+}
+```
+<!-- markdownlint-enable -->
+
 ## Streaming Example
 
 For streaming responses:
 
+<!-- markdownlint-disable -->
 ```go
     // Generate streaming response
     stream, err := llm.GenerateStream(context.Background(), []goai.LLMMessage{
@@ -70,6 +145,7 @@ For streaming responses:
         fmt.Print(resp.Text)
     }
 ```
+<!-- markdownlint-enable -->
 
 ## Message Types
 
@@ -92,10 +168,11 @@ type LLMMessage struct {
 
 ```go
 config := goai.NewRequestConfig(
-    goai.WithMaxToken(1000),    // Set maximum tokens
-    goai.WithTopP(0.9),         // Set top-p sampling
-    goai.WithTemperature(0.7),  // Set temperature
-    goai.WithTopK(50),          // Set top-k sampling
+    goai.WithMaxToken(500),                 // Maximum token length. Default: 500
+    goai.WithTopP(0.5),                     // Top-p sampling. Default: 0.5
+    goai.WithTemperature(0.5),              // Sampling temperature. Default: 0.5
+    goai.WithTopK(40),                      // Top-k sampling. Default: 50 
+    goai.UseToolsProvider(toolsProvider),  // Use tools provider
 )
 ```
 

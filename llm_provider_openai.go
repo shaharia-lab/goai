@@ -2,7 +2,12 @@ package goai
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"log"
 	"time"
+
+	"github.com/shaharia-lab/goai/mcp"
 
 	"github.com/openai/openai-go"
 )
@@ -96,13 +101,66 @@ func (p *OpenAILLMProvider) createCompletionParams(messages []openai.ChatComplet
 //	fmt.Printf("Response: %s\n", response.Text)
 func (p *OpenAILLMProvider) GetResponse(messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
 	startTime := time.Now()
+	ctx := context.Background()
 
 	openAIMessages := p.convertToOpenAIMessages(messages)
 	params := p.createCompletionParams(openAIMessages, config)
 
-	completion, err := p.client.CreateCompletion(context.Background(), params)
+	var tools []openai.ChatCompletionToolParam
+
+	toolLists, err := config.toolsProvider.ListTools(ctx)
+	if err != nil {
+		return LLMResponse{}, fmt.Errorf("failed to list tools: %w", err)
+	}
+
+	for _, tool := range toolLists {
+		paramSchema := make(map[string]interface{})
+		if err := json.Unmarshal(tool.InputSchema, &paramSchema); err != nil {
+			return LLMResponse{}, fmt.Errorf("failed to parse tool parameter schema: %w", err)
+		}
+
+		tools = append(tools, openai.ChatCompletionToolParam{
+			Type: openai.F(openai.ChatCompletionToolTypeFunction),
+			Function: openai.F(openai.FunctionDefinitionParam{
+				Name:        openai.String(tool.Name),
+				Description: openai.String(tool.Description),
+				Parameters:  openai.F(openai.FunctionParameters(paramSchema)),
+			}),
+		})
+	}
+	params.Tools = openai.F(tools)
+
+	// Make initial completion request
+	completion, err := p.client.CreateCompletion(ctx, params)
 	if err != nil {
 		return LLMResponse{}, err
+	}
+
+	// Handle tool calls if present
+	if len(completion.Choices) > 0 && len(completion.Choices[0].Message.ToolCalls) > 0 {
+		// Add the assistant's message with tool calls to the conversation
+		params.Messages.Value = append(params.Messages.Value, completion.Choices[0].Message)
+
+		// Process each tool call
+		for _, toolCall := range completion.Choices[0].Message.ToolCalls {
+			log.Printf("Executing tool: %s %s", toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
+			toolResults, _ := config.toolsProvider.ExecuteTool(ctx, mcp.CallToolParams{
+				Name:      toolCall.Function.Name,
+				Arguments: json.RawMessage(toolCall.Function.Arguments),
+			})
+
+			if len(toolResults.Content) == 0 {
+				return LLMResponse{}, &LLMError{Code: 400, Message: "no tool results in response"}
+			}
+
+			params.Messages.Value = append(params.Messages.Value, openai.ToolMessage(toolCall.ID, toolResults.Content[0].Text))
+		}
+
+		// Make a follow-up completion request with tool results
+		completion, err = p.client.CreateCompletion(ctx, params)
+		if err != nil {
+			return LLMResponse{}, err
+		}
 	}
 
 	if len(completion.Choices) == 0 {
