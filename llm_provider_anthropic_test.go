@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/shaharia-lab/goai/mcp"
 	"strings"
 	"testing"
 
@@ -114,7 +115,7 @@ func TestAnthropicLLMProvider_NewAnthropicLLMProvider(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := NewAnthropicLLMProvider(tt.config, &MCPToolRegistry{})
+			provider := NewAnthropicLLMProvider(tt.config)
 
 			assert.Equal(t, tt.expectedModel, provider.model, "unexpected model")
 			assert.NotNil(t, provider.client, "expected client to be initialized")
@@ -138,9 +139,10 @@ func TestAnthropicLLMProvider_GetResponse(t *testing.T) {
 				{Role: AssistantRole, Text: "Hi there"},
 			},
 			config: LLMRequestConfig{
-				MaxToken:    100,
-				TopP:        0.9,
-				Temperature: 0.7,
+				MaxToken:      100,
+				TopP:          0.9,
+				Temperature:   0.7,
+				toolsProvider: NewToolsProvider(),
 			},
 			expectedResult: LLMResponse{
 				Text:             "Test response",
@@ -181,7 +183,7 @@ func TestAnthropicLLMProvider_GetResponse(t *testing.T) {
 			provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 				Client: mockClient,
 				Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
-			}, &MCPToolRegistry{})
+			})
 
 			result, err := provider.GetResponse(tt.messages, tt.config)
 
@@ -267,7 +269,7 @@ func TestAnthropicLLMProvider_GetStreamingResponse(t *testing.T) {
 			provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 				Client: mockClient,
 				Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
-			}, &MCPToolRegistry{})
+			})
 
 			ctx := context.Background()
 			stream, err := provider.GetStreamingResponse(ctx, tt.messages, tt.config)
@@ -331,22 +333,39 @@ func createStreamEvent(eventType string, index int64, text string) anthropic.Mes
 }
 
 func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
-	// Create mock tool registry
-	registry := NewMCPToolRegistry()
-	mockTool := &MockTool{
-		name:        "test_tool",
-		description: "Test tool for unit testing",
-		version:     "1.0.0",
-		execFunc: func(ctx context.Context, input json.RawMessage) (MCPToolResponse, error) {
-			return MCPToolResponse{
-				Content: []MCPContentItem{{
-					Type: "text",
-					Text: "Tool execution result",
-				}},
-			}, nil
+	tools := []mcp.Tool{
+		{
+			Name:        "test_tool",
+			Description: "Test tool for unit testing",
+			InputSchema: json.RawMessage(`{
+        "type": "object",
+        "properties": {
+            "location": {"type": "string"}
+        },
+        "required": ["location"]
+    }`),
+			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+				var input struct {
+					Input string `json:"input"`
+				}
+				if err := json.Unmarshal(params.Arguments, &input); err != nil {
+					return mcp.CallToolResult{}, err
+				}
+
+				return mcp.CallToolResult{
+					Content: []mcp.ToolResultContent{
+						{
+							Type: "text",
+							Text: "Tool execution completed successfully",
+						},
+					},
+				}, nil
+			},
 		},
 	}
-	registry.Register(mockTool)
+
+	toolsProvider := NewToolsProvider()
+	_ = toolsProvider.AddTools(tools)
 
 	// Helper function to create a tool use block
 	createToolUseBlock := func() []byte {
@@ -380,9 +399,10 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 				{Role: UserRole, Text: "Use the test tool"},
 			},
 			config: LLMRequestConfig{
-				MaxToken:    100,
-				TopP:        0.9,
-				Temperature: 0.7,
+				MaxToken:      100,
+				TopP:          0.9,
+				Temperature:   0.7,
+				toolsProvider: toolsProvider,
 			},
 			mockResponses: []*anthropic.Message{
 				{
@@ -431,9 +451,10 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 				{Role: UserRole, Text: "Use a tool"},
 			},
 			config: LLMRequestConfig{
-				MaxToken:    100,
-				TopP:        0.9,
-				Temperature: 0.7,
+				MaxToken:      100,
+				TopP:          0.9,
+				Temperature:   0.7,
+				toolsProvider: NewToolsProvider(),
 			},
 			mockResponses: []*anthropic.Message{
 				{
@@ -480,7 +501,7 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 			provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 				Client: mockClient,
 				Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
-			}, registry)
+			})
 
 			result, err := provider.GetResponse(tt.messages, tt.config)
 

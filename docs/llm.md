@@ -48,74 +48,82 @@ func main() {
 
 ## Tool Calling
 
-The package supports tool calling capabilities, currently available with the Anthropic provider. This allows the LLM to interact with custom tools during the conversation.
+The package supports tool calling capabilities, currently available with the Anthropic & OpenAI provider.
+This allows the LLM to interact with custom tools during the conversation.
 
 ### Implementing Tools
 
-Tools must implement the `MCPToolExecutor` interface:
+To create a tool, define your tool according to the following definition:
 
+<!-- markdownlint-disable -->
 ```go
-type WeatherTool struct{}
-
-func (t *WeatherTool) GetDefinition() goai.MCPTool {
-    return goai.MCPTool{
-        Name:        "get_weather",
-        Description: "Get current weather for a city",
-        Version:     "1.0.0",
-        InputSchema: json.RawMessage(`{
-            "type": "object",
-            "properties": {
-                "city": {
-                    "type": "string",
-                    "description": "Name of the city"
-                }
-            },
-            "required": ["city"]
-        }`),
-    }
-}
-
-func (t *WeatherTool) Execute(ctx context.Context, input json.RawMessage) (goai.MCPToolResponse, error) {
-    var params struct {
-        City string `json:"city"`
-    }
-    if err := json.Unmarshal(input, &params); err != nil {
-        return goai.MCPToolResponse{}, fmt.Errorf("invalid input: %w", err)
-    }
-
-    // In a real implementation, you would call a weather API here
-    return goai.MCPToolResponse{
-        Content: []goai.MCPContentItem{{
-            Type: "text",
-            Text: fmt.Sprintf("Weather in %s: 22°C, Partly Cloudy", params.City),
-        }},
-    }, nil
+// import "github.com/shaharia-lab/goai/mcp"
+// mcp.Tool
+type Tool struct {
+	Name        string
+	Description string
+	InputSchema json.RawMessage
+	Handler     func(ctx context.Context, params CallToolParams) (CallToolResult, error)
 }
 ```
 
+```go
+import "github.com/shaharia-lab/goai/mcp"
+
+tools := []mcp.Tool{
+		{
+			Name:        "get_weather",
+			Description: "Get weather for location",
+			InputSchema: json.RawMessage(`{
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"}
+                },
+                "required": ["location"]
+            }`),
+			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+				var input struct {
+					Location string `json:"location"`
+				}
+				json.Unmarshal(params.Arguments, &input)
+				return mcp.CallToolResult{
+					Content: []mcp.ToolResultContent{{
+						Type: "text",
+						Text: fmt.Sprintf("Weather in %s: Sunny", input.Location),
+					}},
+				}, nil
+			},
+		},
+	}
+
+toolsProvider := goai.NewToolsProvider()
+err := toolsProvider.AddTools(tools)
+```
+<!-- markdownlint-enable -->
+
 ### Using Tools with LLM Provider
 
+<!-- markdownlint-disable -->
 ```go
 func main() {
-// Create tool registry
-    toolRegistry := goai.NewMCPToolRegistry()
-    toolRegistry.Register(&WeatherTool{})
-    toolRegistry.Register(&WordCountTool{})
+	llmConfig := goai.NewRequestConfig(
+        goai.WithMaxToken(100),
+        goai.WithTemperature(0.7),
+        goai.UseToolsProvider(toolsProvider),   // Use tools provider
+    )
 
-    // Create Anthropic provider with tools
-    llmProvider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{
-        Client: goai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY")),
-        Model:  anthropic.ModelClaude3_5Sonnet20241022,
-    }, toolRegistry)
+    llm := goai.NewLLMRequest(llmConfig, llmProvider)
     // rest of the code
     // ....
 }
 ```
+<!-- markdownlint-enable -->
 
 ## Streaming Example
 
 For streaming responses:
 
+<!-- markdownlint-disable -->
 ```go
     // Generate streaming response
     stream, err := llm.GenerateStream(context.Background(), []goai.LLMMessage{
@@ -137,6 +145,7 @@ For streaming responses:
         fmt.Print(resp.Text)
     }
 ```
+<!-- markdownlint-enable -->
 
 ## Message Types
 
@@ -159,10 +168,11 @@ type LLMMessage struct {
 
 ```go
 config := goai.NewRequestConfig(
-    goai.WithMaxToken(1000),    // Set maximum tokens
-    goai.WithTopP(0.9),         // Set top-p sampling
-    goai.WithTemperature(0.7),  // Set temperature
-    goai.WithTopK(50),          // Set top-k sampling
+    goai.WithMaxToken(500),                 // Maximum token length. Default: 500
+    goai.WithTopP(0.5),                     // Top-p sampling. Default: 0.5
+    goai.WithTemperature(0.5),              // Sampling temperature. Default: 0.5
+    goai.WithTopK(40),                      // Top-k sampling. Default: 50 
+    goai.UseToolsProvider(toolsProvider),  // Use tools provider
 )
 ```
 

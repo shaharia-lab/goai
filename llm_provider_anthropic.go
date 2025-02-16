@@ -2,8 +2,8 @@ package goai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/shaharia-lab/goai/mcp"
 	"strings"
 	"time"
 
@@ -13,9 +13,8 @@ import (
 // AnthropicLLMProvider implements the LLMProvider interface using Anthropic's official Go SDK.
 // It provides access to Claude models through Anthropic's API.
 type AnthropicLLMProvider struct {
-	client       AnthropicClientProvider
-	model        anthropic.Model
-	toolRegistry *MCPToolRegistry
+	client AnthropicClientProvider
+	model  anthropic.Model
 }
 
 // AnthropicProviderConfig holds the configuration options for creating an Anthropic provider.
@@ -42,15 +41,14 @@ type AnthropicProviderConfig struct {
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
-func NewAnthropicLLMProvider(config AnthropicProviderConfig, toolRegistry *MCPToolRegistry) *AnthropicLLMProvider {
+func NewAnthropicLLMProvider(config AnthropicProviderConfig) *AnthropicLLMProvider {
 	if config.Model == "" {
 		config.Model = anthropic.ModelClaude_3_5_Sonnet_20240620
 	}
 
 	return &AnthropicLLMProvider{
-		client:       config.Client,
-		model:        config.Model,
-		toolRegistry: toolRegistry,
+		client: config.Client,
+		model:  config.Model,
 	}
 }
 
@@ -103,7 +101,7 @@ func (p *AnthropicLLMProvider) GetResponse(messages []LLMMessage, config LLMRequ
 	var totalInputTokens, totalOutputTokens int64
 
 	// Convert our messages to Anthropic messages
-	anthropicMessages := []anthropic.MessageParam{}
+	var anthropicMessages []anthropic.MessageParam
 	for _, msg := range messages {
 		switch msg.Role {
 		case UserRole:
@@ -117,20 +115,21 @@ func (p *AnthropicLLMProvider) GetResponse(messages []LLMMessage, config LLMRequ
 
 	// Prepare tools if registry exists
 	var tools []anthropic.ToolParam
-	if p.toolRegistry != nil {
-		mcpTools := p.toolRegistry.ListTools(ctx)
-		for _, tool := range mcpTools {
-			tools = append(tools, anthropic.ToolParam{
-				Name:        anthropic.F(tool.Name),
-				Description: anthropic.F(tool.Description),
-				InputSchema: anthropic.F[interface{}](json.RawMessage(tool.InputSchema)),
-			})
-		}
+	mcpTools, err := config.toolsProvider.ListTools(ctx)
+	if err != nil {
+		return LLMResponse{}, fmt.Errorf("error listing tools: %w", err)
+	}
+
+	for _, tool := range mcpTools {
+		tools = append(tools, anthropic.ToolParam{
+			Name:        anthropic.F(tool.Name),
+			Description: anthropic.F(tool.Description),
+			InputSchema: anthropic.F[interface{}](tool.InputSchema),
+		})
 	}
 
 	var finalResponse string
 
-	// Start conversation loop
 	// Start conversation loop
 	for {
 		message, err := p.client.CreateMessage(ctx, anthropic.MessageNewParams{
@@ -156,21 +155,22 @@ func (p *AnthropicLLMProvider) GetResponse(messages []LLMMessage, config LLMRequ
 				finalResponse += block.Text + "\n"
 
 			case anthropic.ToolUseBlock:
-				// Get the tool executor
-				tool, err := p.toolRegistry.Get(ctx, block.Name)
-				if err != nil {
-					return LLMResponse{}, fmt.Errorf("tool '%s' not found: %w", block.Name, err)
-				}
-
 				// Execute the tool
-				toolResponse, err := tool.Execute(ctx, block.Input)
+				toolResponse, err := config.toolsProvider.ExecuteTool(ctx, mcp.CallToolParams{
+					Name:      block.Name,
+					Arguments: block.Input,
+				})
 				if err != nil {
 					return LLMResponse{}, fmt.Errorf("error executing tool '%s': %w", block.Name, err)
 				}
 
+				if toolResponse.Content == nil || len(toolResponse.Content) == 0 {
+					return LLMResponse{}, fmt.Errorf("tool '%s' returned no content", block.Name)
+				}
+
 				// Add tool result to collection
 				toolResults = append(toolResults,
-					anthropic.NewToolResultBlock(block.ID, toolResponse.Content[0].Text, false))
+					anthropic.NewToolResultBlock(block.ID, toolResponse.Content[0].Text, toolResponse.IsError))
 			default:
 			}
 		}

@@ -22,18 +22,20 @@ const (
 
 // DefaultConfig holds the default values for LLMRequestConfig
 var DefaultConfig = LLMRequestConfig{
-	MaxToken:    1000, // Default max tokens
-	TopP:        0.9,  // Default top-p value
-	Temperature: 0.7,  // Default temperature
-	TopK:        50,   // Default top-k value
+	MaxToken:      500,
+	TopP:          0.5,
+	Temperature:   0.5,
+	TopK:          40,
+	toolsProvider: NewToolsProvider(),
 }
 
 // LLMRequestConfig defines configuration parameters for LLM requests.
 type LLMRequestConfig struct {
-	MaxToken    int64
-	TopP        float64
-	Temperature float64
-	TopK        int64
+	toolsProvider *ToolsProvider
+	MaxToken      int64
+	TopP          float64
+	Temperature   float64
+	TopK          int64
 }
 
 // NewRequestConfig creates a new config with default values.
@@ -85,6 +87,12 @@ func WithTopK(topK int64) RequestOption {
 		if topK > 0 {
 			c.TopK = topK
 		}
+	}
+}
+
+func UseToolsProvider(provider *ToolsProvider) RequestOption {
+	return func(c *LLMRequestConfig) {
+		c.toolsProvider = provider
 	}
 }
 

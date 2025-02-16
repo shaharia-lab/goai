@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/shaharia-lab/goai/mcp"
 	"github.com/stretchr/testify/assert"
 	"io"
 	"net/http"
@@ -92,7 +93,7 @@ func TestOpenAILLMProvider_NewOpenAILLMProvider(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := NewOpenAILLMProvider(tt.config, &MCPToolRegistry{})
+			provider := NewOpenAILLMProvider(tt.config)
 
 			if provider.model != tt.expectedModel {
 				t.Errorf("expected model %q, got %q", tt.expectedModel, provider.model)
@@ -141,7 +142,7 @@ func TestOpenAILLMProvider_GetStreamingResponse(t *testing.T) {
 			provider := NewOpenAILLMProvider(OpenAIProviderConfig{
 				Client: mockClient,
 				Model:  "gpt-4",
-			}, &MCPToolRegistry{})
+			})
 
 			ctx, cancel := context.WithTimeout(context.Background(), tt.timeout)
 			defer cancel()
@@ -174,7 +175,6 @@ func TestOpenAILLMProvider_GetResponse_WithTools(t *testing.T) {
 		responses      []string
 		expectedError  error
 		expectedResult LLMResponse
-		toolExecFunc   func(ctx context.Context, input json.RawMessage) (MCPToolResponse, error)
 	}{
 		{
 			name: "successful tool execution",
@@ -184,6 +184,35 @@ func TestOpenAILLMProvider_GetResponse_WithTools(t *testing.T) {
 			config: LLMRequestConfig{
 				MaxToken:    100,
 				Temperature: 0.7,
+				toolsProvider: func() *ToolsProvider {
+					provider := NewToolsProvider()
+					_ = provider.AddTools([]mcp.Tool{
+						{
+							Name:        "get_weather",
+							Description: "Get weather information",
+							InputSchema: json.RawMessage(`{
+								"type": "object",
+								"properties": {
+									"location": {"type": "string"}
+								},
+								"required": ["location"]
+							}`),
+							Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+								var input struct {
+									Location string `json:"location"`
+								}
+								json.Unmarshal(params.Arguments, &input)
+								return mcp.CallToolResult{
+									Content: []mcp.ToolResultContent{{
+										Type: "text",
+										Text: fmt.Sprintf("The weather in %s is sunny and 25°C", input.Location),
+									}},
+								}, nil
+							},
+						},
+					})
+					return provider
+				}(),
 			},
 			responses: []string{
 				`{
@@ -215,16 +244,6 @@ func TestOpenAILLMProvider_GetResponse_WithTools(t *testing.T) {
 					}
 				}`,
 			},
-			toolExecFunc: func(ctx context.Context, input json.RawMessage) (MCPToolResponse, error) {
-				return MCPToolResponse{
-					Content: []MCPContentItem{
-						{
-							Type: "text",
-							Text: "sunny, 25°C",
-						},
-					},
-				}, nil
-			},
 			expectedResult: LLMResponse{
 				Text:             "The weather in New York is sunny and 25°C",
 				TotalInputToken:  30,
@@ -237,8 +256,9 @@ func TestOpenAILLMProvider_GetResponse_WithTools(t *testing.T) {
 				{Role: UserRole, Text: "Hello"},
 			},
 			config: LLMRequestConfig{
-				MaxToken:    100,
-				Temperature: 0.7,
+				MaxToken:      100,
+				Temperature:   0.7,
+				toolsProvider: NewToolsProvider(),
 			},
 			responses: []string{
 				`{
@@ -285,25 +305,11 @@ func TestOpenAILLMProvider_GetResponse_WithTools(t *testing.T) {
 			// Create mock client with transport
 			mockClient := NewMockOpenAIClient(mockTransport)
 
-			// Create mock tool
-			mockTool := &MockTool{
-				name:        "get_weather",
-				description: "Get weather information",
-				version:     "1.0",
-				execFunc:    tt.toolExecFunc,
-			}
-
-			// Create tool registry
-			registry := NewMCPToolRegistry()
-			if mockTool != nil {
-				registry.Register(mockTool)
-			}
-
 			// Create provider
 			provider := NewOpenAILLMProvider(OpenAIProviderConfig{
 				Client: mockClient,
 				Model:  "gpt-3.5-turbo",
-			}, registry)
+			})
 
 			// Execute test
 			result, err := provider.GetResponse(tt.messages, tt.config)
