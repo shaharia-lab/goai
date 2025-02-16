@@ -280,7 +280,7 @@ func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) 
 			s.sendError(clientID, request.ID, -32000, "Server not initialized", nil)
 			return
 		}
-		s.handleRequest(clientID, &request)
+		s.handleRequest(r.Context(), clientID, &request)
 		return
 	}
 
@@ -298,7 +298,7 @@ func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) 
 			s.logger.Printf("Received notification before 'initialized': %s", notification.Method)
 			return
 		}
-		s.handleNotification(clientID, &notification)
+		s.handleNotification(r.Context(), clientID, &notification)
 		return
 	}
 

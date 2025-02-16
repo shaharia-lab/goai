@@ -144,7 +144,7 @@ func (s *StdIOServer) Run(ctx context.Context) error {
 						s.sendError("", request.ID, -32000, "Server not initialized", nil) // Empty clientID
 						continue
 					}
-					s.handleRequest("", &request) // StdIO has no persistent client ID, so we pass an empty string.
+					s.handleRequest(ctx, "", &request) // StdIO has no persistent client ID, so we pass an empty string.
 					continue
 				}
 
@@ -156,7 +156,7 @@ func (s *StdIOServer) Run(ctx context.Context) error {
 						s.logger.Printf("Received notification before 'initialized': %s", notification.Method)
 						continue
 					}
-					s.handleNotification("", &notification) // Empty clientID.
+					s.handleNotification(nil, "", &notification) // Empty clientID.
 					continue
 				}
 

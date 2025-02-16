@@ -232,28 +232,28 @@ func (s *BaseServer) LogMessage(level LogLevel, loggerName string, data interfac
 }
 
 // handleRequest handles incoming requests.  Common to both server types.
-func (s *BaseServer) handleRequest(clientID string, request *Request) {
+func (s *BaseServer) handleRequest(ctx context.Context, clientID string, request *Request) {
 	s.logger.Printf("Received request from client %s: method=%s, id=%v", clientID, request.Method, request.ID)
 
 	switch request.Method {
 	case "initialize":
 		s.handleInitialize(clientID, request)
 	case "ping":
-		s.handlePing(clientID, request)
+		s.handlePing(ctx, clientID, request)
 	case "resources/list":
-		s.handleResourcesList(clientID, request)
+		s.handleResourcesList(ctx, clientID, request)
 	case "resources/read":
-		s.handleResourcesRead(clientID, request)
+		s.handleResourcesRead(ctx, clientID, request)
 	case "logging/setLevel":
-		s.handleLoggingSetLevel(clientID, request)
+		s.handleLoggingSetLevel(ctx, clientID, request)
 	case "tools/list":
-		s.handleToolsList(clientID, request)
+		s.handleToolsList(ctx, clientID, request)
 	case "tools/call":
-		s.handleToolsCall(clientID, request)
+		s.handleToolsCall(ctx, clientID, request)
 	case "prompts/list":
-		s.handlePromptsList(clientID, request)
+		s.handlePromptsList(ctx, clientID, request)
 	case "prompts/get":
-		s.handlePromptGet(clientID, request)
+		s.handlePromptGet(ctx, clientID, request)
 
 	default:
 		s.sendErr(clientID, request.ID, -32601, "Method not found", nil)
@@ -284,11 +284,11 @@ func (s *BaseServer) handleInitialize(clientID string, request *Request) {
 	s.sendResp(clientID, request.ID, result, nil)
 }
 
-func (s *BaseServer) handlePing(clientID string, request *Request) {
+func (s *BaseServer) handlePing(ctx context.Context, clientID string, request *Request) {
 	s.sendResp(clientID, request.ID, map[string]interface{}{}, nil)
 }
 
-func (s *BaseServer) handleResourcesList(clientID string, request *Request) {
+func (s *BaseServer) handleResourcesList(ctx context.Context, clientID string, request *Request) {
 	var params ListParams
 	if err := json.Unmarshal(request.Params, &params); err != nil {
 		s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
@@ -354,7 +354,7 @@ func (s *BaseServer) ListResources(cursor string, limit int) ListResourcesResult
 	return result
 }
 
-func (s *BaseServer) handleResourcesRead(clientID string, request *Request) {
+func (s *BaseServer) handleResourcesRead(ctx context.Context, clientID string, request *Request) {
 	var params ReadResourceParams
 	if err := json.Unmarshal(request.Params, &params); err != nil {
 		s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
@@ -404,7 +404,7 @@ func (s *BaseServer) ReadResource(params ReadResourceParams) (ReadResourceResult
 	}, nil
 }
 
-func (s *BaseServer) handleLoggingSetLevel(clientID string, request *Request) {
+func (s *BaseServer) handleLoggingSetLevel(ctx context.Context, clientID string, request *Request) {
 	var params SetLogLevelParams
 	if err := json.Unmarshal(request.Params, &params); err != nil {
 		s.sendErr(clientID, request.ID, -32602, "Invalid Params", nil)
@@ -419,17 +419,17 @@ func (s *BaseServer) handleLoggingSetLevel(clientID string, request *Request) {
 	s.sendResp(clientID, request.ID, struct{}{}, nil)
 }
 
-func (s *BaseServer) handleToolsList(clientID string, request *Request) {
+func (s *BaseServer) handleToolsList(ctx context.Context, clientID string, request *Request) {
 	var params ListParams
 	if err := json.Unmarshal(request.Params, &params); err != nil {
 		s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
 		return
 	}
 
-	s.sendResp(clientID, request.ID, s.ListTools(params.Cursor, 100), nil)
+	s.sendResp(clientID, request.ID, s.ListTools(ctx, params.Cursor, 100), nil)
 }
 
-func (s *BaseServer) handleToolsCall(clientID string, request *Request) {
+func (s *BaseServer) handleToolsCall(ctx context.Context, clientID string, request *Request) {
 	var params CallToolParams
 	if err := json.Unmarshal(request.Params, &params); err != nil {
 		s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
@@ -495,7 +495,7 @@ func (s *BaseServer) ListPrompts(cursor string, limit int) ListPromptsResult {
 	}
 }
 
-func (s *BaseServer) handlePromptsList(clientID string, request *Request) {
+func (s *BaseServer) handlePromptsList(ctx context.Context, clientID string, request *Request) {
 	var params ListParams
 	if err := json.Unmarshal(request.Params, &params); err != nil {
 		s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
@@ -506,7 +506,7 @@ func (s *BaseServer) handlePromptsList(clientID string, request *Request) {
 	s.sendResp(clientID, request.ID, result, nil)
 }
 
-func (s *BaseServer) handlePromptGet(clientID string, request *Request) {
+func (s *BaseServer) handlePromptGet(ctx context.Context, clientID string, request *Request) {
 	var params GetPromptParams
 	if err := json.Unmarshal(request.Params, &params); err != nil {
 		s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
@@ -572,11 +572,10 @@ func (s *BaseServer) handlePromptRequest(clientID string, request *Request) {
 }
 
 // handleNotification handles incoming notifications.  Common to both server types.
-func (s *BaseServer) handleNotification(clientID string, notification *Notification) {
+func (s *BaseServer) handleNotification(ctx context.Context, clientID string, notification *Notification) {
 	s.logger.Printf("Received notification from client %s: method=%s", clientID, notification.Method)
 	switch notification.Method {
-	case "notifications/initialized": // The client confirms it's initialized.
-		// We don't need to *do* anything here, but it's good to log.
+	case "notifications/initialized":
 		s.logger.Printf("Client %s initialized.", clientID)
 	case "notifications/cancelled":
 		var cancelParams struct {
@@ -585,8 +584,6 @@ func (s *BaseServer) handleNotification(clientID string, notification *Notificat
 		}
 		if err := json.Unmarshal(notification.Params, &cancelParams); err == nil {
 			s.logger.Printf("Cancellation requested for ID %s from client %s: %s", string(cancelParams.RequestID), clientID, cancelParams.Reason)
-			// In a real implementation, you'd have a way to map request IDs to
-			// ongoing operations and cancel them.  This is a placeholder.
 		}
 
 	default:
@@ -594,7 +591,7 @@ func (s *BaseServer) handleNotification(clientID string, notification *Notificat
 	}
 }
 
-func (s *BaseServer) ListTools(cursor string, limit int) ListToolsResult {
+func (s *BaseServer) ListTools(ctx context.Context, cursor string, limit int) ListToolsResult {
 	if limit <= 0 {
 		limit = 50
 	}
