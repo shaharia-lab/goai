@@ -460,7 +460,7 @@ func TestStdIOServerRequests(t *testing.T) {
 			}
 
 			// Handle the request
-			server.handleRequest("test-client", &request)
+			server.handleRequest(context.Background(), "test-client", &request)
 
 			// Get output and clean it up (remove newline)
 			got := strings.TrimSpace(out.String())
@@ -531,7 +531,7 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 			}
 
 			// Handle the request
-			server.handleRequest("test-client", &request)
+			server.handleRequest(context.Background(), "test-client", &request)
 
 			// Get output and clean it up (remove newline)
 			got := strings.TrimSpace(out.String())

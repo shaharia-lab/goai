@@ -127,7 +127,7 @@ func TestListTools(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := baseServer.ListTools(tt.cursor, tt.limit)
+			result := baseServer.ListTools(context.Background(), tt.cursor, tt.limit)
 
 			assert.Len(t, result.Tools, len(tt.wantTools),
 				"Expected %d tools, got %d", len(tt.wantTools), len(result.Tools))
