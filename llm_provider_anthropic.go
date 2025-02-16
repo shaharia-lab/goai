@@ -94,9 +94,8 @@ func (p *AnthropicLLMProvider) prepareMessageParams(messages []LLMMessage, confi
 // GetResponse generates a response using Anthropic's API for the given messages and configuration.
 // It supports different message roles (user, assistant, system) and handles them appropriately.
 // System messages are handled separately through Anthropic's system parameter.
-func (p *AnthropicLLMProvider) GetResponse(messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
+func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
 	startTime := time.Now()
-	ctx := context.Background()
 
 	// Initialize token counters
 	var totalInputTokens, totalOutputTokens int64

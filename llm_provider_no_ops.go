@@ -53,7 +53,7 @@ func NewNoOpsLLMProvider(opts ...NoOpsOption) *NoOpsLLMProvider {
 }
 
 // GetResponse implements the LLMProvider interface.
-func (n *NoOpsLLMProvider) GetResponse(_ []LLMMessage, _ LLMRequestConfig) (LLMResponse, error) {
+func (n *NoOpsLLMProvider) GetResponse(_ context.Context, _ []LLMMessage, _ LLMRequestConfig) (LLMResponse, error) {
 	return n.response, nil
 }
 

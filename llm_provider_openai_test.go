@@ -313,7 +313,7 @@ func TestOpenAILLMProvider_GetResponse_WithTools(t *testing.T) {
 			})
 
 			// Execute test
-			result, err := provider.GetResponse(tt.messages, tt.config)
+			result, err := provider.GetResponse(context.Background(), tt.messages, tt.config)
 
 			// Check error
 			if tt.expectedError != nil {

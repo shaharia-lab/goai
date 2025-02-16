@@ -106,7 +106,7 @@ func parseOffsets(response string) ([]Offset, error) {
 //	for i, chunk := range chunks {
 //	    fmt.Printf("Chunk %d: %s\n", i, chunk)
 //	}
-func (p *ChunkingByLLMProvider) Chunk(_ context.Context, text string) ([]string, error) {
+func (p *ChunkingByLLMProvider) Chunk(ctx context.Context, text string) ([]string, error) {
 	if len(text) == 0 {
 		return []string{}, nil
 	}
@@ -127,7 +127,7 @@ func (p *ChunkingByLLMProvider) Chunk(_ context.Context, text string) ([]string,
 		{Role: UserRole, Text: promptText},
 	}
 
-	llmResponse, err := p.llm.Generate(messages)
+	llmResponse, err := p.llm.Generate(ctx, messages)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate chunks: %w", err)
 	}

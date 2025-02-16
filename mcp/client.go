@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,10 +51,10 @@ type ClientConfig struct {
 }
 
 type Transport interface {
-	Connect(config ClientConfig) error
-	SendMessage(message interface{}) error
-	Close() error
-	SetReceiveMessageCallback(callback func(message []byte))
+	Connect(ctx context.Context, config ClientConfig) error
+	SendMessage(ctx context.Context, message interface{}) error
+	Close(ctx context.Context) error
+	SetReceiveMessageCallback(ctx context.Context, callback func(message []byte))
 }
 
 type Client struct {
@@ -94,7 +95,8 @@ func NewClient(transport Transport, config ClientConfig) *Client {
 		capabilities:     Capabilities{},
 		responseHandlers: make(map[string]chan *Response),
 	}
-	transport.SetReceiveMessageCallback(client.processReceivedMessage)
+
+	transport.SetReceiveMessageCallback(context.Background(), client.processReceivedMessage)
 	return client
 }
 
@@ -110,7 +112,7 @@ func (c *Client) removeResponseHandler(id string) {
 	c.mu.Unlock()
 }
 
-func (c *Client) Connect() error {
+func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	if c.state != Disconnected {
 		c.mu.Unlock()
@@ -121,17 +123,17 @@ func (c *Client) Connect() error {
 
 	c.logger.Println("Starting connection process...")
 
-	if err := c.transport.Connect(c.config); err != nil {
+	if err := c.transport.Connect(ctx, c.config); err != nil {
 		return err
 	}
 	c.logger.Printf("Transport connected successfully")
 
-	if err := c.sendInitializeRequest(); err != nil {
+	if err := c.sendInitializeRequest(ctx); err != nil {
 		return fmt.Errorf("initialization failed: %v", err)
 	}
 	c.logger.Println("Initialize request successful")
 
-	if err := c.sendInitializedNotification(); err != nil {
+	if err := c.sendInitializedNotification(ctx); err != nil {
 		return fmt.Errorf("failed to send initialized notification: %v", err)
 	}
 
@@ -178,7 +180,7 @@ func (c *Client) processReceivedMessage(message []byte) {
 	}
 }
 
-func (c *Client) sendInitializeRequest() error {
+func (c *Client) sendInitializeRequest(ctx context.Context) error {
 	responseChan := make(chan *Response, 1)
 	requestID := "init"
 	rawID := json.RawMessage(`"init"`)
@@ -218,7 +220,7 @@ func (c *Client) sendInitializeRequest() error {
 	}
 	request.Params = paramsBytes
 
-	if err := c.transport.SendMessage(&request); err != nil {
+	if err := c.transport.SendMessage(ctx, &request); err != nil {
 		c.wg.Done()
 		return err
 	}
@@ -254,15 +256,15 @@ func (c *Client) sendInitializeRequest() error {
 	}
 }
 
-func (c *Client) sendInitializedNotification() error {
+func (c *Client) sendInitializedNotification(ctx context.Context) error {
 	notification := Notification{
 		JSONRPC: "2.0",
 		Method:  "notifications/initialized",
 	}
-	return c.transport.SendMessage(&notification)
+	return c.transport.SendMessage(ctx, &notification)
 }
 
-func (c *Client) ListTools() ([]Tool, error) {
+func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 	c.mu.RLock()
 	if c.state != Connected || !c.initialized {
 		c.mu.RUnlock()
@@ -288,7 +290,7 @@ func (c *Client) ListTools() ([]Tool, error) {
 		Params:  json.RawMessage(`{"cursor":""}`),
 	}
 
-	if err := c.transport.SendMessage(&request); err != nil {
+	if err := c.transport.SendMessage(ctx, &request); err != nil {
 		c.wg.Done()
 		return nil, fmt.Errorf("failed to send tools/list request: %v", err)
 	}
@@ -317,7 +319,7 @@ func (c *Client) ListTools() ([]Tool, error) {
 	}
 }
 
-func (c *Client) Close() error {
+func (c *Client) Close(ctx context.Context) error {
 	c.mu.Lock()
 	if c.state == Disconnected {
 		c.mu.Unlock()
@@ -328,7 +330,7 @@ func (c *Client) Close() error {
 
 	c.wg.Wait()
 
-	if err := c.transport.Close(); err != nil {
+	if err := c.transport.Close(ctx); err != nil {
 		c.mu.Unlock()
 		return err
 	}
