@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/shaharia-lab/goai/mcp"
-	"github.com/stretchr/testify/assert"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shaharia-lab/goai/mcp"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"

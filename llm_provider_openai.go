@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/shaharia-lab/goai/mcp"
 	"log"
 	"time"
+
+	"github.com/shaharia-lab/goai/mcp"
 
 	"github.com/openai/openai-go"
 )

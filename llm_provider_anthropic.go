@@ -3,9 +3,10 @@ package goai
 import (
 	"context"
 	"fmt"
-	"github.com/shaharia-lab/goai/mcp"
 	"strings"
 	"time"
+
+	"github.com/shaharia-lab/goai/mcp"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )
