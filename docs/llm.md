@@ -105,6 +105,16 @@ err := toolsProvider.AddTools(tools)
 ```
 <!-- markdownlint-enable -->
 
+If you want to integrate MCP (Model Context Protocol) server with your tool, you can use the MCP Client.
+Details about how to use MCP Client can be found [here](mcp.md#client)
+
+```go
+//mcpClient := 
+err := toolsProvider.AddMCPClient(mcpClient)
+```
+
+**Note: If you provide both tools and MCP client, the attached tools will be used for tool calling.**
+
 ### Using Tools with LLM Provider
 
 <!-- markdownlint-disable -->

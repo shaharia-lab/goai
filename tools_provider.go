@@ -64,7 +64,7 @@ func (p *ToolsProvider) ExecuteTool(ctx context.Context, params mcp.CallToolPara
 	}
 
 	if p.mcpClient.IsInitialized() {
-		return mcp.CallToolResult{}, fmt.Errorf("MCP client does not support tool execution yet")
+		return p.mcpClient.CallTool(ctx, params)
 	}
 
 	return mcp.CallToolResult{}, fmt.Errorf("tool not found: %s", params.Name)

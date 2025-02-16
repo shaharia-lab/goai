@@ -426,7 +426,7 @@ func (s *BaseServer) handleToolsList(clientID string, request *Request) {
 		return
 	}
 
-	s.sendResp(clientID, request.ID, s.ListTools(params.Cursor, 1), nil)
+	s.sendResp(clientID, request.ID, s.ListTools(params.Cursor, 100), nil)
 }
 
 func (s *BaseServer) handleToolsCall(clientID string, request *Request) {
@@ -448,7 +448,7 @@ func (s *BaseServer) handleToolsCall(clientID string, request *Request) {
 // ListPrompts returns a list of all available prompts, with optional pagination
 func (s *BaseServer) ListPrompts(cursor string, limit int) ListPromptsResult {
 	if limit <= 0 {
-		limit = 50 // Default limit
+		limit = 50
 	}
 
 	// Get sorted list of prompt names
@@ -502,7 +502,7 @@ func (s *BaseServer) handlePromptsList(clientID string, request *Request) {
 		return
 	}
 
-	result := s.ListPrompts(params.Cursor, 0)
+	result := s.ListPrompts(params.Cursor, 100)
 	s.sendResp(clientID, request.ID, result, nil)
 }
 
