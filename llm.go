@@ -57,8 +57,8 @@ func NewLLMRequest(config LLMRequestConfig, provider LLMProvider) *LLMRequest {
 //   - Token usage statistics
 //   - Completion time
 //   - Other provider-specific metadata
-func (r *LLMRequest) Generate(messages []LLMMessage) (LLMResponse, error) {
-	return r.provider.GetResponse(messages, r.requestConfig)
+func (r *LLMRequest) Generate(ctx context.Context, messages []LLMMessage) (LLMResponse, error) {
+	return r.provider.GetResponse(ctx, messages, r.requestConfig)
 }
 
 // GenerateStream creates a streaming response channel for the given messages.

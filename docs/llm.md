@@ -13,36 +13,40 @@ Here's a complete example using OpenAI's GPT-3.5:
 package main
 
 import (
-    "fmt"
-    "github.com/openai/openai-go"
-    "github.com/shaharia-lab/goai"
-    "os"
+	"context"
+	"fmt"
+	"os"
+	
+	"github.com/openai/openai-go"
+	"github.com/shaharia-lab/goai"
 )
 
 func main() {
-    // Create OpenAI LLM Provider
-    llmProvider := goai.NewOpenAILLMProvider(goai.OpenAIProviderConfig{
-        Client: goai.NewOpenAIClient(os.Getenv("OPENAI_API_KEY")),
-        Model:  openai.ChatModelGPT3_5Turbo,
-    })
+	// Create OpenAI LLM Provider
+	llmProvider := goai.NewOpenAILLMProvider(goai.OpenAIProviderConfig{
+		Client: goai.NewOpenAIClient(os.Getenv("OPENAI_API_KEY")),
+		Model:  openai.ChatModelGPT3_5Turbo,
+	})
 
-    // Configure LLM Request
-    llm := goai.NewLLMRequest(goai.NewRequestConfig(
-        goai.WithMaxToken(100),
-        goai.WithTemperature(0.7),
-    ), llmProvider)
+	// Configure LLM Request
+	llm := goai.NewLLMRequest(goai.NewRequestConfig(
+		goai.WithMaxToken(100),
+		goai.WithTemperature(0.7),
+	), llmProvider)
 
-    // Generate response
-    response, err := llm.Generate([]goai.LLMMessage{
-        {Role: goai.UserRole, Text: "Explain quantum computing"},
-    })
+	ctx := context.Background()
 
-    if err != nil {
-        panic(err)
-    }
+	// Generate response
+	response, err := llm.Generate(ctx, []goai.LLMMessage{
+		{Role: goai.UserRole, Text: "Explain quantum computing"},
+	})
 
-    fmt.Printf("Response: %s\n", response.Text)
-    fmt.Printf("Input token: %d, Output token: %d", response.TotalInputToken, response.TotalOutputToken)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("Response: %s\n", response.Text)
+	fmt.Printf("Input token: %d, Output token: %d", response.TotalInputToken, response.TotalOutputToken)
 }
 ```
 

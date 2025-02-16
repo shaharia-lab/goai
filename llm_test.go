@@ -13,7 +13,7 @@ type mockProvider struct {
 	streamErr       error
 }
 
-func (m *mockProvider) GetResponse(_ []LLMMessage, _ LLMRequestConfig) (LLMResponse, error) {
+func (m *mockProvider) GetResponse(_ context.Context, _ []LLMMessage, _ LLMRequestConfig) (LLMResponse, error) {
 	return m.response, m.err
 }
 
@@ -85,7 +85,7 @@ func TestLLMRequest_Generate(t *testing.T) {
 			}
 
 			request := NewLLMRequest(tt.config, provider)
-			response, err := request.Generate([]LLMMessage{{
+			response, err := request.Generate(context.Background(), []LLMMessage{{
 				Role: "user",
 				Text: "test prompt",
 			}})

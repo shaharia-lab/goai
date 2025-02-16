@@ -186,7 +186,7 @@ func TestAnthropicLLMProvider_GetResponse(t *testing.T) {
 				Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
 			})
 
-			result, err := provider.GetResponse(tt.messages, tt.config)
+			result, err := provider.GetResponse(context.Background(), tt.messages, tt.config)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -504,7 +504,7 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 				Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
 			})
 
-			result, err := provider.GetResponse(tt.messages, tt.config)
+			result, err := provider.GetResponse(context.Background(), tt.messages, tt.config)
 
 			if tt.expectError {
 				assert.Error(t, err)

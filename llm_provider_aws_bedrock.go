@@ -36,7 +36,7 @@ func NewBedrockLLMProvider(config BedrockProviderConfig) *BedrockLLMProvider {
 
 // GetResponse generates a response using Bedrock's API for the given messages and configuration.
 // It supports different message roles (user, assistant) and handles them appropriately.
-func (p *BedrockLLMProvider) GetResponse(messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
+func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
 	startTime := time.Now()
 
 	var bedrockMessages []types.Message
@@ -66,7 +66,7 @@ func (p *BedrockLLMProvider) GetResponse(messages []LLMMessage, config LLMReques
 		},
 	}
 
-	output, err := p.client.Converse(context.Background(), input)
+	output, err := p.client.Converse(ctx, input)
 	if err != nil {
 		return LLMResponse{}, err
 	}

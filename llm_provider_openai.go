@@ -23,7 +23,7 @@ type OpenAIProviderConfig struct {
 	// Client is the OpenAIClientProvider implementation to use
 	Client OpenAIClientProvider
 	// Model specifies which OpenAI model to use (e.g., "gpt-4", "gpt-3.5-turbo")
-	Model string
+	Model openai.ChatModel
 }
 
 // NewOpenAILLMProvider creates a new OpenAI provider with the specified configuration.
@@ -99,9 +99,8 @@ func (p *OpenAILLMProvider) createCompletionParams(messages []openai.ChatComplet
 //	    log.Fatal(err)
 //	}
 //	fmt.Printf("Response: %s\n", response.Text)
-func (p *OpenAILLMProvider) GetResponse(messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
+func (p *OpenAILLMProvider) GetResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
 	startTime := time.Now()
-	ctx := context.Background()
 
 	openAIMessages := p.convertToOpenAIMessages(messages)
 	params := p.createCompletionParams(openAIMessages, config)

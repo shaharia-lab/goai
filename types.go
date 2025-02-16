@@ -193,7 +193,7 @@ type StreamingLLMResponse struct {
 type LLMProvider interface {
 	// GetResponse generates a response for the given question using the specified configuration.
 	// Returns LLMResponse containing the generated text and metadata, or an error if the operation fails.
-	GetResponse(messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error)
+	GetResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error)
 	GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error)
 }
 

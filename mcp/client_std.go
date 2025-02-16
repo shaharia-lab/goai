@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,11 +31,11 @@ func NewStdIOTransport() *StdIOTransport {
 	}
 }
 
-func (t *StdIOTransport) SetReceiveMessageCallback(callback func(message []byte)) {
+func (t *StdIOTransport) SetReceiveMessageCallback(ctx context.Context, callback func(message []byte)) {
 	t.receiveCallback = callback
 }
 
-func (t *StdIOTransport) Connect(config ClientConfig) error {
+func (t *StdIOTransport) Connect(ctx context.Context, config ClientConfig) error {
 	t.config = config.StdIO
 	t.logger = config.Logger
 	t.state = Connecting
@@ -50,11 +51,11 @@ func (t *StdIOTransport) Connect(config ClientConfig) error {
 	t.writer = t.config.Writer
 	t.state = Connected
 
-	go t.processIncomingMessages()
+	go t.processIncomingMessages(ctx)
 	return nil
 }
 
-func (t *StdIOTransport) processIncomingMessages() {
+func (t *StdIOTransport) processIncomingMessages(context.Context) {
 	scanner := bufio.NewScanner(t.reader)
 	for scanner.Scan() {
 		select {
@@ -72,7 +73,7 @@ func (t *StdIOTransport) processIncomingMessages() {
 	}
 }
 
-func (t *StdIOTransport) SendMessage(message interface{}) error {
+func (t *StdIOTransport) SendMessage(ctx context.Context, message interface{}) error {
 	jsonData, err := json.Marshal(message)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %v", err)
@@ -89,7 +90,7 @@ func (t *StdIOTransport) SendMessage(message interface{}) error {
 	return nil
 }
 
-func (t *StdIOTransport) Close() error {
+func (t *StdIOTransport) Close(ctx context.Context) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.state == Disconnected {

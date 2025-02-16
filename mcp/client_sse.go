@@ -3,6 +3,7 @@ package mcp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -36,11 +37,11 @@ func NewSSETransport() *SSETransport {
 	}
 }
 
-func (t *SSETransport) SetReceiveMessageCallback(callback func(message []byte)) {
+func (t *SSETransport) SetReceiveMessageCallback(ctx context.Context, callback func(message []byte)) {
 	t.receiveCallback = callback
 }
 
-func (t *SSETransport) Connect(config ClientConfig) error {
+func (t *SSETransport) Connect(ctx context.Context, config ClientConfig) error {
 	t.config = config.SSE
 	t.logger = config.Logger
 	t.messageEndpoint = config.MessageEndpoint
@@ -48,7 +49,7 @@ func (t *SSETransport) Connect(config ClientConfig) error {
 	retryCount := 0
 
 	for {
-		if err := t.establishConnection(config); err != nil {
+		if err := t.establishConnection(ctx, config); err != nil {
 			retryCount++
 			if retryCount >= config.MaxRetries {
 				return fmt.Errorf("max retries reached: %v", err)
@@ -68,7 +69,7 @@ func (t *SSETransport) Connect(config ClientConfig) error {
 	}
 }
 
-func (t *SSETransport) establishConnection(config ClientConfig) error {
+func (t *SSETransport) establishConnection(ctx context.Context, config ClientConfig) error {
 	t.logger.Printf("Connecting to SSE endpoint: %s", t.config.URL)
 	resp, err := http.Get(t.config.URL)
 	if err != nil {
@@ -80,7 +81,7 @@ func (t *SSETransport) establishConnection(config ClientConfig) error {
 	errChan := make(chan error, 1)
 	go func() {
 		defer resp.Body.Close()
-		t.processEventStream(scanner, messageEndpointChan, errChan, config)
+		t.processEventStream(ctx, scanner, messageEndpointChan, errChan, config)
 	}()
 
 	select {
@@ -97,12 +98,12 @@ func (t *SSETransport) establishConnection(config ClientConfig) error {
 	}
 
 	t.lastPingTime = time.Now()
-	go t.monitorPings()
+	go t.monitorPings(ctx)
 
 	return nil
 }
 
-func (t *SSETransport) processEventStream(scanner *bufio.Scanner, messageEndpointChan chan string, errChan chan error, config ClientConfig) {
+func (t *SSETransport) processEventStream(ctx context.Context, scanner *bufio.Scanner, messageEndpointChan chan string, errChan chan error, config ClientConfig) {
 	defer config.Logger.Println("Event stream processing stopped")
 
 	var endpointSent bool
@@ -119,7 +120,7 @@ func (t *SSETransport) processEventStream(scanner *bufio.Scanner, messageEndpoin
 			}
 
 			if line == ":ping" {
-				t.handlePing()
+				t.handlePing(ctx)
 				continue
 			}
 
@@ -144,7 +145,7 @@ func (t *SSETransport) processEventStream(scanner *bufio.Scanner, messageEndpoin
 	}
 }
 
-func (t *SSETransport) SendMessage(message interface{}) error {
+func (t *SSETransport) SendMessage(ctx context.Context, message interface{}) error {
 	if t.messageEndpoint == "" {
 		return fmt.Errorf("no message endpoint available")
 	}
@@ -175,7 +176,7 @@ func (t *SSETransport) SendMessage(message interface{}) error {
 	return nil
 }
 
-func (t *SSETransport) Close() error {
+func (t *SSETransport) Close(ctx context.Context) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -187,7 +188,7 @@ func (t *SSETransport) Close() error {
 	return nil
 }
 
-func (t *SSETransport) handlePing() {
+func (t *SSETransport) handlePing(context.Context) {
 	t.mu.Lock()
 	t.lastPingTime = time.Now()
 	t.missedPings = 0
@@ -195,7 +196,7 @@ func (t *SSETransport) handlePing() {
 	t.logger.Println("Received ping from server")
 }
 
-func (t *SSETransport) monitorPings() {
+func (t *SSETransport) monitorPings(ctx context.Context) {
 	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
 
@@ -204,12 +205,12 @@ func (t *SSETransport) monitorPings() {
 		case <-t.stopChan:
 			return
 		case <-ticker.C:
-			t.checkPingStatus()
+			t.checkPingStatus(ctx)
 		}
 	}
 }
 
-func (t *SSETransport) checkPingStatus() {
+func (t *SSETransport) checkPingStatus(ctx context.Context) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 

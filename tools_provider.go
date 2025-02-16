@@ -39,13 +39,13 @@ func (p *ToolsProvider) AddMCPClient(client *mcp.Client) error {
 }
 
 // ListTools returns the list of tools available in the provider.
-func (p *ToolsProvider) ListTools(context.Context) ([]mcp.Tool, error) {
+func (p *ToolsProvider) ListTools(ctx context.Context) ([]mcp.Tool, error) {
 	if p.mcpClient.IsInitialized() == false && len(p.toolsList) == 0 {
 		return []mcp.Tool{}, nil
 	}
 
 	if p.mcpClient.IsInitialized() == true {
-		return p.mcpClient.ListTools()
+		return p.mcpClient.ListTools(ctx)
 	}
 
 	return p.toolsList, nil
