@@ -319,6 +319,177 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 	}
 }
 
+func (c *Client) CallTool(ctx context.Context, params CallToolParams) (CallToolResult, error) {
+	c.mu.RLock()
+	if c.state != Connected || !c.initialized {
+		c.mu.RUnlock()
+		return CallToolResult{}, fmt.Errorf("client is not connected and initialized")
+	}
+	c.mu.RUnlock()
+
+	c.logger.Println("Calling tool...")
+
+	responseChan := make(chan *Response, 1)
+	requestID := "tools-call"
+	rawID := json.RawMessage(fmt.Sprintf(`"%s"`, requestID))
+
+	c.registerResponseHandler(requestID, responseChan)
+	defer c.removeResponseHandler(requestID)
+
+	c.wg.Add(1)
+
+	paramsBytes, err := json.Marshal(params)
+	if err != nil {
+		return CallToolResult{}, fmt.Errorf("failed to marshal CallToolParams: %v", err)
+	}
+
+	request := Request{
+		JSONRPC: "2.0",
+		Method:  "tools/call",
+		ID:      &rawID,
+		Params:  json.RawMessage(paramsBytes),
+	}
+
+	if err := c.transport.SendMessage(ctx, &request); err != nil {
+		c.wg.Done()
+		return CallToolResult{}, fmt.Errorf("failed to send tools/call request: %v", err)
+	}
+
+	select {
+	case response := <-responseChan:
+		defer c.wg.Done()
+		if response.Error != nil {
+			return CallToolResult{}, fmt.Errorf("server error: %s (code: %d)", response.Error.Message, response.Error.Code)
+		}
+
+		rawResult, err := json.Marshal(response.Result)
+		if err != nil {
+			return CallToolResult{}, fmt.Errorf("failed to marshal result into raw message: %v", err)
+		}
+
+		var result CallToolResult
+		if err := json.Unmarshal(rawResult, &result); err != nil {
+			return CallToolResult{}, fmt.Errorf("failed to parse tools list: %v", err)
+		}
+		return result, nil
+
+	case <-time.After(30 * time.Second):
+		defer c.wg.Done()
+		return CallToolResult{}, fmt.Errorf("tools/list request timeout")
+	}
+}
+
+func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
+	c.mu.RLock()
+	if c.state != Connected || !c.initialized {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("client is not connected and initialized")
+	}
+	c.mu.RUnlock()
+
+	c.logger.Println("Requesting prompts list...")
+
+	responseChan := make(chan *Response, 1)
+	requestID := "prompts-list"
+	rawID := json.RawMessage(fmt.Sprintf(`"%s"`, requestID))
+
+	c.registerResponseHandler(requestID, responseChan)
+	defer c.removeResponseHandler(requestID)
+
+	c.wg.Add(1)
+
+	request := Request{
+		JSONRPC: "2.0",
+		Method:  "prompts/list",
+		ID:      &rawID,
+		Params:  json.RawMessage(`{"cursor":""}`),
+	}
+
+	if err := c.transport.SendMessage(ctx, &request); err != nil {
+		c.wg.Done()
+		return nil, fmt.Errorf("failed to send tools/list request: %v", err)
+	}
+
+	select {
+	case response := <-responseChan:
+		defer c.wg.Done()
+		if response.Error != nil {
+			return nil, fmt.Errorf("server error: %s (code: %d)", response.Error.Message, response.Error.Code)
+		}
+
+		rawResult, err := json.Marshal(response.Result)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal result into raw message: %v", err)
+		}
+
+		var result ListPromptsResult
+		if err := json.Unmarshal(rawResult, &result); err != nil {
+			return nil, fmt.Errorf("failed to parse tools list: %v", err)
+		}
+		return result.Prompts, nil
+
+	case <-time.After(30 * time.Second):
+		defer c.wg.Done()
+		return nil, fmt.Errorf("tools/list request timeout")
+	}
+}
+
+func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) ([]PromptMessage, error) {
+	c.mu.RLock()
+	if c.state != Connected || !c.initialized {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("client is not connected and initialized")
+	}
+	c.mu.RUnlock()
+
+	c.logger.Println("Requesting prompts list...")
+
+	responseChan := make(chan *Response, 1)
+	requestID := "prompts-get"
+	rawID := json.RawMessage(fmt.Sprintf(`"%s"`, requestID))
+
+	c.registerResponseHandler(requestID, responseChan)
+	defer c.removeResponseHandler(requestID)
+
+	c.wg.Add(1)
+
+	paramsBytes, _ := json.Marshal(params)
+	request := Request{
+		JSONRPC: "2.0",
+		Method:  "prompts/get",
+		ID:      &rawID,
+		Params:  json.RawMessage(paramsBytes),
+	}
+
+	if err := c.transport.SendMessage(ctx, &request); err != nil {
+		c.wg.Done()
+		return nil, fmt.Errorf("failed to send tools/list request: %v", err)
+	}
+
+	select {
+	case response := <-responseChan:
+		defer c.wg.Done()
+		if response.Error != nil {
+			return nil, fmt.Errorf("server error: %s (code: %d)", response.Error.Message, response.Error.Code)
+		}
+
+		rawResult, err := json.Marshal(response.Result)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal result into raw message: %v", err)
+		}
+
+		var result PromptGetResponse
+		if err := json.Unmarshal(rawResult, &result); err != nil {
+			return nil, fmt.Errorf("failed to parse tools list: %v", err)
+		}
+		return result.Messages, nil
+
+	case <-time.After(30 * time.Second):
+		defer c.wg.Done()
+		return nil, fmt.Errorf("tools/list request timeout")
+	}
+}
+
 func (c *Client) Close(ctx context.Context) error {
 	c.mu.Lock()
 	if c.state == Disconnected {

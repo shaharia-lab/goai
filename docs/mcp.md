@@ -235,39 +235,40 @@ func main() {
 package main
 
 import (
-    "fmt"
-    "log"
-    "os"
-    "time"
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"time"
 
-    "github.com/shaharia-lab/goai/mcp"
+	"github.com/shaharia-lab/goai/mcp"
 )
 
 func main() {
-    sseConfig := mcp.ClientConfig{
-        ClientName:    "MySSEClient",
-        ClientVersion: "1.0.0",
-        Logger:        log.New(os.Stdout, "[SSE] ", log.LstdFlags),
-        RetryDelay:    5 * time.Second,
-        MaxRetries:    3,
-        SSE: mcp.SSEConfig{
-            URL: "http://localhost:8080/events", // Replace with your SSE endpoint
-        },
-    }
+	sseConfig := mcp.ClientConfig{
+		ClientName:    "MySSEClient",
+		ClientVersion: "1.0.0",
+		Logger:        log.New(os.Stdout, "[SSE] ", log.LstdFlags),
+		RetryDelay:    5 * time.Second,
+		MaxRetries:    3,
+		SSE: mcp.SSEConfig{
+			URL: "http://localhost:8080/events", // Replace with your SSE endpoint
+		},
+	}
+	ctx := context.Background()
+	sseTransport := mcp.NewSSETransport()
+	sseClient := mcp.NewClient(sseTransport, sseConfig)
 
-    sseTransport := mcp.NewSSETransport()
-    sseClient := mcp.NewClient(sseTransport, sseConfig)
+	if err := sseClient.Connect(ctx); err != nil {
+		log.Fatalf("SSE Client failed to connect: %v", err)
+	}
+	defer sseClient.Close(ctx)
 
-    if err := sseClient.Connect(); err != nil {
-        log.Fatalf("SSE Client failed to connect: %v", err)
-    }
-    defer sseClient.Close()
-
-    tools, err := sseClient.ListTools()
-    if err != nil {
-        log.Fatalf("Failed to list tools (SSE): %v", err)
-    }
-    fmt.Printf("SSE Tools: %+v\n", tools)
+	tools, err := sseClient.ListTools(ctx)
+	if err != nil {
+		log.Fatalf("Failed to list tools (SSE): %v", err)
+	}
+	fmt.Printf("SSE Tools: %+v\n", tools)
 }
 ```
 
