@@ -20,6 +20,7 @@ const (
 	defaultClientName      = "mcp-client"
 	defaultClientVersion   = "1.0.0"
 	defaultMessageEndpoint = ""
+	defaultRequestTimeout  = 30 * time.Second
 )
 
 type ConnectionState int
@@ -48,6 +49,7 @@ type ClientConfig struct {
 	SSE             SSEConfig
 	StdIO           StdIOConfig
 	MessageEndpoint string
+	RequestTimeout  time.Duration
 }
 
 type Transport interface {
@@ -149,6 +151,7 @@ func (c *Client) Connect(ctx context.Context) error {
 }
 
 func (c *Client) processReceivedMessage(message []byte) {
+	log.Printf("Received message: %s (length: %d)", string(message), len(message))
 	var response Response
 	if err := json.Unmarshal(message, &response); err != nil {
 		c.logger.Printf("Failed to parse response: %v", err)
@@ -337,6 +340,7 @@ func (c *Client) CallTool(ctx context.Context, params CallToolParams) (CallToolR
 	defer c.removeResponseHandler(requestID)
 
 	c.wg.Add(1)
+	defer c.wg.Done()
 
 	paramsBytes, err := json.Marshal(params)
 	if err != nil {
@@ -350,14 +354,16 @@ func (c *Client) CallTool(ctx context.Context, params CallToolParams) (CallToolR
 		Params:  json.RawMessage(paramsBytes),
 	}
 
-	if err := c.transport.SendMessage(ctx, &request); err != nil {
-		c.wg.Done()
+	// Create a timeout context for this request
+	requestCtx, cancel := context.WithTimeout(ctx, c.config.RequestTimeout)
+	defer cancel()
+
+	if err := c.transport.SendMessage(requestCtx, &request); err != nil {
 		return CallToolResult{}, fmt.Errorf("failed to send tools/call request: %v", err)
 	}
 
 	select {
 	case response := <-responseChan:
-		defer c.wg.Done()
 		if response.Error != nil {
 			return CallToolResult{}, fmt.Errorf("server error: %s (code: %d)", response.Error.Message, response.Error.Code)
 		}
@@ -369,13 +375,12 @@ func (c *Client) CallTool(ctx context.Context, params CallToolParams) (CallToolR
 
 		var result CallToolResult
 		if err := json.Unmarshal(rawResult, &result); err != nil {
-			return CallToolResult{}, fmt.Errorf("failed to parse tools list: %v", err)
+			return CallToolResult{}, fmt.Errorf("failed to parse tool result: %v", err)
 		}
 		return result, nil
 
-	case <-time.After(30 * time.Second):
-		defer c.wg.Done()
-		return CallToolResult{}, fmt.Errorf("tools/list request timeout")
+	case <-requestCtx.Done():
+		return CallToolResult{}, fmt.Errorf("tools/call request timeout: %v", requestCtx.Err())
 	}
 }
 
@@ -397,6 +402,7 @@ func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
 	defer c.removeResponseHandler(requestID)
 
 	c.wg.Add(1)
+	defer c.wg.Done()
 
 	request := Request{
 		JSONRPC: "2.0",
@@ -405,14 +411,16 @@ func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
 		Params:  json.RawMessage(`{"cursor":""}`),
 	}
 
-	if err := c.transport.SendMessage(ctx, &request); err != nil {
-		c.wg.Done()
-		return nil, fmt.Errorf("failed to send tools/list request: %v", err)
+	// Create a timeout context for this request
+	requestCtx, cancel := context.WithTimeout(ctx, c.config.RequestTimeout)
+	defer cancel()
+
+	if err := c.transport.SendMessage(requestCtx, &request); err != nil {
+		return nil, fmt.Errorf("failed to send prompts/list request: %v", err)
 	}
 
 	select {
 	case response := <-responseChan:
-		defer c.wg.Done()
 		if response.Error != nil {
 			return nil, fmt.Errorf("server error: %s (code: %d)", response.Error.Message, response.Error.Code)
 		}
@@ -424,13 +432,12 @@ func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
 
 		var result ListPromptsResult
 		if err := json.Unmarshal(rawResult, &result); err != nil {
-			return nil, fmt.Errorf("failed to parse tools list: %v", err)
+			return nil, fmt.Errorf("failed to parse prompts list: %v", err)
 		}
 		return result.Prompts, nil
 
-	case <-time.After(30 * time.Second):
-		defer c.wg.Done()
-		return nil, fmt.Errorf("tools/list request timeout")
+	case <-requestCtx.Done():
+		return nil, fmt.Errorf("prompts/list request timeout: %v", requestCtx.Err())
 	}
 }
 
@@ -442,7 +449,7 @@ func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) ([]Promp
 	}
 	c.mu.RUnlock()
 
-	c.logger.Println("Requesting prompts list...")
+	c.logger.Println("Requesting prompt details...")
 
 	responseChan := make(chan *Response, 1)
 	requestID := "prompts-get"
@@ -452,6 +459,7 @@ func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) ([]Promp
 	defer c.removeResponseHandler(requestID)
 
 	c.wg.Add(1)
+	defer c.wg.Done()
 
 	paramsBytes, _ := json.Marshal(params)
 	request := Request{
@@ -461,14 +469,16 @@ func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) ([]Promp
 		Params:  json.RawMessage(paramsBytes),
 	}
 
-	if err := c.transport.SendMessage(ctx, &request); err != nil {
-		c.wg.Done()
-		return nil, fmt.Errorf("failed to send tools/list request: %v", err)
+	// Create a timeout context for this request
+	requestCtx, cancel := context.WithTimeout(ctx, c.config.RequestTimeout)
+	defer cancel()
+
+	if err := c.transport.SendMessage(requestCtx, &request); err != nil {
+		return nil, fmt.Errorf("failed to send prompts/get request: %v", err)
 	}
 
 	select {
 	case response := <-responseChan:
-		defer c.wg.Done()
 		if response.Error != nil {
 			return nil, fmt.Errorf("server error: %s (code: %d)", response.Error.Message, response.Error.Code)
 		}
@@ -480,13 +490,12 @@ func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) ([]Promp
 
 		var result PromptGetResponse
 		if err := json.Unmarshal(rawResult, &result); err != nil {
-			return nil, fmt.Errorf("failed to parse tools list: %v", err)
+			return nil, fmt.Errorf("failed to parse prompt details: %v", err)
 		}
 		return result.Messages, nil
 
-	case <-time.After(30 * time.Second):
-		defer c.wg.Done()
-		return nil, fmt.Errorf("tools/list request timeout")
+	case <-requestCtx.Done():
+		return nil, fmt.Errorf("prompts/get request timeout: %v", requestCtx.Err())
 	}
 }
 
