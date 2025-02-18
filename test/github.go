@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/google/go-github/v60/github"
-	"github.com/shaharia-lab/goai/mcp"
-	"golang.org/x/oauth2"
 	"log"
 	"os"
 	"time"
+
+	"github.com/google/go-github/v60/github"
+	"github.com/shaharia-lab/goai/mcp"
+	"golang.org/x/oauth2"
 )
 
 // getGitHubClient creates a new GitHub client using token from environment
