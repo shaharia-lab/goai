@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -185,79 +186,85 @@ func (t *SSETransport) processEventStream(ctx context.Context, reader io.Reader,
 	defer config.Logger.Println("Event stream processing stopped")
 
 	var endpointSent bool
-	buffer := make([]byte, 1024*1024)
-
 	event := make(map[string]string)
 	dataBuffer := new(bytes.Buffer)
 
-	for {
+	// Create a scanner with a custom split function
+	scanner := bufio.NewScanner(reader)
+
+	// Create a larger initial buffer
+	const initialBufferSize = 32 * 1024
+	// 1MB
+	buf := make([]byte, initialBufferSize)
+	scanner.Buffer(buf, bufio.MaxScanTokenSize*100) // Increase max token size
+
+	// Process line by line
+	for scanner.Scan() {
 		select {
 		case <-t.stopChan:
 			return
 		default:
-			// Read data into buffer
-			n, err := reader.Read(buffer)
-			if err != nil {
-				if err != io.EOF {
-					errChan <- fmt.Errorf("error reading from event stream: %v", err)
-				} else {
-					errChan <- fmt.Errorf("event stream closed unexpectedly")
-				}
+			line := scanner.Text()
 
-				// Signal reconnect
-				select {
-				case t.reconnectChan <- struct{}{}:
-				default:
-					// Channel is full, that's OK
+			// Empty line marks the end of an event
+			if line == "" {
+				if len(event) > 0 {
+					t.processEvent(event, dataBuffer, messageEndpointChan, endpointSent, &endpointSent)
+					// Clear for next event
+					event = make(map[string]string)
+					dataBuffer.Reset()
 				}
-				return
+				continue
 			}
 
-			// Process the bytes read
-			data := buffer[:n]
-			lines := bytes.Split(data, []byte("\n"))
+			// Handle ping event
+			if line == ":ping" {
+				t.handlePing(ctx)
+				continue
+			}
 
-			for _, line := range lines {
-				lineStr := string(line)
-
-				// Empty line marks the end of an event
-				if lineStr == "" {
-					if len(event) > 0 {
-						t.processEvent(event, dataBuffer, messageEndpointChan, endpointSent, &endpointSent)
-						// Clear for next event
-						event = make(map[string]string)
-						dataBuffer.Reset()
-					}
-					continue
+			// Parse event fields
+			switch {
+			case strings.HasPrefix(line, "data:"):
+				data := strings.TrimPrefix(line, "data:")
+				if len(data) > 0 && data[0] == ' ' {
+					data = data[1:] // Remove space if it exists
 				}
+				dataBuffer.WriteString(data)
+				dataBuffer.WriteString("\n")
+				event["data"] = dataBuffer.String()
 
-				// Handle ping event
-				if lineStr == ":ping" {
-					t.handlePing(ctx)
-					continue
-				}
+			case strings.HasPrefix(line, "event:"):
+				event["event"] = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 
-				// Parse event fields
-				if strings.HasPrefix(lineStr, "data:") {
-					data := strings.TrimPrefix(lineStr, "data:")
-					if len(data) > 0 && data[0] == ' ' {
-						data = data[1:] // Remove space if it exists
-					}
-					dataBuffer.WriteString(data)
-					dataBuffer.WriteString("\n")
-					event["data"] = dataBuffer.String()
-				} else if strings.HasPrefix(lineStr, "event:") {
-					event["event"] = strings.TrimSpace(strings.TrimPrefix(lineStr, "event:"))
-				} else if strings.HasPrefix(lineStr, "id:") {
-					event["id"] = strings.TrimSpace(strings.TrimPrefix(lineStr, "id:"))
-				} else if strings.HasPrefix(lineStr, "retry:") {
-					event["retry"] = strings.TrimSpace(strings.TrimPrefix(lineStr, "retry:"))
-				}
+			case strings.HasPrefix(line, "id:"):
+				event["id"] = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
+
+			case strings.HasPrefix(line, "retry:"):
+				event["retry"] = strings.TrimSpace(strings.TrimPrefix(line, "retry:"))
 			}
 		}
 	}
-}
 
+	// Handle scanner errors
+	if err := scanner.Err(); err != nil {
+		errChan <- fmt.Errorf("scanner error: %v", err)
+		select {
+		case t.reconnectChan <- struct{}{}:
+		default:
+			// Channel is full, that's OK
+		}
+		return
+	}
+
+	// Handle EOF
+	errChan <- fmt.Errorf("event stream closed unexpectedly")
+	select {
+	case t.reconnectChan <- struct{}{}:
+	default:
+		// Channel is full, that's OK
+	}
+}
 func (t *SSETransport) processEvent(event map[string]string, dataBuffer *bytes.Buffer,
 	messageEndpointChan chan string, endpointSent bool, endpointSentPtr *bool) {
 
