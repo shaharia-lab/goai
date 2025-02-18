@@ -71,7 +71,7 @@ func (t *SSETransport) Connect(ctx context.Context, config ClientConfig) error {
 
 func (t *SSETransport) establishConnection(ctx context.Context, config ClientConfig) error {
 	t.logger.Printf("Connecting to SSE endpoint: %s", t.config.URL)
-	resp, err := http.Get(t.config.URL)
+	resp, err := http.NewRequestWithContext(ctx, "GET", t.config.URL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to events endpoint: %v", err)
 	}
@@ -157,7 +157,7 @@ func (t *SSETransport) SendMessage(ctx context.Context, message interface{}) err
 
 	t.logger.Printf("Sending message: %s", string(jsonData))
 
-	req, err := http.NewRequest(http.MethodPost, t.messageEndpoint, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.messageEndpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}
@@ -183,9 +183,28 @@ func (t *SSETransport) Close(ctx context.Context) error {
 	if t.state == Disconnected {
 		return nil
 	}
-	close(t.stopChan)
-	t.state = Disconnected
+
+	select {
+	case <-t.stopChan:
+		// Already closed
+	default:
+		close(t.stopChan)
+	}
+
+	t.setState(Disconnected)
 	return nil
+}
+
+func (t *SSETransport) setState(s ConnectionState) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.state = s
+}
+
+func (t *SSETransport) getState() ConnectionState {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.state
 }
 
 func (t *SSETransport) handlePing(context.Context) {
