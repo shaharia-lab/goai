@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/shaharia-lab/goai/observability"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/shaharia-lab/goai/observability"
 
 	"github.com/stretchr/testify/require"
 )

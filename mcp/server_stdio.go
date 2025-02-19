@@ -5,9 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+
 	"github.com/shaharia-lab/goai/observability"
 	"go.opentelemetry.io/otel/codes"
-	"io"
 )
 
 // StdIOServer is the MCP server implementation using standard input/output.

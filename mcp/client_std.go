@@ -5,12 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/shaharia-lab/goai/observability"
-	"go.opentelemetry.io/otel/codes"
 	"io"
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/shaharia-lab/goai/observability"
+	"go.opentelemetry.io/otel/codes"
 )
 
 type StdIOTransport struct {

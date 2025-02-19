@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/shaharia-lab/goai/observability"
-	"go.opentelemetry.io/otel/codes"
 	"io"
 	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/shaharia-lab/goai/observability"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/google/uuid"
 )

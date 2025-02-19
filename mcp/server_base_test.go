@@ -3,8 +3,9 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"github.com/shaharia-lab/goai/observability"
 	"testing"
+
+	"github.com/shaharia-lab/goai/observability"
 
 	"github.com/stretchr/testify/assert"
 )
