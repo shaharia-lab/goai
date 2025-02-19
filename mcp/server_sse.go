@@ -6,9 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/shaharia-lab/goai/observability"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/google/uuid"
 )
@@ -55,7 +59,7 @@ func (s *SSEServer) broadcastNotification(method string, params interface{}) {
 	if params != nil {
 		paramsBytes, err := json.Marshal(params)
 		if err != nil {
-			s.logger.Printf("Error marshaling notification parameters: %v", err)
+			s.logger.WithErr(err).Error("Error marshaling notification parameters")
 			return
 		}
 		notification.Params = json.RawMessage(paramsBytes)
@@ -63,7 +67,7 @@ func (s *SSEServer) broadcastNotification(method string, params interface{}) {
 
 	jsonNotification, err := json.Marshal(notification)
 	if err != nil {
-		s.logger.Printf("Error marshaling notification message: %v", err)
+		s.logger.WithErr(err).Error("Error marshaling notification message")
 		return
 	}
 
@@ -73,7 +77,7 @@ func (s *SSEServer) broadcastNotification(method string, params interface{}) {
 		select {
 		case clientChan <- jsonNotification:
 		default:
-			s.logger.Printf("Client message buffer full, dropping notification")
+			s.logger.Warn("Client message buffer full, dropping notification")
 		}
 	}
 }
@@ -88,7 +92,7 @@ func (s *SSEServer) sendResponse(clientID string, id *json.RawMessage, result in
 
 	jsonResponse, marshalErr := json.Marshal(response)
 	if marshalErr != nil {
-		s.logger.Printf("Error marshalling response: %v", marshalErr)
+		s.logger.WithErr(marshalErr).Error("Error marshalling response")
 		s.sendError(clientID, id, -32603, "Internal error: failed to marshal response", nil)
 		return
 	}
@@ -108,7 +112,7 @@ func (s *SSEServer) sendError(clientID string, id *json.RawMessage, code int, me
 	}
 	jsonErrorResponse, err := json.Marshal(errorResponse)
 	if err != nil {
-		s.logger.Printf("Error marshaling error response: %v", err)
+		s.logger.WithErr(err).Error("Error marshaling error response")
 		return
 	}
 	s.sendMessageToClient(clientID, jsonErrorResponse)
@@ -127,7 +131,7 @@ func (s *SSEServer) sendNotification(clientID string, method string, params inte
 	if params != nil {
 		paramsBytes, err := json.Marshal(params)
 		if err != nil {
-			s.logger.Printf("Error marshaling notification parameters: %v", err)
+			s.logger.WithErr(err).Error("Error marshaling notification parameters")
 			return
 		}
 		notification.Params = json.RawMessage(paramsBytes)
@@ -135,7 +139,7 @@ func (s *SSEServer) sendNotification(clientID string, method string, params inte
 
 	jsonNotification, err := json.Marshal(notification)
 	if err != nil {
-		s.logger.Printf("Error marshaling notification message: %v", err)
+		s.logger.WithErr(err).Error("Error marshaling notification message")
 		return
 	}
 
@@ -149,19 +153,37 @@ func (s *SSEServer) sendMessageToClient(clientID string, message []byte) {
 
 	if clientChan, ok := s.clients[clientID]; ok {
 		select {
-		case clientChan <- message: // Send without blocking
+		case clientChan <- message:
 		default:
-			s.logger.Printf("Client message buffer full, dropping message for: %s", clientID)
+			s.logger.WithFields(map[string]interface{}{
+				"clientID": clientID,
+			}).Warn("Client message buffer full, dropping message")
 		}
 	} else {
-		s.logger.Printf("Client not found: %s", clientID)
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+		}).Warn("Client not found")
 	}
 }
 
-func (s *SSEServer) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
-	s.logger.Printf("Received HTTP request: method=%s, path=%s, query=%s", r.Method, r.URL.Path, r.URL.RawQuery)
+func (s *SSEServer) handleHTTPRequest(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	ctx, span := observability.StartSpan(ctx, "SSEServer.handleHTTPRequest")
+	defer span.End()
 
-	// CORS handling (Allow all origins - adjust as needed for production).
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
+	s.logger.WithFields(map[string]interface{}{
+		"method": r.Method,
+		"path":   r.URL.Path,
+		"query":  r.URL.RawQuery,
+	}).Debug("Received HTTP request")
+
 	if r.Method == http.MethodOptions {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
@@ -172,18 +194,30 @@ func (s *SSEServer) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 
 	switch r.URL.Path {
 	case "/events":
-		s.handleSSEConnection(w, r)
-	case "/message": //  The single endpoint for receiving client messages.
-		s.handleClientMessage(w, r)
+		s.handleSSEConnection(ctx, w, r)
+	case "/message":
+		s.handleClientMessage(ctx, w, r)
 	default:
 		http.NotFound(w, r)
 	}
 }
 
 // handleSSEConnection establishes a new SSE connection.
-func (s *SSEServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) {
+func (s *SSEServer) handleSSEConnection(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	ctx, span := observability.StartSpan(ctx, "SSEServer.handleSSEConnection")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		s.logger.Error("Streaming unsupported!")
 		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
 		return
 	}
@@ -207,19 +241,19 @@ func (s *SSEServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) 
 		delete(s.clients, clientID)
 		close(messageChan)
 		s.clientsMutex.Unlock()
-		s.logger.Printf("Client disconnected: %s", clientID)
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+		}).Warn("Client disconnected")
 	}()
 
-	s.logger.Printf("Client connected: %s", clientID)
+	s.logger.Debug("Client connected")
 
 	endpointURL := fmt.Sprintf("http://%s/message?clientID=%s", r.Host, clientID)
 	endpointEvent := fmt.Sprintf("event: endpoint\ndata: %s\n\n", endpointURL)
-	if _, err := fmt.Fprint(w, endpointEvent); err != nil {
-		s.logger.Printf("error sending endpoint data. Error: %v", err)
+	if _, err = fmt.Fprint(w, endpointEvent); err != nil {
+		s.logger.WithErr(err).Error("Error sending endpoint data")
 	}
 	flusher.Flush()
-
-	ctx := r.Context()
 
 	for {
 		select {
@@ -228,13 +262,13 @@ func (s *SSEServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) 
 		case msg := <-messageChan:
 			event := fmt.Sprintf("event: message\ndata: %s\n\n", string(msg))
 			if _, err := fmt.Fprint(w, event); err != nil {
-				s.logger.Printf("error sending sse data. Error: %v", err)
+				s.logger.WithErr(err).Error("Error sending message data")
 			}
 			flusher.Flush()
 		case <-time.After(pingInterval):
 			// Keep-alive.
 			if _, err := fmt.Fprint(w, ":ping\n\n"); err != nil {
-				s.logger.Printf("error sending keepalive data. Error: %v", err)
+				s.logger.WithErr(err).Error("Error sending keepalive data")
 			}
 			flusher.Flush()
 		}
@@ -242,30 +276,52 @@ func (s *SSEServer) handleSSEConnection(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleClientMessage processes incoming messages from clients (POST to /message).
-func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) {
+func (s *SSEServer) handleClientMessage(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	ctx, span := observability.StartSpan(ctx, "SSEServer.handleClientMessage")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	if r.Method != http.MethodPost {
+		s.logger.WithFields(map[string]interface{}{
+			"method": r.Method,
+		}).Error("Method not allowed")
+
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	clientID := r.URL.Query().Get("clientID") // Get the client ID from the query parameter.
 	if clientID == "" {
+		s.logger.Error("Missing clientID")
 		http.Error(w, "Missing clientID", http.StatusBadRequest)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		s.logger.WithErr(err).Error("Error reading request body")
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
 
-	s.logger.Printf("Received message from client %s: %s", clientID, string(body))
+	//s.logger.Printf("Received message from client %s: %s", clientID, string(body))
+	s.logger.WithFields(map[string]interface{}{
+		"clientID":       clientID,
+		"message_length": len(body),
+	}).Debug("Received message from client")
 
 	var raw json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
-		s.sendError(clientID, nil, -32700, "Parse error", nil)
+		s.logger.WithErr(err).Error("Error unmarshaling message")
+		s.sendError(clientID, nil, -32700, "Error unmarshaling message", nil)
 		return
 	}
 
@@ -277,9 +333,12 @@ func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) 
 		s.initMutex.RUnlock()
 
 		if request.Method != "initialize" && !initialized {
+			s.logger.Warn("Received request before 'initialize'")
 			s.sendError(clientID, request.ID, -32000, "Server not initialized", nil)
 			return
 		}
+
+		s.logger.Debug("Received request. Started handling request...")
 		s.handleRequest(r.Context(), clientID, &request)
 		return
 	}
@@ -295,21 +354,36 @@ func (s *SSEServer) handleClientMessage(w http.ResponseWriter, r *http.Request) 
 			s.initialized = true
 			s.initMutex.Unlock()
 		} else if !initialized {
-			s.logger.Printf("Received notification before 'initialized': %s", notification.Method)
+			s.logger.Warn("Received notification before 'initialized'")
 			return
 		}
-		s.handleNotification(r.Context(), clientID, &notification)
+
+		s.logger.Debug("Received notification. Started handling notification...")
+		s.handleNotification(ctx, clientID, &notification)
 		return
 	}
 
+	s.logger.Error("Invalid request")
 	s.sendError(clientID, nil, -32600, "Invalid Request", nil)
 }
 
 // Run starts the MCP SSEServer, listening for incoming HTTP connections.
 func (s *SSEServer) Run(ctx context.Context) error {
+	ctx, span := observability.StartSpan(ctx, "SSEServer.Run")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handleHTTPRequest)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		s.handleHTTPRequest(ctx, w, r)
+	})
 
 	// CORS middleware (wrap the main handler)
 	corsHandler := func(h http.Handler) http.Handler {
@@ -329,6 +403,9 @@ func (s *SSEServer) Run(ctx context.Context) error {
 	}
 
 	server := &http.Server{
+		BaseContext: func(listener net.Listener) context.Context {
+			return ctx
+		},
 		Addr:    s.address,        // Use the configured address.
 		Handler: corsHandler(mux), // Wrap the mux with the CORS handler.
 	}
@@ -338,23 +415,28 @@ func (s *SSEServer) Run(ctx context.Context) error {
 	// Shutdown handling
 	errChan := make(chan error, 1)
 	go func() {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.logger.WithErr(err).Error("Error starting server")
 			errChan <- err
 		}
 	}()
 
 	select {
 	case <-ctx.Done():
-		s.logger.Println("Context cancelled, shutting down server...")
-		// Give the server some time to shut down gracefully.
+		s.logger.Warn("Context cancelled. Closing all client connections...")
+
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
+
+		if err = server.Shutdown(shutdownCtx); err != nil {
+			s.logger.WithErr(err).Error("Error during server shutdown")
 			return fmt.Errorf("error during server shutdown: %w", err)
 		}
-		s.logger.Println("Server gracefully shut down.")
+
+		s.logger.Warn("Server gracefully shut down.")
 		return ctx.Err()
 	case err := <-errChan:
+		s.logger.WithErr(err).Error("Error starting server")
 		return fmt.Errorf("server error: %w", err)
 	}
 }

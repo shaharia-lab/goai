@@ -87,7 +87,7 @@
 //		}
 //
 //		baseServer, err := mcp.NewBaseServer(
-//			mcp.UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+//			mcp.UseLogger(observability.NewNullLogger()),
 //		)
 //		if err != nil {
 //			panic(err)

@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	"github.com/shaharia-lab/goai/observability"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // StdIOServer is the MCP server implementation using standard input/output.
@@ -42,15 +45,15 @@ func (s *StdIOServer) sendResponse(clientID string, id *json.RawMessage, result 
 
 	jsonResponse, marshalErr := json.Marshal(response)
 	if marshalErr != nil {
-		s.logger.Printf("Error marshalling response: %v", marshalErr)
+		s.logger.WithErr(marshalErr).Error("Failed to marshal response")
 		s.sendError(clientID, id, -32603, "Internal error: failed to marshal response", nil)
 		return
 	}
 
 	jsonResponse = append(jsonResponse, '\n')
-	_, writeErr := s.out.Write(jsonResponse) // s.out is the io.Writer
+	_, writeErr := s.out.Write(jsonResponse)
 	if writeErr != nil {
-		s.logger.Printf("Error writing response to stdout: %v", writeErr)
+		s.logger.WithErr(writeErr).Error("Failed to write response")
 	}
 }
 
@@ -67,13 +70,13 @@ func (s *StdIOServer) sendError(clientID string, id *json.RawMessage, code int, 
 	}
 	jsonErrorResponse, err := json.Marshal(errorResponse)
 	if err != nil {
-		s.logger.Printf("Error marshaling error response: %v", err)
+		s.logger.WithErr(err).Error("Failed to marshal error response")
 		return
 	}
 	jsonErrorResponse = append(jsonErrorResponse, '\n')
-	_, writeErr := s.out.Write(jsonErrorResponse) // s.out is the io.Writer
+	_, writeErr := s.out.Write(jsonErrorResponse)
 	if writeErr != nil {
-		s.logger.Printf("Failed to write error response: %v", writeErr)
+		s.logger.WithErr(writeErr).Error("Failed to write error response")
 	}
 }
 
@@ -86,26 +89,37 @@ func (s *StdIOServer) sendNotification(clientID string, method string, params in
 	if params != nil {
 		paramsBytes, err := json.Marshal(params)
 		if err != nil {
-			s.logger.Printf("Error marshaling notification parameters: %v", err)
+			s.logger.WithErr(err).Error("Failed to marshal notification parameters")
 			return
 		}
-		notification.Params = json.RawMessage(paramsBytes)
+		notification.Params = paramsBytes
 	}
 
 	jsonNotification, err := json.Marshal(notification)
 	if err != nil {
-		s.logger.Printf("Error marshaling notification message: %v", err)
+		s.logger.WithErr(err).Error("Failed to marshal notification message")
 		return
 	}
 	jsonNotification = append(jsonNotification, '\n')
 	_, writeErr := s.out.Write(jsonNotification) // s.out is the io.Writer
 	if writeErr != nil {
-		s.logger.Printf("Failed to write notification message: %v", writeErr)
+		s.logger.WithErr(writeErr).Error("Failed to write notification message")
 	}
 }
 
 // Run starts the StdIOServer, reading and processing messages from stdin.
 func (s *StdIOServer) Run(ctx context.Context) error {
+	ctx, span := observability.StartSpan(ctx, "StdIOServer.Run")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	scanner := bufio.NewScanner(s.in)
 	buffer := make([]byte, 0, 64*1024)
 	scanner.Buffer(buffer, 1024*1024)
@@ -130,20 +144,23 @@ func (s *StdIOServer) Run(ctx context.Context) error {
 				}
 
 				line := scanner.Text()
-				s.logger.Printf("Received raw input: %s", line)
 
 				var raw json.RawMessage
 				if err := json.Unmarshal([]byte(line), &raw); err != nil {
-					s.sendError("", nil, -32700, "Parse error", nil) // No client ID or request ID for parse errors.
+					s.logger.WithErr(err).Error("Failed to unmarshal message")
+					s.sendError("", nil, -32700, "Failed to unmarshal message", nil)
 					continue
 				}
 
 				var request Request
-				if err := json.Unmarshal(raw, &request); err == nil && request.Method != "" && request.ID != nil {
+				if err = json.Unmarshal(raw, &request); err == nil && request.Method != "" && request.ID != nil {
 					if request.Method != "initialize" && !initialized {
+						s.logger.Error("Received request before 'initialize'")
 						s.sendError("", request.ID, -32000, "Server not initialized", nil) // Empty clientID
 						continue
 					}
+
+					s.logger.Debug("Received request. Handling...")
 					s.handleRequest(ctx, "", &request) // StdIO has no persistent client ID, so we pass an empty string.
 					continue
 				}
@@ -153,10 +170,10 @@ func (s *StdIOServer) Run(ctx context.Context) error {
 					if notification.Method == "notifications/initialized" {
 						initialized = true
 					} else if !initialized {
-						s.logger.Printf("Received notification before 'initialized': %s", notification.Method)
+						s.logger.Debug("Received notification before 'initialized'")
 						continue
 					}
-					s.handleNotification(nil, "", &notification) // Empty clientID.
+					s.handleNotification(ctx, "", &notification) // Empty clientID.
 					continue
 				}
 
@@ -167,10 +184,10 @@ func (s *StdIOServer) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		s.logger.Println("Context cancelled, shutting down server...")
+		s.logger.Debug("Context cancelled, StdIOServer shutting down....")
 		return ctx.Err()
-	case err := <-done:
-		s.logger.Println("StdIOServer shutting down.")
+	case err = <-done:
+		s.logger.WithErr(err).Debug("StdIOServer shutting down.")
 		return err
 	}
 }

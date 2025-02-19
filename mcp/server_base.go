@@ -5,9 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
+
+	"github.com/shaharia-lab/goai/observability"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/xeipuuv/gojsonschema"
 )
@@ -20,7 +23,7 @@ const (
 
 // ServerConfig holds all configuration for BaseServer
 type ServerConfig struct {
-	logger           *log.Logger
+	logger           observability.Logger
 	protocolVersion  string
 	serverName       string
 	serverVersion    string
@@ -38,7 +41,7 @@ type ServerConfig struct {
 type ServerConfigOption func(*ServerConfig)
 
 // UseLogger sets a custom logger
-func UseLogger(logger *log.Logger) ServerConfigOption {
+func UseLogger(logger observability.Logger) ServerConfigOption {
 	return func(c *ServerConfig) {
 		c.logger = logger
 	}
@@ -75,7 +78,7 @@ func UseSSEServerPort(port string) ServerConfigOption {
 type BaseServer struct {
 	protocolVersion    string
 	clientCapabilities map[string]any
-	logger             *log.Logger
+	logger             observability.Logger
 	ServerInfo         struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
@@ -185,7 +188,7 @@ func (s *BaseServer) AddResources(resources ...Resource) error {
 
 func defaultConfig() *ServerConfig {
 	return &ServerConfig{
-		logger:          log.Default(),
+		logger:          observability.NewDefaultLogger(),
 		protocolVersion: ProtocolVersion,
 		serverName:      defaultServerName,
 		serverVersion:   serverVersion,
@@ -233,13 +236,17 @@ func (s *BaseServer) LogMessage(level LogLevel, loggerName string, data interfac
 
 // handleRequest handles incoming requests.  Common to both server types.
 func (s *BaseServer) handleRequest(ctx context.Context, clientID string, request *Request) {
-	s.logger.Printf("Received request from client %s: method=%s, id=%v", clientID, request.Method, request.ID)
+	s.logger.WithFields(map[string]interface{}{
+		"clientID": clientID,
+		"method":   request.Method,
+		"id":       request.ID,
+	}).Debugf("Received request from client")
 
 	switch request.Method {
 	case "initialize":
-		s.handleInitialize(clientID, request)
+		s.handleInitialize(ctx, clientID, request)
 	case "ping":
-		s.handlePing(ctx, clientID, request)
+		s.handlePing(clientID, request)
 	case "resources/list":
 		s.handleResourcesList(ctx, clientID, request)
 	case "resources/read":
@@ -256,18 +263,40 @@ func (s *BaseServer) handleRequest(ctx context.Context, clientID string, request
 		s.handlePromptGet(ctx, clientID, request)
 
 	default:
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"method":   request.Method,
+			"id":       request.ID,
+		}).Warnf("Method not found. Unhandled request from client")
+
 		s.sendErr(clientID, request.ID, -32601, "Method not found", nil)
 	}
 }
 
-func (s *BaseServer) handleInitialize(clientID string, request *Request) {
+func (s *BaseServer) handleInitialize(ctx context.Context, clientID string, request *Request) {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.handleInitialize")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	var params InitializeParams
-	if err := json.Unmarshal(request.Params, &params); err != nil {
+	if err = json.Unmarshal(request.Params, &params); err != nil {
+		s.logger.WithErr(err).Errorf("Failed to parse initialize params")
 		s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
 		return
 	}
 
 	if !strings.HasPrefix(params.ProtocolVersion, "2024-11") {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"version":  params.ProtocolVersion,
+		}).Errorf("Unsupported protocol version")
 		s.sendErr(clientID, request.ID, -32602, "Unsupported protocol version",
 			map[string][]string{"supported": {"2024-11-05"}})
 		return
@@ -284,26 +313,57 @@ func (s *BaseServer) handleInitialize(clientID string, request *Request) {
 	s.sendResp(clientID, request.ID, result, nil)
 }
 
-func (s *BaseServer) handlePing(ctx context.Context, clientID string, request *Request) {
+func (s *BaseServer) handlePing(clientID string, request *Request) {
 	s.sendResp(clientID, request.ID, map[string]interface{}{}, nil)
 }
 
 func (s *BaseServer) handleResourcesList(ctx context.Context, clientID string, request *Request) {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.handleResourcesList")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	var params ListParams
-	if err := json.Unmarshal(request.Params, &params); err != nil {
+	if err = json.Unmarshal(request.Params, &params); err != nil {
+		s.logger.WithErr(err).Errorf("Failed to parse list resources params")
 		s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
 		return
 	}
 
-	result := s.ListResources(params.Cursor, 0)
+	result := s.ListResources(ctx, params.Cursor, 0)
+	span.SetAttributes(attribute.Int("num_resources", len(result.Resources)))
+
 	s.sendResp(clientID, request.ID, result, nil)
 }
 
 // ListResources returns a list of all resources, with optional pagination.
-func (s *BaseServer) ListResources(cursor string, limit int) ListResourcesResult {
+func (s *BaseServer) ListResources(ctx context.Context, cursor string, limit int) ListResourcesResult {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.ListResources")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	if limit <= 0 {
 		limit = 50
 	}
+
+	span.SetAttributes(
+		attribute.Int("limit", limit),
+		attribute.String("cursor", cursor),
+		attribute.Int("num_resources", len(s.resources)),
+	)
 
 	result := ListResourcesResult{
 		Resources: []Resource{},
@@ -355,36 +415,86 @@ func (s *BaseServer) ListResources(cursor string, limit int) ListResourcesResult
 }
 
 func (s *BaseServer) handleResourcesRead(ctx context.Context, clientID string, request *Request) {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.handleResourcesRead")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	var params ReadResourceParams
-	if err := json.Unmarshal(request.Params, &params); err != nil {
+	if err = json.Unmarshal(request.Params, &params); err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"request":  request.ID,
+			"params":   string(request.Params),
+		}).WithErr(err).Errorf("Failed to parse read resource params")
+
 		s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
 		return
 	}
 
 	if _, exists := s.resources[params.URI]; !exists {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"request":  request.ID,
+			"uri":      params.URI,
+		}).Errorf("Resource not found")
+
 		s.sendErr(clientID, request.ID, -32002, "Resource not found",
 			map[string]string{"uri": params.URI})
 		return
 	}
 
-	result, err := s.ReadResource(params)
+	result, err := s.ReadResource(ctx, params)
 	if err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"request":  request.ID,
+			"uri":      params.URI,
+		}).WithErr(err).Errorf("Failed to read resource")
+
 		s.sendErr(clientID, request.ID, -32603, "Failed to read resource",
 			map[string]string{"uri": params.URI})
 		return
 	}
 
+	s.logger.WithFields(map[string]interface{}{
+		"clientID": clientID,
+		"request":  request.ID,
+		"uri":      params.URI,
+	}).Debugf("Resource read successfully")
+
 	s.sendResp(clientID, request.ID, result, nil)
 }
 
 // ReadResource implementation with proper error handling and URI validation
-func (s *BaseServer) ReadResource(params ReadResourceParams) (ReadResourceResult, error) {
+func (s *BaseServer) ReadResource(ctx context.Context, params ReadResourceParams) (ReadResourceResult, error) {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.ReadResource")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	if !isValidURIScheme(params.URI) {
 		return ReadResourceResult{}, fmt.Errorf("invalid URI scheme: %s", params.URI)
 	}
 
 	resource, exists := s.resources[params.URI]
 	if !exists {
+		s.logger.WithFields(map[string]interface{}{
+			"uri": params.URI,
+		}).Errorf("Resource not found")
+
 		return ReadResourceResult{}, fmt.Errorf("resource not found: %s", params.URI)
 	}
 
@@ -392,6 +502,11 @@ func (s *BaseServer) ReadResource(params ReadResourceParams) (ReadResourceResult
 		URI:      resource.URI,
 		MimeType: resource.MimeType,
 	}
+
+	span.SetAttributes(
+		attribute.String("uri", resource.URI),
+		attribute.String("mime_type", resource.MimeType),
+	)
 
 	if strings.HasPrefix(resource.MimeType, "text/") {
 		content.Text = resource.TextContent
@@ -405,12 +520,35 @@ func (s *BaseServer) ReadResource(params ReadResourceParams) (ReadResourceResult
 }
 
 func (s *BaseServer) handleLoggingSetLevel(ctx context.Context, clientID string, request *Request) {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.handleLoggingSetLevel")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	var params SetLogLevelParams
-	if err := json.Unmarshal(request.Params, &params); err != nil {
+	if err = json.Unmarshal(request.Params, &params); err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"request":  request.ID,
+			"params":   string(request.Params),
+		}).WithErr(err).Errorf("Failed to parse set log level params")
+
 		s.sendErr(clientID, request.ID, -32602, "Invalid Params", nil)
 		return
 	}
 	if _, ok := logLevelSeverity[params.Level]; !ok {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"request":  request.ID,
+			"level":    params.Level,
+		}).Errorf("Invalid log level")
+
 		s.sendErr(clientID, request.ID, -32602, "Invalid log level", nil)
 		return
 	}
@@ -420,24 +558,83 @@ func (s *BaseServer) handleLoggingSetLevel(ctx context.Context, clientID string,
 }
 
 func (s *BaseServer) handleToolsList(ctx context.Context, clientID string, request *Request) {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.handleToolsList")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	var params ListParams
-	if err := json.Unmarshal(request.Params, &params); err != nil {
+	if err = json.Unmarshal(request.Params, &params); err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"request":  request.ID,
+			"params":   string(request.Params),
+		}).WithErr(err).Errorf("Failed to parse list tools params")
+
 		s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
 		return
 	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"clientID": clientID,
+		"request":  request.ID,
+		"cursor":   params.Cursor,
+		"limit":    100,
+	}).Debugf("Listing tools")
+
+	span.SetAttributes(attribute.Int("limit", 100), attribute.String("cursor", params.Cursor))
 
 	s.sendResp(clientID, request.ID, s.ListTools(ctx, params.Cursor, 100), nil)
 }
 
 func (s *BaseServer) handleToolsCall(ctx context.Context, clientID string, request *Request) {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.handleToolsCall")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	var params CallToolParams
-	if err := json.Unmarshal(request.Params, &params); err != nil {
+	if err = json.Unmarshal(request.Params, &params); err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"request":  request.ID,
+			"params":   string(request.Params),
+		}).WithErr(err).Errorf("Failed to parse call tool params")
+
 		s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
 		return
 	}
 
+	s.logger.WithFields(map[string]interface{}{
+		"clientID": clientID,
+		"request":  request.ID,
+		"tool":     params.Name,
+	}).Debugf("Calling tool")
+
+	span.SetAttributes(
+		attribute.String("tool", params.Name),
+	)
+
 	result, err := s.CallTool(ctx, params)
 	if err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"request":  request.ID,
+			"tool":     params.Name,
+		}).WithErr(err).Errorf("Failed to call tool")
+
 		s.sendErr(clientID, request.ID, -32602, err.Error(), nil)
 		return
 	}
@@ -446,7 +643,18 @@ func (s *BaseServer) handleToolsCall(ctx context.Context, clientID string, reque
 }
 
 // ListPrompts returns a list of all available prompts, with optional pagination
-func (s *BaseServer) ListPrompts(cursor string, limit int) ListPromptsResult {
+func (s *BaseServer) ListPrompts(ctx context.Context, cursor string, limit int) ListPromptsResult {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.ListPrompts")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	if limit <= 0 {
 		limit = 50
 	}
@@ -489,6 +697,12 @@ func (s *BaseServer) ListPrompts(cursor string, limit int) ListPromptsResult {
 		nextCursor = names[endIdx]
 	}
 
+	span.SetAttributes(
+		attribute.Int("limit", limit),
+		attribute.String("cursor", cursor),
+		attribute.Int("num_prompts", len(pagePrompts)),
+	)
+
 	return ListPromptsResult{
 		Prompts:    pagePrompts,
 		NextCursor: nextCursor,
@@ -496,25 +710,67 @@ func (s *BaseServer) ListPrompts(cursor string, limit int) ListPromptsResult {
 }
 
 func (s *BaseServer) handlePromptsList(ctx context.Context, clientID string, request *Request) {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.handlePromptsList")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	var params ListParams
-	if err := json.Unmarshal(request.Params, &params); err != nil {
+	if err = json.Unmarshal(request.Params, &params); err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"request":  request.ID,
+			"params":   string(request.Params),
+		}).WithErr(err).Errorf("Failed to parse list prompts params")
+
 		s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
 		return
 	}
 
-	result := s.ListPrompts(params.Cursor, 100)
+	result := s.ListPrompts(ctx, params.Cursor, 100)
+	span.SetAttributes(attribute.Int("num_prompts", len(result.Prompts)))
+
 	s.sendResp(clientID, request.ID, result, nil)
 }
 
 func (s *BaseServer) handlePromptGet(ctx context.Context, clientID string, request *Request) {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.handlePromptGet")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	var params GetPromptParams
-	if err := json.Unmarshal(request.Params, &params); err != nil {
+	if err = json.Unmarshal(request.Params, &params); err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"request":  request.ID,
+			"params":   string(request.Params),
+		}).WithErr(err).Errorf("Failed to parse get prompt params")
+
 		s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
 		return
 	}
 
 	prompt, exists := s.prompts[params.Name]
 	if !exists {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"request":  request.ID,
+			"prompt":   params.Name,
+		}).Errorf("Prompt not found")
+
 		s.sendErr(clientID, request.ID, -32602, "Prompt not found",
 			map[string]string{"prompt": params.Name})
 		return
@@ -522,11 +778,29 @@ func (s *BaseServer) handlePromptGet(ctx context.Context, clientID string, reque
 
 	processedPrompt, err := processPrompt(prompt, params.Arguments)
 	if err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"request":  request.ID,
+			"prompt":   params.Name,
+		}).WithErr(err).Errorf("Failed to process prompt")
+
 		s.sendErr(clientID, request.ID, -32603, "Failed to process prompt", nil)
 		return
 	}
 
-	s.sendResp(clientID, request.ID, PromptGetResponse{Description: processedPrompt.Description, Messages: processedPrompt.Messages}, nil)
+	promptResponse := PromptGetResponse{Description: processedPrompt.Description, Messages: processedPrompt.Messages}
+	span.SetAttributes(
+		attribute.String("prompt", params.Name),
+		attribute.Int("total_messages", len(processedPrompt.Messages)),
+	)
+
+	s.logger.WithFields(map[string]interface{}{
+		"clientID": clientID,
+		"request":  request.ID,
+		"prompt":   params.Name,
+	}).Debug("Sending prompt response")
+
+	s.sendResp(clientID, request.ID, promptResponse, nil)
 }
 
 // Helper functions
@@ -539,59 +813,64 @@ func (s *BaseServer) updateSupportedCapabilities() {
 	}
 }
 
-func (s *BaseServer) handlePromptRequest(clientID string, request *Request) {
-	switch request.Method {
-	case "prompts/list":
-		var params ListParams
-
-		if err := json.Unmarshal(request.Params, &params); err != nil {
-			s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
-			return
-		}
-
-		s.sendResp(clientID, request.ID, s.ListPrompts(params.Cursor, 0), nil)
-
-	case "prompt/get":
-		var getParams GetPromptParams
-		if err := json.Unmarshal(request.Params, &getParams); err != nil {
-			s.sendErr(clientID, request.ID, -32602, "Invalid params", nil)
-			return
-		}
-
-		prompt, exists := s.prompts[getParams.Name]
-		if !exists {
-			s.sendErr(clientID, request.ID, -32602, "Prompt not found", map[string]string{"prompt": getParams.Name})
-			return
-		}
-
-		s.sendResp(clientID, request.ID, prompt, nil)
-
-	default:
-		s.sendErr(clientID, request.ID, -32601, "Method not found", nil)
-	}
-}
-
 // handleNotification handles incoming notifications.  Common to both server types.
 func (s *BaseServer) handleNotification(ctx context.Context, clientID string, notification *Notification) {
-	s.logger.Printf("Received notification from client %s: method=%s", clientID, notification.Method)
+	ctx, span := observability.StartSpan(ctx, "BaseServer.handleNotification")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
+	//s.logger.Printf("Received notification from client %s: method=%s", clientID, notification.Method)
+	s.logger.WithFields(map[string]interface{}{
+		"clientID": clientID,
+		"method":   notification.Method,
+	}).Debugf("Received notification from client")
+
 	switch notification.Method {
 	case "notifications/initialized":
-		s.logger.Printf("Client %s initialized.", clientID)
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+		}).Debug("Client initialized")
 	case "notifications/cancelled":
 		var cancelParams struct {
 			RequestID json.RawMessage `json:"requestId"`
 			Reason    string          `json:"reason"`
 		}
-		if err := json.Unmarshal(notification.Params, &cancelParams); err == nil {
-			s.logger.Printf("Cancellation requested for ID %s from client %s: %s", string(cancelParams.RequestID), clientID, cancelParams.Reason)
+		if err = json.Unmarshal(notification.Params, &cancelParams); err == nil {
+			s.logger.WithFields(map[string]interface{}{
+				"clientID":  clientID,
+				"requestID": cancelParams.RequestID,
+				"reason":    cancelParams.Reason,
+			}).Debug("Cancellation requested")
 		}
 
 	default:
-		s.logger.Printf("Unhandled notification from client %s: %s", clientID, notification.Method) // Log but don't send error.
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"method":   notification.Method,
+		}).Warnf("Unhandled notification from client")
+
 	}
 }
 
 func (s *BaseServer) ListTools(ctx context.Context, cursor string, limit int) ListToolsResult {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.ListTools")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	if limit <= 0 {
 		limit = 50
 	}
@@ -638,6 +917,12 @@ func (s *BaseServer) ListTools(ctx context.Context, cursor string, limit int) Li
 		nextCursor = names[endIdx] // Use the next item's name as cursor
 	}
 
+	span.SetAttributes(
+		attribute.Int("limit", limit),
+		attribute.String("cursor", cursor),
+		attribute.Int("num_tools", len(pageTools)),
+	)
+
 	return ListToolsResult{
 		Tools:      pageTools,
 		NextCursor: nextCursor,
@@ -645,7 +930,22 @@ func (s *BaseServer) ListTools(ctx context.Context, cursor string, limit int) Li
 }
 
 func (s *BaseServer) CallTool(ctx context.Context, params CallToolParams) (CallToolResult, error) {
+	ctx, span := observability.StartSpan(ctx, "BaseServer.CallTool")
+	defer span.End()
+
+	var err error
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	if _, exists := s.tools[params.Name]; !exists {
+		s.logger.WithFields(map[string]interface{}{
+			"tool": params.Name,
+		}).Errorf("Tool not found")
+
 		return CallToolResult{}, fmt.Errorf("tool metadata not found: %s", params.Name)
 	}
 
@@ -661,7 +961,8 @@ func (s *BaseServer) CallTool(ctx context.Context, params CallToolParams) (CallT
 
 		result, err := gojsonschema.Validate(schemaLoader, documentLoader)
 		if err != nil {
-			return CallToolResult{}, fmt.Errorf("validation error: %v", err)
+			s.logger.WithErr(err).Errorf("Schema validation error")
+			return CallToolResult{}, fmt.Errorf("validation error")
 		}
 
 		if !result.Valid() {
@@ -669,6 +970,11 @@ func (s *BaseServer) CallTool(ctx context.Context, params CallToolParams) (CallT
 			for _, desc := range result.Errors() {
 				errorMessages = append(errorMessages, desc.String())
 			}
+
+			s.logger.WithFields(map[string]interface{}{
+				"tool":   params.Name,
+				"errors": errorMessages,
+			}).Errorf("Schema validation failed")
 
 			return CallToolResult{
 				IsError: true,
@@ -682,6 +988,10 @@ func (s *BaseServer) CallTool(ctx context.Context, params CallToolParams) (CallT
 
 	result, err := s.tools[params.Name].Handler(ctx, params)
 	if err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"tool": params.Name,
+		}).WithErr(err).Error("Tool handler failed with an error")
+
 		return CallToolResult{
 			IsError: true,
 			Content: []ToolResultContent{{
@@ -690,6 +1000,15 @@ func (s *BaseServer) CallTool(ctx context.Context, params CallToolParams) (CallT
 			}},
 		}, nil
 	}
+
+	span.SetAttributes(
+		attribute.String("tool", params.Name),
+		attribute.Int("contents_length", len(result.Content)),
+	)
+
+	s.logger.WithFields(map[string]interface{}{
+		"tool": params.Name,
+	}).Debug("Tool handler executed successfully")
 
 	return result, nil
 }

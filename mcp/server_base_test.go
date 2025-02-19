@@ -3,9 +3,9 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"log"
-	"os"
 	"testing"
+
+	"github.com/shaharia-lab/goai/observability"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -83,7 +83,7 @@ func TestListTools(t *testing.T) {
 	}
 
 	baseServer, _ := NewBaseServer(
-		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+		UseLogger(observability.NewNullLogger()),
 	)
 	err := baseServer.AddTools(tools...)
 	assert.NoError(t, err)
@@ -190,7 +190,7 @@ func TestToolManager_AddTool(t *testing.T) {
 	}
 
 	baseServer, _ := NewBaseServer(
-		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+		UseLogger(observability.NewNullLogger()),
 	)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -372,7 +372,7 @@ func TestValidatePrompt(t *testing.T) {
 
 func TestListResources(t *testing.T) {
 	baseServer, _ := NewBaseServer(
-		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+		UseLogger(observability.NewNullLogger()),
 	)
 
 	// Add resources in non-sequential order
@@ -387,15 +387,16 @@ func TestListResources(t *testing.T) {
 	assert.NoError(t, err)
 
 	t.Run("list_with_cursor", func(t *testing.T) {
+		ctx := context.Background()
 		// First page
-		result := baseServer.ListResources("", 2)
+		result := baseServer.ListResources(ctx, "", 2)
 		assert.Len(t, result.Resources, 2, "First page should have 2 resources")
 		assert.Equal(t, "a_res", result.Resources[0].URI)
 		assert.Equal(t, "b_res", result.Resources[1].URI)
 		assert.Equal(t, "b_res", result.NextCursor)
 
 		// Second page
-		result = baseServer.ListResources(result.NextCursor, 2)
+		result = baseServer.ListResources(ctx, result.NextCursor, 2)
 		assert.Len(t, result.Resources, 2, "Second page should have 2 resources")
 		assert.Equal(t, "c_res", result.Resources[0].URI)
 		assert.Equal(t, "d_res", result.Resources[1].URI)
@@ -420,7 +421,7 @@ func TestReadResource(t *testing.T) {
 	}
 
 	baseServer, _ := NewBaseServer(
-		UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+		UseLogger(observability.NewNullLogger()),
 	)
 	err := baseServer.AddResources(textResource, binaryResource)
 	assert.NoError(t, err)
@@ -453,7 +454,7 @@ func TestReadResource(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := baseServer.ReadResource(tt.params)
+			result, err := baseServer.ReadResource(context.Background(), tt.params)
 
 			if tt.expectError && err == nil {
 				t.Error("expected error but got nil")

@@ -7,12 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/shaharia-lab/goai/observability"
 
 	"github.com/stretchr/testify/require"
 )
@@ -35,7 +35,7 @@ func waitForResponse(t *testing.T, out *bytes.Buffer, timeout time.Duration) *Re
 }
 
 func TestNewStdIOServer(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewStdIOServer(
 		baseServer,
 		strings.NewReader(""),
@@ -55,7 +55,7 @@ func TestNewStdIOServer(t *testing.T) {
 
 func TestSendResponse(t *testing.T) {
 	out := &bytes.Buffer{}
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewStdIOServer(
 		baseServer,
 		strings.NewReader(""),
@@ -91,7 +91,7 @@ func TestSendResponse(t *testing.T) {
 
 func TestSendError(t *testing.T) {
 	out := &bytes.Buffer{}
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewStdIOServer(
 		baseServer,
 		strings.NewReader(""),
@@ -119,7 +119,7 @@ func TestSendError(t *testing.T) {
 
 func TestSendNotification(t *testing.T) {
 	out := &bytes.Buffer{}
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewStdIOServer(
 		baseServer,
 		strings.NewReader(""),
@@ -165,7 +165,7 @@ func TestRun(t *testing.T) {
 	}
 
 	out := &bytes.Buffer{}
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewStdIOServer(
 		baseServer,
 		newMockReader(messages),
@@ -277,7 +277,7 @@ func TestErrorHandling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			out := &bytes.Buffer{}
-			baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+			baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 			server := NewStdIOServer(
 				baseServer,
 				strings.NewReader(strings.Join(tt.messages, "")),
@@ -331,7 +331,7 @@ func TestErrorHandling(t *testing.T) {
 
 func TestResourceHandling(t *testing.T) {
 	out := &bytes.Buffer{}
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewStdIOServer(
 		baseServer,
 		strings.NewReader(""),
@@ -446,7 +446,7 @@ func TestStdIOServerRequests(t *testing.T) {
 			// Create a buffer to capture output
 			var out bytes.Buffer
 
-			baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+			baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 			server := NewStdIOServer(
 				baseServer,
 				strings.NewReader(tt.input+"\n"),
@@ -513,7 +513,7 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
 			baseServer, _ := NewBaseServer(
-				UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)),
+				UseLogger(observability.NewNullLogger()),
 			)
 			err := baseServer.AddTools(tt.tools...)
 			require.NoError(t, err, "Failed to add tools to server")
@@ -585,7 +585,7 @@ func TestHandlePromptGet(t *testing.T) {
 			input:     `{"jsonrpc": "2.0", "method": "prompts/get", "id": }`,
 			expectedError: &Error{
 				Code:    -32700,
-				Message: "Parse error",
+				Message: "Failed to unmarshal message",
 			},
 		},
 		{
@@ -656,7 +656,7 @@ func TestHandlePromptGet(t *testing.T) {
 
 			// Add the PromptManager when creating the server
 			baseServer, _ := NewBaseServer(
-				UseLogger(log.New(io.Discard, "", 0)),
+				UseLogger(observability.NewNullLogger()),
 			)
 			baseServer.AddPrompts(codeReviewPrompt)
 
@@ -736,7 +736,7 @@ func (b *syncBuffer) ReadAll() []byte {
 }
 
 func TestSuccessfulConnectionEstablishedFlow(t *testing.T) {
-	baseServer, err := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP Server] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, err := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	require.NoError(t, err)
 
 	in := &syncBuffer{}

@@ -6,20 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/shaharia-lab/goai/observability"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewSSEServer(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewSSEServer(baseServer)
 
 	if server == nil {
@@ -34,7 +33,7 @@ func TestNewSSEServer(t *testing.T) {
 }
 
 func TestSetAddress(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewSSEServer(baseServer)
 	newAddress := ":9090"
 	server.SetAddress(newAddress)
@@ -45,16 +44,16 @@ func TestSetAddress(t *testing.T) {
 }
 
 func TestHandleSSEConnection(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewSSEServer(baseServer)
 
 	req := httptest.NewRequest("GET", "/events", nil)
 	w := httptest.NewRecorder()
 
-	ctx, cancel := context.WithCancel(req.Context())
+	ctx, cancel := context.WithCancel(context.Background())
 	req = req.WithContext(ctx)
 
-	go server.handleSSEConnection(w, req)
+	go server.handleSSEConnection(ctx, w, req)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -85,7 +84,7 @@ func TestHandleSSEConnection(t *testing.T) {
 }
 
 func TestHandleClientMessage(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewSSEServer(baseServer)
 	clientID := "test-client"
 
@@ -104,7 +103,7 @@ func TestHandleClientMessage(t *testing.T) {
 	req := httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBuffer(jsonBody))
 	w := httptest.NewRecorder()
 
-	server.handleClientMessage(w, req)
+	server.handleClientMessage(context.Background(), w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status OK, got %d", w.Code)
@@ -113,7 +112,7 @@ func TestHandleClientMessage(t *testing.T) {
 	req = httptest.NewRequest("POST", "/message", bytes.NewBuffer(jsonBody))
 	w = httptest.NewRecorder()
 
-	server.handleClientMessage(w, req)
+	server.handleClientMessage(context.Background(), w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status BadRequest for missing clientID, got %d", w.Code)
@@ -122,7 +121,7 @@ func TestHandleClientMessage(t *testing.T) {
 	req = httptest.NewRequest("GET", "/message?clientID="+clientID, nil)
 	w = httptest.NewRecorder()
 
-	server.handleClientMessage(w, req)
+	server.handleClientMessage(context.Background(), w, req)
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("Expected status MethodNotAllowed for GET request, got %d", w.Code)
@@ -130,7 +129,7 @@ func TestHandleClientMessage(t *testing.T) {
 }
 
 func TestBroadcastNotification(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewSSEServer(baseServer)
 
 	client1Chan := make(chan []byte, 10)
@@ -171,7 +170,7 @@ func TestBroadcastNotification(t *testing.T) {
 }
 
 func TestSendMessageToClient(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewSSEServer(baseServer)
 	clientID := "test-client"
 	messageChan := make(chan []byte, 1)
@@ -196,13 +195,13 @@ func TestSendMessageToClient(t *testing.T) {
 }
 
 func TestCORSHandling(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewSSEServer(baseServer)
 
 	req := httptest.NewRequest("OPTIONS", "/events", nil)
 	w := httptest.NewRecorder()
 
-	server.handleHTTPRequest(w, req)
+	server.handleHTTPRequest(context.Background(), w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status OK for OPTIONS request, got %d", w.Code)
@@ -221,7 +220,7 @@ func TestCORSHandling(t *testing.T) {
 }
 
 func TestServerShutdown(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(log.New(os.Stderr, "[MCP SSEServer] ", log.LstdFlags|log.Lmsgprefix)))
+	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
 	server := NewSSEServer(baseServer)
 	server.SetAddress(":0")
 
@@ -289,7 +288,7 @@ func TestHandlePromptGetSSE(t *testing.T) {
 			input:     `{"jsonrpc": "2.0", "method": "prompts/get", "id": }`,
 			expectedError: &Error{
 				Code:    -32700,
-				Message: "Parse error",
+				Message: "Error unmarshaling message",
 			},
 		},
 		{
@@ -357,7 +356,7 @@ func TestHandlePromptGetSSE(t *testing.T) {
 			}
 
 			baseServer, _ := NewBaseServer(
-				UseLogger(log.New(io.Discard, "", 0)),
+				UseLogger(observability.NewNullLogger()),
 			)
 			baseServer.AddPrompts(codeReviewPrompt)
 			server := NewSSEServer(baseServer)
@@ -372,13 +371,13 @@ func TestHandlePromptGetSSE(t *testing.T) {
 				initRequest := `{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
 				req := httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBufferString(initRequest))
 				w := httptest.NewRecorder()
-				server.handleClientMessage(w, req)
+				server.handleClientMessage(context.Background(), w, req)
 				require.Equal(t, http.StatusOK, w.Code)
 
 				initNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
 				req = httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBufferString(initNotification))
 				w = httptest.NewRecorder()
-				server.handleClientMessage(w, req)
+				server.handleClientMessage(context.Background(), w, req)
 				require.Equal(t, http.StatusOK, w.Code)
 
 				for len(messageChan) > 0 {
@@ -388,7 +387,7 @@ func TestHandlePromptGetSSE(t *testing.T) {
 
 			req := httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBufferString(tt.input))
 			w := httptest.NewRecorder()
-			server.handleClientMessage(w, req)
+			server.handleClientMessage(context.Background(), w, req)
 			require.Equal(t, http.StatusOK, w.Code)
 
 			select {
@@ -424,7 +423,7 @@ func TestHandlePromptGetSSE(t *testing.T) {
 
 func TestSSEConnectionFlow(t *testing.T) {
 	baseServer, err := NewBaseServer(
-		UseLogger(log.New(os.Stderr, "[MCP Server] ", log.LstdFlags|log.Lmsgprefix)),
+		UseLogger(observability.NewNullLogger()),
 		UseSSEServerPort(":0"),
 	)
 	require.NoError(t, err)
@@ -460,7 +459,7 @@ func TestSSEConnectionFlow(t *testing.T) {
 		clientCtx, clientCancel := context.WithCancel(context.Background())
 		defer clientCancel()
 
-		go server.handleSSEConnection(w, req.WithContext(clientCtx))
+		go server.handleSSEConnection(context.Background(), w, req.WithContext(clientCtx))
 		time.Sleep(100 * time.Millisecond)
 
 		headers := w.Header()
@@ -491,7 +490,7 @@ func TestSSEConnectionFlow(t *testing.T) {
 		req = httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBuffer(payloadBytes))
 		w = httptest.NewRecorder()
 
-		server.handleClientMessage(w, req)
+		server.handleClientMessage(context.Background(), w, req)
 		require.Equal(t, http.StatusOK, w.Code)
 
 		var initResponse struct {
@@ -532,7 +531,7 @@ func TestSSEConnectionFlow(t *testing.T) {
 				clientCtx, clientCancel := context.WithCancel(context.Background())
 				defer clientCancel()
 
-				go server.handleSSEConnection(w, req.WithContext(clientCtx))
+				go server.handleSSEConnection(context.Background(), w, req.WithContext(clientCtx))
 				time.Sleep(50 * time.Millisecond)
 
 				server.clientsMutex.RLock()
