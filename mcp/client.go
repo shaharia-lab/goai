@@ -455,7 +455,7 @@ func (c *Client) CallTool(ctx context.Context, params CallToolParams) (CallToolR
 
 	c.logger.WithFields(map[string]interface{}{
 		"tool_name":   params.Name,
-		"tool_params": paramsBytes,
+		"tool_params": string(paramsBytes),
 	}).Debug("Sending tools/call request to server...")
 
 	requestCtx, cancel := context.WithTimeout(ctx, c.config.RequestTimeout)

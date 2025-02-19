@@ -63,12 +63,12 @@ func (l *DefaultLogger) Panicf(format string, args ...interface{}) {
 	l.Panicf("[PANIC] "+format, args...)
 }
 
-func (l *DefaultLogger) Debug(args ...interface{}) { l.logWithFields("[DEBUG]", "", args...) }
-func (l *DefaultLogger) Info(args ...interface{})  { l.logWithFields("[INFO]", "", args...) }
-func (l *DefaultLogger) Warn(args ...interface{})  { l.logWithFields("[WARN]", "", args...) }
-func (l *DefaultLogger) Error(args ...interface{}) { l.logWithFields("[ERROR]", "", args...) }
-func (l *DefaultLogger) Fatal(args ...interface{}) { l.logWithFields("[FATAL]", "", args...) }
-func (l *DefaultLogger) Panic(args ...interface{}) { l.logWithFields("[PANIC]", "", args...) }
+func (l *DefaultLogger) Debug(args ...interface{}) { l.logWithFields("[DEBUG] ", "%v", args...) }
+func (l *DefaultLogger) Info(args ...interface{})  { l.logWithFields("[INFO] ", "%v", args...) }
+func (l *DefaultLogger) Warn(args ...interface{})  { l.logWithFields("[WARN] ", "%v", args...) }
+func (l *DefaultLogger) Error(args ...interface{}) { l.logWithFields("[ERROR] ", "%v", args...) }
+func (l *DefaultLogger) Fatal(args ...interface{}) { l.logWithFields("[FATAL] ", "%v", args...) }
+func (l *DefaultLogger) Panic(args ...interface{}) { l.logWithFields("[PANIC] ", "%v", args...) }
 
 // WithFields - allows adding structured fields to the log
 func (l *DefaultLogger) WithFields(fields map[string]interface{}) Logger {
