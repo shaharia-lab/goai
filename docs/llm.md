@@ -234,6 +234,24 @@ For more details about AWS Bedrock API can be found [here](https://docs.aws.amaz
 
 ### OpenAI Compatible
 
+#### xAI
+
+```go
+// Create client
+client := goai.NewOpenAIClient(
+    "{XAI_API_KEY}",
+    option.WithBaseURL("https://api.x.ai/v1"),
+)
+
+// Initialize provider
+provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
+    Client: client,
+    Model:  "grok-2-latest",
+})
+```
+
+For more details about xAI API can be found [here](https://docs.x.ai/docs/guides/chat)
+
 #### Hugging Face
 
 ```go
