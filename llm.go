@@ -1,6 +1,8 @@
 package goai
 
-import "context"
+import (
+	"context"
+)
 
 // LLMRequest handles the configuration and execution of LLM requests.
 // It provides a consistent interface for interacting with different LLM providers.

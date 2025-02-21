@@ -6,7 +6,6 @@ import (
 	"github.com/shaharia-lab/goai/observability"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 	"strings"
 	"time"
 
@@ -142,6 +141,7 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("error listing tools: %w", err)
 	}
+	span.SetAttributes(attribute.Int("tool_count", len(mcpTools)))
 
 	for _, tool := range mcpTools {
 		tools = append(tools, anthropic.ToolParam{
@@ -152,10 +152,19 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 	}
 
 	var finalResponse string
+	var noOfConversationLoop int
 
 	// Start conversation loop
 	for {
-		message, err := p.client.CreateMessage(ctx, anthropic.MessageNewParams{
+		noOfConversationLoop++
+
+		loopCtx, loopSpan := observability.StartSpan(ctx, fmt.Sprintf("conversation_loop_%d", noOfConversationLoop))
+		loopSpan.SetAttributes(
+			attribute.Int("iteration", noOfConversationLoop),
+			attribute.Int("current_message_count", len(anthropicMessages)),
+		)
+
+		message, err := p.client.CreateMessage(loopCtx, anthropic.MessageNewParams{
 			Model:     anthropic.F(p.model),
 			MaxTokens: anthropic.F(config.MaxToken),
 			Messages:  anthropic.F(anthropicMessages),
@@ -169,6 +178,11 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 		totalInputTokens += message.Usage.InputTokens
 		totalOutputTokens += message.Usage.OutputTokens
 
+		loopSpan.SetAttributes(
+			attribute.Int64("input_tokens", message.Usage.InputTokens),
+			attribute.Int64("output_tokens", message.Usage.OutputTokens),
+		)
+
 		// Process message content and collect tool uses
 		var toolResults []anthropic.ContentBlockParamUnion
 
@@ -178,19 +192,29 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 				finalResponse += block.Text + "\n"
 
 			case anthropic.ToolUseBlock:
-				span.AddEvent(
-					"ToolUseBlock",
-					trace.WithAttributes(attribute.String("tool_name", block.Name)),
-					trace.WithAttributes(attribute.String("tool_input", string(block.Input))),
+				toolCtx, toolSpan := observability.StartSpan(ctx, "AnthropicLLMProvider.ExecuteTool")
+				toolSpan.SetAttributes(
+					attribute.String("tool_name", block.Name),
+					attribute.String("tool_input", string(block.Input)),
 				)
 
-				toolResponse, err := config.toolsProvider.ExecuteTool(ctx, mcp.CallToolParams{
+				toolResponse, err := config.toolsProvider.ExecuteTool(toolCtx, mcp.CallToolParams{
 					Name:      block.Name,
 					Arguments: block.Input,
 				})
+
 				if err != nil {
+					toolSpan.RecordError(err)
+					toolSpan.SetStatus(codes.Error, err.Error())
+					toolSpan.End()
 					return LLMResponse{}, fmt.Errorf("error executing tool '%s': %w", block.Name, err)
 				}
+
+				toolSpan.SetAttributes(
+					attribute.Bool("is_error", toolResponse.IsError),
+					attribute.Int("content_length", len(toolResponse.Content)),
+				)
+				toolSpan.End()
 
 				if toolResponse.Content == nil || len(toolResponse.Content) == 0 {
 					return LLMResponse{}, fmt.Errorf("tool '%s' returned no content", block.Name)
@@ -206,14 +230,15 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 		// Add the assistant's message to the conversation
 		anthropicMessages = append(anthropicMessages, message.ToParam())
 
+		loopSpan.SetAttributes(
+			attribute.Int("tool_results_count", len(toolResults)),
+		)
+		loopSpan.End()
+
 		// If no tool results, we're done
 		if len(toolResults) == 0 {
 			break
 		}
-
-		span.SetAttributes(
-			attribute.Int("tool_results", len(toolResults)),
-		)
 
 		// Add tool results as user message and continue the loop
 		anthropicMessages = append(anthropicMessages,
@@ -224,6 +249,7 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 		attribute.Int64("total_input_tokens", totalInputTokens),
 		attribute.Int64("total_output_tokens", totalOutputTokens),
 		attribute.Float64("completion_time", time.Since(startTime).Seconds()),
+		attribute.Int("conversation_loop_count", noOfConversationLoop),
 	)
 
 	return LLMResponse{
