@@ -3,11 +3,12 @@ package goai
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/shaharia-lab/goai/observability"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-	"time"
 
 	"github.com/shaharia-lab/goai/mcp"
 )
