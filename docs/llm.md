@@ -234,7 +234,7 @@ For more details about AWS Bedrock API can be found [here](https://docs.aws.amaz
 
 ### OpenAI Compatible
 
-#### XAi
+#### xAI
 
 ```go
 // Create client
@@ -250,7 +250,7 @@ provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 })
 ```
 
-For more details about Hugging Face API can be found [here](https://huggingface.co/docs/api-inference/en/getting-started)
+For more details about xAI API can be found [here](https://docs.x.ai/docs/guides/chat)
 
 #### Hugging Face
 
