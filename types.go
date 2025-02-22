@@ -31,11 +31,18 @@ var DefaultConfig = LLMRequestConfig{
 
 // LLMRequestConfig defines configuration parameters for LLM requests.
 type LLMRequestConfig struct {
-	toolsProvider *ToolsProvider
-	MaxToken      int64
-	TopP          float64
-	Temperature   float64
-	TopK          int64
+	toolsProvider  *ToolsProvider
+	MaxToken       int64
+	TopP           float64
+	Temperature    float64
+	TopK           int64
+	DisableTracing bool
+}
+
+func WithTracingDisabled() RequestOption {
+	return func(c *LLMRequestConfig) {
+		c.DisableTracing = true
+	}
 }
 
 // NewRequestConfig creates a new config with default values.
