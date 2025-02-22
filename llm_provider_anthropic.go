@@ -6,10 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shaharia-lab/goai/observability"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-
 	"github.com/shaharia-lab/goai/mcp"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -99,25 +95,6 @@ func (p *AnthropicLLMProvider) prepareMessageParams(messages []LLMMessage, confi
 // It supports different message roles (user, assistant, system) and handles them appropriately.
 // System messages are handled separately through Anthropic's system parameter.
 func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
-	ctx, span := observability.StartSpan(ctx, "AnthropicLLMProvider.GetResponse")
-	span.SetAttributes(
-		attribute.String("model", p.model),
-		attribute.Int64("max_token", config.MaxToken),
-		attribute.Float64("temperature", config.Temperature),
-		attribute.Float64("top_p", config.TopP),
-		attribute.Int64("top_k", config.TopK),
-		attribute.Int("message_count", len(messages)),
-	)
-	defer span.End()
-
-	var err error
-	defer func() {
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-		}
-	}()
-
 	startTime := time.Now()
 
 	// Initialize token counters
@@ -142,7 +119,6 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("error listing tools: %w", err)
 	}
-	span.SetAttributes(attribute.Int("tool_count", len(mcpTools)))
 
 	for _, tool := range mcpTools {
 		tools = append(tools, anthropic.ToolParam{
@@ -153,36 +129,22 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 	}
 
 	var finalResponse string
-	var noOfConversationLoop int
 
 	// Start conversation loop
 	for {
-		noOfConversationLoop++
-
-		loopCtx, loopSpan := observability.StartSpan(ctx, fmt.Sprintf("conversation_loop_%d", noOfConversationLoop))
-		loopSpan.SetAttributes(
-			attribute.Int("iteration", noOfConversationLoop),
-			attribute.Int("current_message_count", len(anthropicMessages)),
-		)
-
-		message, err := p.client.CreateMessage(loopCtx, anthropic.MessageNewParams{
+		message, err := p.client.CreateMessage(ctx, anthropic.MessageNewParams{
 			Model:     anthropic.F(p.model),
 			MaxTokens: anthropic.F(config.MaxToken),
 			Messages:  anthropic.F(anthropicMessages),
 			Tools:     anthropic.F(tools),
 		})
 		if err != nil {
-			return LLMResponse{}, fmt.Errorf("error creating message: %w", err)
+			return LLMResponse{}, err
 		}
 
 		// Update token counts
 		totalInputTokens += message.Usage.InputTokens
 		totalOutputTokens += message.Usage.OutputTokens
-
-		loopSpan.SetAttributes(
-			attribute.Int64("input_tokens", message.Usage.InputTokens),
-			attribute.Int64("output_tokens", message.Usage.OutputTokens),
-		)
 
 		// Process message content and collect tool uses
 		var toolResults []anthropic.ContentBlockParamUnion
@@ -193,29 +155,14 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 				finalResponse += block.Text + "\n"
 
 			case anthropic.ToolUseBlock:
-				toolCtx, toolSpan := observability.StartSpan(ctx, "AnthropicLLMProvider.ExecuteTool")
-				toolSpan.SetAttributes(
-					attribute.String("tool_name", block.Name),
-					attribute.String("tool_input", string(block.Input)),
-				)
-
-				toolResponse, err := config.toolsProvider.ExecuteTool(toolCtx, mcp.CallToolParams{
+				// Execute the tool
+				toolResponse, err := config.toolsProvider.ExecuteTool(ctx, mcp.CallToolParams{
 					Name:      block.Name,
 					Arguments: block.Input,
 				})
-
 				if err != nil {
-					toolSpan.RecordError(err)
-					toolSpan.SetStatus(codes.Error, err.Error())
-					toolSpan.End()
 					return LLMResponse{}, fmt.Errorf("error executing tool '%s': %w", block.Name, err)
 				}
-
-				toolSpan.SetAttributes(
-					attribute.Bool("is_error", toolResponse.IsError),
-					attribute.Int("content_length", len(toolResponse.Content)),
-				)
-				toolSpan.End()
 
 				if toolResponse.Content == nil || len(toolResponse.Content) == 0 {
 					return LLMResponse{}, fmt.Errorf("tool '%s' returned no content", block.Name)
@@ -231,11 +178,6 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 		// Add the assistant's message to the conversation
 		anthropicMessages = append(anthropicMessages, message.ToParam())
 
-		loopSpan.SetAttributes(
-			attribute.Int("tool_results_count", len(toolResults)),
-		)
-		loopSpan.End()
-
 		// If no tool results, we're done
 		if len(toolResults) == 0 {
 			break
@@ -245,13 +187,6 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 		anthropicMessages = append(anthropicMessages,
 			anthropic.NewUserMessage(toolResults...))
 	}
-
-	span.SetAttributes(
-		attribute.Int64("total_input_tokens", totalInputTokens),
-		attribute.Int64("total_output_tokens", totalOutputTokens),
-		attribute.Float64("completion_time", time.Since(startTime).Seconds()),
-		attribute.Int("conversation_loop_count", noOfConversationLoop),
-	)
 
 	return LLMResponse{
 		Text:             strings.TrimSpace(finalResponse),

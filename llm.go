@@ -33,7 +33,7 @@ type LLMRequest struct {
 func NewLLMRequest(config LLMRequestConfig, provider LLMProvider) *LLMRequest {
 	return &LLMRequest{
 		requestConfig: config,
-		provider:      provider,
+		provider:      NewTracingLLMProvider(provider),
 	}
 }
 
