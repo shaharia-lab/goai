@@ -45,16 +45,35 @@ func (p *ToolsProvider) AddMCPClient(client *mcp.Client) error {
 }
 
 // ListTools returns the list of tools available in the provider.
-func (p *ToolsProvider) ListTools(ctx context.Context) ([]mcp.Tool, error) {
-	if p.mcpClient.IsInitialized() == false && len(p.toolsList) == 0 {
-		return []mcp.Tool{}, nil
+func (p *ToolsProvider) ListTools(ctx context.Context, allowedTools []string) ([]mcp.Tool, error) {
+	var tools []mcp.Tool
+	var err error
+
+	if p.mcpClient.IsInitialized() {
+		tools, err = p.mcpClient.ListTools(ctx)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		tools = p.toolsList
 	}
 
-	if p.mcpClient.IsInitialized() == true {
-		return p.mcpClient.ListTools(ctx)
+	if len(allowedTools) > 0 {
+		allowedToolsMap := make(map[string]bool)
+		for _, tool := range allowedTools {
+			allowedToolsMap[tool] = true
+		}
+
+		filteredTools := make([]mcp.Tool, 0)
+		for _, tool := range tools {
+			if allowedToolsMap[tool.Name] {
+				filteredTools = append(filteredTools, tool)
+			}
+		}
+		return filteredTools, nil
 	}
 
-	return p.toolsList, nil
+	return tools, nil
 }
 
 // ExecuteTool executes a tool with the specified ID, name, and parameters.

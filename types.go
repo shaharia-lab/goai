@@ -37,6 +37,7 @@ type LLMRequestConfig struct {
 	Temperature    float64
 	TopK           int64
 	DisableTracing bool
+	AllowedTools   []string
 }
 
 func WithTracingDisabled() RequestOption {
@@ -100,6 +101,12 @@ func WithTopK(topK int64) RequestOption {
 func UseToolsProvider(provider *ToolsProvider) RequestOption {
 	return func(c *LLMRequestConfig) {
 		c.toolsProvider = provider
+	}
+}
+
+func WithAllowedTools(allowedTools []string) RequestOption {
+	return func(c *LLMRequestConfig) {
+		c.AllowedTools = allowedTools
 	}
 }
 

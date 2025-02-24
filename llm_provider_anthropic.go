@@ -115,7 +115,7 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 
 	// Prepare tools if registry exists
 	var tools []anthropic.ToolParam
-	mcpTools, err := config.toolsProvider.ListTools(ctx)
+	mcpTools, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("error listing tools: %w", err)
 	}
