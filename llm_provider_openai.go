@@ -106,7 +106,7 @@ func (p *OpenAILLMProvider) GetResponse(ctx context.Context, messages []LLMMessa
 
 	var tools []openai.ChatCompletionToolParam
 
-	toolLists, err := config.toolsProvider.ListTools(ctx)
+	toolLists, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("failed to list tools: %w", err)
 	}
