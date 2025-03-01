@@ -2,6 +2,7 @@ package goai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -114,18 +115,26 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 	}
 
 	// Prepare tools if registry exists
-	var tools []anthropic.ToolParam
 	mcpTools, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("error listing tools: %w", err)
 	}
 
-	for _, tool := range mcpTools {
-		tools = append(tools, anthropic.ToolParam{
-			Name:        anthropic.F(tool.Name),
-			Description: anthropic.F(tool.Description),
-			InputSchema: anthropic.F[interface{}](tool.InputSchema),
-		})
+	var toolUnionParams []anthropic.ToolUnionUnionParam
+	for _, mcpTool := range mcpTools {
+		// Unmarshal the JSON schema into a map[string]interface{}
+		var schema interface{}
+		if err := json.Unmarshal(mcpTool.InputSchema, &schema); err != nil {
+			return LLMResponse{}, fmt.Errorf("failed to unmarshal tool parameters: %w", err)
+		}
+
+		toolUnionParam := anthropic.ToolUnionParam{
+			Name:        anthropic.F(mcpTool.Name),
+			Description: anthropic.F(mcpTool.Description),
+			Type:        anthropic.F(anthropic.ToolUnionTypeTextEditor20250124),
+			InputSchema: anthropic.F(schema),
+		}
+		toolUnionParams = append(toolUnionParams, toolUnionParam)
 	}
 
 	var finalResponse string
@@ -136,7 +145,7 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 			Model:     anthropic.F(p.model),
 			MaxTokens: anthropic.F(config.MaxToken),
 			Messages:  anthropic.F(anthropicMessages),
-			Tools:     anthropic.F(tools),
+			Tools:     anthropic.F(toolUnionParams),
 		})
 		if err != nil {
 			return LLMResponse{}, err
