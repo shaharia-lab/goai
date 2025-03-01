@@ -128,10 +128,9 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 			return LLMResponse{}, fmt.Errorf("failed to unmarshal tool parameters: %w", err)
 		}
 
-		toolUnionParam := anthropic.ToolUnionParam{
+		toolUnionParam := anthropic.ToolParam{
 			Name:        anthropic.F(mcpTool.Name),
 			Description: anthropic.F(mcpTool.Description),
-			Type:        anthropic.F(anthropic.ToolUnionTypeTextEditor20250124),
 			InputSchema: anthropic.F(schema),
 		}
 		toolUnionParams = append(toolUnionParams, toolUnionParam)
