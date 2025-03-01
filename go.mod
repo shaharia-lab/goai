@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.23.2
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
-	github.com/openai/openai-go v0.1.0-alpha.45
+	github.com/openai/openai-go v0.1.0-alpha.61
 	github.com/pgvector/pgvector-go v0.2.2
 	github.com/stretchr/testify v1.10.0
 	github.com/xeipuuv/gojsonschema v1.2.0
