@@ -1,6 +1,7 @@
 package goai
 
 import (
+	"context"
 	"fmt"
 	"github.com/google/uuid"
 	"sync"
@@ -10,19 +11,19 @@ import (
 // ChatHistoryStorage defines the interface for conversation history storage
 type ChatHistoryStorage interface {
 	// CreateChat initializes a new chat conversation
-	CreateChat() (*ChatHistory, error)
+	CreateChat(ctx context.Context) (*ChatHistory, error)
 
 	// AddMessage adds a new message to an existing conversation
-	AddMessage(chatID uuid.UUID, message ChatHistoryMessage) error
+	AddMessage(ctx context.Context, uuid uuid.UUID, message ChatHistoryMessage) error
 
 	// GetChat retrieves a conversation by its ChatUUID
-	GetChat(id uuid.UUID) (*ChatHistory, error)
+	GetChat(ctx context.Context, uuid uuid.UUID) (*ChatHistory, error)
 
 	// ListChatHistories returns all stored conversations
-	ListChatHistories() ([]ChatHistory, error)
+	ListChatHistories(ctx context.Context) ([]ChatHistory, error)
 
 	// DeleteChat removes a conversation by its ChatUUID
-	DeleteChat(id uuid.UUID) error
+	DeleteChat(ctx context.Context, uuid uuid.UUID) error
 }
 
 // InMemoryChatHistoryStorage is an in-memory implementation of ChatHistoryStorage
@@ -39,7 +40,7 @@ func NewInMemoryChatHistoryStorage() *InMemoryChatHistoryStorage {
 }
 
 // CreateChat initializes a new chat conversation
-func (s *InMemoryChatHistoryStorage) CreateChat() (*ChatHistory, error) {
+func (s *InMemoryChatHistoryStorage) CreateChat(ctx context.Context) (*ChatHistory, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -54,13 +55,13 @@ func (s *InMemoryChatHistoryStorage) CreateChat() (*ChatHistory, error) {
 }
 
 // AddMessage adds a new message to an existing conversation
-func (s *InMemoryChatHistoryStorage) AddMessage(chatID uuid.UUID, message ChatHistoryMessage) error {
+func (s *InMemoryChatHistoryStorage) AddMessage(ctx context.Context, uuid uuid.UUID, message ChatHistoryMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	chat, exists := s.conversations[chatID]
+	chat, exists := s.conversations[uuid]
 	if !exists {
-		return fmt.Errorf("chat with ID %s not found", chatID)
+		return fmt.Errorf("chat with ID %s not found", uuid)
 	}
 
 	chat.Messages = append(chat.Messages, message)
@@ -68,20 +69,20 @@ func (s *InMemoryChatHistoryStorage) AddMessage(chatID uuid.UUID, message ChatHi
 }
 
 // GetChat retrieves a conversation by its ChatUUID
-func (s *InMemoryChatHistoryStorage) GetChat(id uuid.UUID) (*ChatHistory, error) {
+func (s *InMemoryChatHistoryStorage) GetChat(ctx context.Context, uuid uuid.UUID) (*ChatHistory, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	chat, exists := s.conversations[id]
+	chat, exists := s.conversations[uuid]
 	if !exists {
-		return nil, fmt.Errorf("chat with ID %s not found", id)
+		return nil, fmt.Errorf("chat with ID %s not found", uuid)
 	}
 
 	return chat, nil
 }
 
 // ListChatHistories returns all stored conversations
-func (s *InMemoryChatHistoryStorage) ListChatHistories() ([]ChatHistory, error) {
+func (s *InMemoryChatHistoryStorage) ListChatHistories(ctx context.Context) ([]ChatHistory, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -94,14 +95,14 @@ func (s *InMemoryChatHistoryStorage) ListChatHistories() ([]ChatHistory, error) 
 }
 
 // DeleteChat removes a conversation by its ChatUUID
-func (s *InMemoryChatHistoryStorage) DeleteChat(id uuid.UUID) error {
+func (s *InMemoryChatHistoryStorage) DeleteChat(ctx context.Context, uuid uuid.UUID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.conversations[id]; !exists {
-		return fmt.Errorf("chat with ID %s not found", id)
+	if _, exists := s.conversations[uuid]; !exists {
+		return fmt.Errorf("chat with ID %s not found", uuid)
 	}
 
-	delete(s.conversations, id)
+	delete(s.conversations, uuid)
 	return nil
 }
