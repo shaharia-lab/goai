@@ -3,6 +3,7 @@ package goai
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"time"
 )
 
@@ -385,4 +386,16 @@ type VectorStorageProvider interface {
 
 	// Lifecycle Operations
 	Close() error
+}
+
+type ChatHistoryMessage struct {
+	LLMMessage
+	GeneratedAt time.Time `json:"generated_at"`
+}
+
+// ChatHistory defines the interface for conversation history storage
+type ChatHistory struct {
+	UUID      uuid.UUID            `json:"uuid"`
+	Messages  []ChatHistoryMessage `json:"messages"`
+	CreatedAt time.Time            `json:"created_at"`
 }
