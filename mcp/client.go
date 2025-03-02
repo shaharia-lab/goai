@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,9 @@ const (
 	Disconnected ConnectionState = iota
 	Connecting
 	Connected
+	Degraded
+	Recovering
+	BackingOff
 )
 
 type SSEConfig struct {
@@ -41,6 +45,12 @@ type SSEConfig struct {
 type StdIOConfig struct {
 	Reader io.Reader
 	Writer io.Writer
+}
+
+type ConnectionError struct {
+	Code      int
+	Message   string
+	Retryable bool
 }
 
 type ClientConfig struct {
@@ -53,6 +63,17 @@ type ClientConfig struct {
 	StdIO           StdIOConfig
 	MessageEndpoint string
 	RequestTimeout  time.Duration
+
+	HealthCheckInterval time.Duration
+	ConnectionTimeout   time.Duration
+	KeepAliveInterval   time.Duration
+}
+
+type RetryStrategy struct {
+	InitialDelay time.Duration
+	MaxDelay     time.Duration
+	MaxRetries   int
+	JitterFactor float64
 }
 
 type Transport interface {
@@ -125,6 +146,24 @@ func (c *Client) removeResponseHandler(id string) {
 	c.mu.Lock()
 	delete(c.responseHandlers, id)
 	c.mu.Unlock()
+}
+
+func (t *SSETransport) handleConnectionError(err error) *ConnectionError {
+	switch {
+	case strings.Contains(err.Error(), "connection refused"):
+		return &ConnectionError{
+			Code:      1001,
+			Message:   "Server unavailable",
+			Retryable: true,
+		}
+	case strings.Contains(err.Error(), "timeout"):
+		return &ConnectionError{
+			Code:      1002,
+			Message:   "Connection timeout",
+			Retryable: true,
+		}
+	}
+	return nil
 }
 
 func (c *Client) Connect(ctx context.Context) error {
@@ -764,16 +803,18 @@ func (c *Client) GetProtocolVersion() string {
 	return c.protocolVersion
 }
 
-func calculateBackoff(baseDelay time.Duration, attempt int) time.Duration {
-	maxDelay := defaultMaxRetryDelay
+func calculateBackoff(initial time.Duration, retryCount int) time.Duration {
+	// Exponential backoff with jitter
+	backoff := float64(initial) * math.Pow(2, float64(retryCount-1))
+	// Add jitter (±20%)
+	jitter := (rand.Float64()*0.4 - 0.2) * backoff
+	duration := time.Duration(backoff + jitter)
 
-	backoff := float64(baseDelay) * math.Pow(2, float64(attempt-1))
-	if backoff > float64(maxDelay) {
-		backoff = float64(maxDelay)
+	// Cap the maximum backoff to prevent extremely long waits
+	maxBackoff := 1 * time.Minute
+	if duration > maxBackoff {
+		duration = maxBackoff
 	}
 
-	jitter := 0.1
-	backoff = backoff * (1 + jitter*(2*rand.Float64()-1))
-
-	return time.Duration(backoff)
+	return duration
 }

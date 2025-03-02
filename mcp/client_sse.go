@@ -37,6 +37,13 @@ type SSETransport struct {
 	state           ConnectionState
 	connOnce        sync.Once
 	closeOnce       sync.Once
+
+	healthCheckInterval time.Duration
+	connectionTimeout   time.Duration
+	lastActivityTime    time.Time
+
+	clientDone      map[string]chan struct{}
+	clientDoneMutex sync.RWMutex
 }
 
 func NewSSETransport(logger observability.Logger) *SSETransport {
@@ -63,41 +70,93 @@ func (t *SSETransport) Connect(ctx context.Context, config ClientConfig) error {
 	)
 	defer span.End()
 
-	var err error
-	defer func() {
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
+	// Store config first to ensure it's available for connection attempts
+	t.config = config.SSE
+	t.messageEndpoint = config.MessageEndpoint
+	t.healthCheckInterval = config.HealthCheckInterval
+	t.connectionTimeout = config.ConnectionTimeout
+	t.setState(Connecting)
+
+	// Create a done channel to signal completion
+	done := make(chan error, 1)
+
+	go func() {
+		retryCount := 0
+		for {
+			// Verify we have a valid URL before attempting connection
+			if t.config.URL == "" {
+				done <- fmt.Errorf("invalid configuration: empty URL")
+				return
+			}
+
+			t.logger.WithFields(map[string]interface{}{
+				"url":         t.config.URL,
+				"retry_count": retryCount,
+				"max_retries": config.MaxRetries,
+			}).Debug("Attempting connection...")
+
+			err := t.establishConnection(ctx, config)
+			if err != nil {
+				connErr := t.handleConnectionError(err)
+				if connErr != nil && !connErr.Retryable {
+					done <- fmt.Errorf("non-retryable error: %v", err)
+					return
+				}
+
+				retryCount++
+				if retryCount >= config.MaxRetries {
+					done <- fmt.Errorf("max retries (%d) reached: %v", config.MaxRetries, err)
+					return
+				}
+
+				delay := calculateBackoff(config.RetryDelay, retryCount)
+
+				t.logger.WithFields(map[string]interface{}{
+					"retry_count": retryCount,
+					"max_retries": config.MaxRetries,
+					"delay":       delay,
+					"error":       err,
+				}).Debug("Connection failed, retrying...")
+
+				select {
+				case <-time.After(delay):
+					continue
+				case <-ctx.Done():
+					done <- ctx.Err()
+					return
+				case <-t.stopChan:
+					done <- fmt.Errorf("connection stopped")
+					return
+				}
+			}
+
+			// Successfully connected
+			t.setState(Connected)
+			done <- nil
+			return
 		}
 	}()
 
-	t.config = config.SSE
-	t.logger = config.Logger
-	t.messageEndpoint = config.MessageEndpoint
-	t.setState(Connecting)
+	// Calculate appropriate timeout based on retry settings
+	maxTimeout := time.Duration(config.MaxRetries) * config.RetryDelay * 2
+	if maxTimeout < 30*time.Second {
+		maxTimeout = 30 * time.Second
+	}
 
-	t.logger.Debug("Resetting connection state")
-	t.connOnce = sync.Once{}
-
-	t.logger.Debug("Starting connection manager")
-	t.connOnce.Do(func() {
-		go t.connectionManager(ctx, config)
-	})
-
-	// Wait for initial connection or failure
+	// Wait for either success, max retries, or timeout
 	select {
-	case <-time.After(30 * time.Second):
-		t.logger.WithFields(map[string]interface{}{
-			"url":     config.SSE.URL,
-			"timeout": 30 * time.Second,
-		}).Debug("Timeout waiting for initial connection")
-		return fmt.Errorf("timeout waiting for initial connection")
-	case <-ctx.Done():
-		t.logger.Debug("Context cancelled")
-		return ctx.Err()
-	case <-t.reconnectChan:
-		t.logger.Debug("Connection established")
+	case err := <-done:
+		if err != nil {
+			t.setState(Disconnected)
+			return fmt.Errorf("failed to connect to events endpoint: %w", err)
+		}
 		return nil
+	case <-time.After(maxTimeout):
+		t.setState(Disconnected)
+		return fmt.Errorf("timeout waiting for connection after %v", maxTimeout)
+	case <-ctx.Done():
+		t.setState(Disconnected)
+		return ctx.Err()
 	}
 }
 
@@ -110,7 +169,6 @@ func (t *SSETransport) connectionManager(ctx context.Context, config ClientConfi
 			return
 		default:
 			if t.getState() != Connecting && t.getState() != Disconnected {
-				// Wait for disconnect or reconnect signal
 				select {
 				case <-t.stopChan:
 					return
@@ -119,35 +177,52 @@ func (t *SSETransport) connectionManager(ctx context.Context, config ClientConfi
 				}
 			}
 
-			if err := t.establishConnection(ctx, config); err != nil {
-				retryCount++
-				if retryCount >= config.MaxRetries {
-					t.logger.WithErr(err).Debug("Max retries reached. Connection attempt failed, Disconnecting...")
-					t.setState(Disconnected)
-					return
-				}
+			err := t.establishConnection(ctx, config)
+			if err != nil {
+				connErr := t.handleConnectionError(err)
+				if connErr != nil {
+					if !connErr.Retryable {
+						t.logger.WithFields(map[string]interface{}{
+							"error_code":    connErr.Code,
+							"error_message": connErr.Message,
+						}).Error("Non-retryable connection error")
+						t.setState(Disconnected)
+						return
+					}
 
-				delay := calculateBackoff(config.RetryDelay, retryCount)
-				t.logger.WithErr(err).WithFields(map[string]interface{}{
-					"retry_count": retryCount,
-					"delay":       delay,
-				}).Debug("Connection attempt failed. Retrying...")
+					t.setState(BackingOff)
+					retryCount++
 
-				select {
-				case <-time.After(delay):
-				case <-t.stopChan:
-					return
+					if retryCount >= config.MaxRetries {
+						t.logger.WithFields(map[string]interface{}{
+							"max_retries": config.MaxRetries,
+							"error_code":  connErr.Code,
+						}).Error("Max retries reached")
+						t.setState(Disconnected)
+						return
+					}
+
+					delay := calculateBackoff(config.RetryDelay, retryCount)
+					t.logger.WithFields(map[string]interface{}{
+						"retry_count": retryCount,
+						"delay":       delay,
+						"error_code":  connErr.Code,
+					}).Debug("Retrying connection")
+
+					select {
+					case <-time.After(delay):
+					case <-t.stopChan:
+						return
+					}
 				}
 			} else {
-				t.logger.Debug("Connection established")
 				t.setState(Connected)
 				retryCount = 0
+				t.lastActivityTime = time.Now()
 
-				// Notify about successful connection
 				select {
 				case t.reconnectChan <- struct{}{}:
 				default:
-					t.logger.Debug("Reconnect channel is full. But it's OK")
 				}
 			}
 		}
@@ -163,7 +238,20 @@ func (t *SSETransport) establishConnection(ctx context.Context, config ClientCon
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.config.URL, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %v", err)
+		connErr := t.handleConnectionError(err)
+		if connErr != nil {
+			t.logger.WithFields(map[string]interface{}{
+				"error_code":    connErr.Code,
+				"error_message": connErr.Message,
+				"retryable":     connErr.Retryable,
+			}).Debug("Connection error occurred")
+
+			if !connErr.Retryable {
+				t.setState(Disconnected)
+				return fmt.Errorf("non-retryable error: %v", err)
+			}
+		}
+		return err
 	}
 
 	// Add Accept header for SSE
@@ -517,4 +605,29 @@ func (t *SSETransport) extractClientID(endpoint string) string {
 	}).Debug("Extracted client ID")
 
 	return clientID
+}
+
+func (t *SSETransport) monitorConnectionHealth(ctx context.Context) {
+	ticker := time.NewTicker(t.healthCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if time.Since(t.lastActivityTime) > t.connectionTimeout+t.connectionTimeout/10 {
+				t.logger.WithFields(map[string]interface{}{
+					"last_activity": t.lastActivityTime,
+					"timeout":       t.connectionTimeout,
+				}).Warn("Connection timeout detected")
+
+				t.setState(Degraded)
+				select {
+				case t.reconnectChan <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}
 }

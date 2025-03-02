@@ -239,21 +239,63 @@ func (s *SSEServer) handleSSEConnection(ctx context.Context, w http.ResponseWrit
 	clientID := uuid.NewString()
 	messageChan := make(chan []byte, 10)
 
+	connectedAt := time.Now()
+
 	s.clientsMutex.Lock()
 	s.clients[clientID] = messageChan
+	s.activeConnections.Store(clientID, connectedAt)
+
 	s.clientsMutex.Unlock()
 
 	defer func() {
 		s.clientsMutex.Lock()
+		disconnectReason := "normal_shutdown"
+		if err := recover(); err != nil {
+			disconnectReason = "panic"
+			s.logger.WithFields(map[string]interface{}{
+				"clientID": clientID,
+				"error":    err,
+			}).Error("Panic recovered in SSE handler")
+		}
+
+		// Enhanced disconnect logging
+		s.logger.WithFields(map[string]interface{}{
+			"clientID":        clientID,
+			"event":           "client_disconnecting",
+			"reason":          disconnectReason,
+			"connection_time": time.Since(connectedAt).String(),
+		}).Info("SSE client disconnecting")
+
+		s.handleClientDisconnect(r.Context(), clientID)
 		delete(s.clients, clientID)
 		close(messageChan)
 		s.clientsMutex.Unlock()
+
 		s.logger.WithFields(map[string]interface{}{
 			"clientID": clientID,
-		}).Warn("Client disconnected")
+			"event":    "client_cleanup_complete",
+		}).Info("SSE client cleanup completed")
 	}()
 
-	s.logger.Debug("Client connected")
+	disconnectChan := make(chan string, 1)
+
+	go func() {
+		<-r.Context().Done()
+		reason := "unknown"
+		if r.Context().Err() == context.Canceled {
+			reason = "client_initiated"
+		} else if r.Context().Err() == context.DeadlineExceeded {
+			reason = "timeout"
+		}
+		disconnectChan <- reason
+
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+			"event":    "connection_closed",
+			"reason":   reason,
+			"error":    r.Context().Err(),
+		}).Info("Client connection closed")
+	}()
 
 	endpointURL := fmt.Sprintf("http://%s/message?clientID=%s", r.Host, clientID)
 	endpointEvent := fmt.Sprintf("event: endpoint\ndata: %s\n\n", endpointURL)
@@ -266,16 +308,30 @@ func (s *SSEServer) handleSSEConnection(ctx context.Context, w http.ResponseWrit
 		select {
 		case <-ctx.Done():
 			return
+		case reason := <-disconnectChan:
+			s.logger.WithFields(map[string]interface{}{
+				"clientID": clientID,
+				"event":    "connection_terminated",
+				"reason":   reason,
+			}).Info("SSE connection terminated")
+			return
 		case msg := <-messageChan:
 			event := fmt.Sprintf("event: message\ndata: %s\n\n", string(msg))
 			if _, err := fmt.Fprint(w, event); err != nil {
-				s.logger.WithErr(err).Error("Error sending message data")
+				s.logger.WithFields(map[string]interface{}{
+					"clientID": clientID,
+					"error":    err,
+				}).Error("Error sending message data")
+				return
 			}
 			flusher.Flush()
 		case <-time.After(pingInterval):
-			// Keep-alive.
 			if _, err := fmt.Fprint(w, ":ping\n\n"); err != nil {
-				s.logger.WithErr(err).Error("Error sending keepalive data")
+				s.logger.WithFields(map[string]interface{}{
+					"clientID": clientID,
+					"error":    err,
+				}).Error("Error sending keepalive data")
+				return
 			}
 			flusher.Flush()
 		}
@@ -469,5 +525,19 @@ func (s *SSEServer) removeClient(clientID string) {
 		close(ch)
 		delete(s.clients, clientID)
 	}
+	s.activeConnections.Delete(clientID)
+}
+
+func (s *SSEServer) handleClientDisconnect(ctx context.Context, clientID string) {
+	ctx, span := observability.StartSpan(ctx, "handle_client_disconnect")
+	defer span.End()
+
+	// Make this a more prominent log message
+	s.logger.WithFields(map[string]interface{}{
+		"clientID": clientID,
+		"event":    "client_disconnect",
+	}).Info("SSE client connection terminated") // Changed to make it more distinct
+
+	// Additional cleanup
 	s.activeConnections.Delete(clientID)
 }
