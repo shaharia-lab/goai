@@ -1,6 +1,7 @@
 package goai
 
 import (
+	"context"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -16,8 +17,9 @@ func TestNewInMemoryChatHistoryStorage(t *testing.T) {
 
 func TestInMemoryChatHistoryStorage_CreateChat(t *testing.T) {
 	storage := NewInMemoryChatHistoryStorage()
+	ctx := context.Background()
 
-	chat, err := storage.CreateChat()
+	chat, err := storage.CreateChat(ctx)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, chat)
@@ -33,7 +35,8 @@ func TestInMemoryChatHistoryStorage_CreateChat(t *testing.T) {
 
 func TestInMemoryChatHistoryStorage_AddMessage(t *testing.T) {
 	storage := NewInMemoryChatHistoryStorage()
-	chat, _ := storage.CreateChat()
+	ctx := context.Background()
+	chat, _ := storage.CreateChat(ctx)
 
 	message := ChatHistoryMessage{
 		LLMMessage: LLMMessage{
@@ -43,47 +46,50 @@ func TestInMemoryChatHistoryStorage_AddMessage(t *testing.T) {
 		GeneratedAt: time.Now(),
 	}
 
-	err := storage.AddMessage(chat.UUID, message)
+	err := storage.AddMessage(ctx, chat.UUID, message)
 	assert.NoError(t, err)
 
 	// Verify message was added
-	storedChat, _ := storage.GetChat(chat.UUID)
+	storedChat, _ := storage.GetChat(ctx, chat.UUID)
 	assert.Len(t, storedChat.Messages, 1)
 	assert.Equal(t, message, storedChat.Messages[0])
 
 	// Test adding message to non-existent chat
-	err = storage.AddMessage(uuid.New(), message)
+	err = storage.AddMessage(ctx, uuid.New(), message)
 	assert.Error(t, err)
 }
 
 func TestInMemoryChatHistoryStorage_GetChat(t *testing.T) {
 	storage := NewInMemoryChatHistoryStorage()
-	chat, _ := storage.CreateChat()
+	ctx := context.Background()
+
+	chat, _ := storage.CreateChat(ctx)
 
 	// Test getting existing chat
-	storedChat, err := storage.GetChat(chat.UUID)
+	storedChat, err := storage.GetChat(ctx, chat.UUID)
 	assert.NoError(t, err)
 	assert.Equal(t, chat, storedChat)
 
 	// Test getting non-existent chat
-	nonExistentChat, err := storage.GetChat(uuid.New())
+	nonExistentChat, err := storage.GetChat(ctx, uuid.New())
 	assert.Error(t, err)
 	assert.Nil(t, nonExistentChat)
 }
 
 func TestInMemoryChatHistoryStorage_ListChatHistories(t *testing.T) {
 	storage := NewInMemoryChatHistoryStorage()
+	ctx := context.Background()
 
 	// Test empty storage
-	chats, err := storage.ListChatHistories()
+	chats, err := storage.ListChatHistories(ctx)
 	assert.NoError(t, err)
 	assert.Empty(t, chats)
 
 	// Create some chats
-	chat1, _ := storage.CreateChat()
-	chat2, _ := storage.CreateChat()
+	chat1, _ := storage.CreateChat(ctx)
+	chat2, _ := storage.CreateChat(ctx)
 
-	chats, err = storage.ListChatHistories()
+	chats, err = storage.ListChatHistories(ctx)
 	assert.NoError(t, err)
 	assert.Len(t, chats, 2)
 
@@ -98,10 +104,11 @@ func TestInMemoryChatHistoryStorage_ListChatHistories(t *testing.T) {
 
 func TestInMemoryChatHistoryStorage_DeleteChat(t *testing.T) {
 	storage := NewInMemoryChatHistoryStorage()
-	chat, _ := storage.CreateChat()
+	ctx := context.Background()
+	chat, _ := storage.CreateChat(ctx)
 
 	// Test deleting existing chat
-	err := storage.DeleteChat(chat.UUID)
+	err := storage.DeleteChat(ctx, chat.UUID)
 	assert.NoError(t, err)
 
 	// Verify chat was deleted
@@ -109,13 +116,14 @@ func TestInMemoryChatHistoryStorage_DeleteChat(t *testing.T) {
 	assert.False(t, exists)
 
 	// Test deleting non-existent chat
-	err = storage.DeleteChat(uuid.New())
+	err = storage.DeleteChat(ctx, uuid.New())
 	assert.Error(t, err)
 }
 
 func TestInMemoryChatHistoryStorage_Concurrency(t *testing.T) {
 	storage := NewInMemoryChatHistoryStorage()
-	chat, _ := storage.CreateChat()
+	ctx := context.Background()
+	chat, _ := storage.CreateChat(ctx)
 
 	// Test concurrent message adding
 	done := make(chan bool)
@@ -130,7 +138,7 @@ func TestInMemoryChatHistoryStorage_Concurrency(t *testing.T) {
 				},
 				GeneratedAt: time.Now(),
 			}
-			err := storage.AddMessage(chat.UUID, message)
+			err := storage.AddMessage(ctx, chat.UUID, message)
 			assert.NoError(t, err)
 			done <- true
 		}(i)
@@ -142,7 +150,7 @@ func TestInMemoryChatHistoryStorage_Concurrency(t *testing.T) {
 	}
 
 	// Verify all messages were added
-	storedChat, err := storage.GetChat(chat.UUID)
+	storedChat, err := storage.GetChat(ctx, chat.UUID)
 	assert.NoError(t, err)
 	assert.Len(t, storedChat.Messages, messageCount)
 }
