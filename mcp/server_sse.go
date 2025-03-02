@@ -20,11 +20,12 @@ import (
 // SSEServer is the MCP server implementation using Server-Sent Events.
 type SSEServer struct {
 	*BaseServer
-	clients      map[string]chan []byte
-	clientsMutex sync.RWMutex
-	address      string
-	initialized  bool
-	initMutex    sync.RWMutex
+	clients           map[string]chan []byte
+	clientsMutex      sync.RWMutex
+	address           string
+	initialized       bool
+	initMutex         sync.RWMutex
+	activeConnections sync.Map
 }
 
 // NewSSEServer creates a new SSEServer.
@@ -151,18 +152,24 @@ func (s *SSEServer) sendMessageToClient(clientID string, message []byte) {
 	s.clientsMutex.RLock()
 	defer s.clientsMutex.RUnlock()
 
-	if clientChan, ok := s.clients[clientID]; ok {
-		select {
-		case clientChan <- message:
-		default:
-			s.logger.WithFields(map[string]interface{}{
-				"clientID": clientID,
-			}).Warn("Client message buffer full, dropping message")
-		}
-	} else {
+	clientChan, ok := s.clients[clientID]
+	if !ok {
 		s.logger.WithFields(map[string]interface{}{
 			"clientID": clientID,
-		}).Warn("Client not found")
+		}).Debug("Attempted to send message to non-existent client")
+		return
+	}
+
+	// Use a non-blocking send with timeout
+	select {
+	case clientChan <- message:
+		// Message sent successfully
+	case <-time.After(100 * time.Millisecond):
+		s.logger.WithFields(map[string]interface{}{
+			"clientID": clientID,
+		}).Warn("Client message buffer full or client unresponsive, dropping message")
+		// Consider cleaning up the client if it's consistently unresponsive
+		go s.removeClient(clientID)
 	}
 }
 
@@ -425,6 +432,19 @@ func (s *SSEServer) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		s.logger.Warn("Context cancelled. Closing all client connections...")
 
+		// Add client cleanup
+		s.clientsMutex.RLock()
+		clientIDs := make([]string, 0, len(s.clients))
+		for clientID := range s.clients {
+			clientIDs = append(clientIDs, clientID)
+		}
+		s.clientsMutex.RUnlock()
+
+		// Remove all clients
+		for _, clientID := range clientIDs {
+			s.removeClient(clientID)
+		}
+
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
@@ -439,4 +459,15 @@ func (s *SSEServer) Run(ctx context.Context) error {
 		s.logger.WithErr(err).Error("Error starting server")
 		return fmt.Errorf("server error: %w", err)
 	}
+}
+
+func (s *SSEServer) removeClient(clientID string) {
+	s.clientsMutex.Lock()
+	defer s.clientsMutex.Unlock()
+
+	if ch, exists := s.clients[clientID]; exists {
+		close(ch)
+		delete(s.clients, clientID)
+	}
+	s.activeConnections.Delete(clientID)
 }
