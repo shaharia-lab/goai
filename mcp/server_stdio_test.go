@@ -28,7 +28,7 @@ func waitForResponse(t *testing.T, out *bytes.Buffer, timeout time.Duration) *Re
 			}
 			return &response
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("Timeout waiting for response")
 	return nil
