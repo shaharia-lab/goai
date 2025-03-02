@@ -168,7 +168,7 @@ func (t *SSETransport) connectionManager(ctx context.Context, config ClientConfi
 		case <-t.stopChan:
 			return
 		default:
-			if t.getState() != Connecting && t.getState() != Disconnected {
+			if t.getState() != Connecting {
 				select {
 				case <-t.stopChan:
 					return
@@ -394,12 +394,14 @@ func (t *SSETransport) processEventStream(ctx context.Context, reader io.Reader,
 	// Handle EOF
 	t.logger.Debug("Event stream closed unexpected due to possibly EOF")
 	errChan <- fmt.Errorf("event stream closed unexpectedly")
+	t.setState(Disconnected)
 	select {
 	case t.reconnectChan <- struct{}{}:
 	default:
 		t.logger.Debug("Reconnect channel is full. But it's OK")
 	}
 }
+
 func (t *SSETransport) processEvent(
 	event map[string]string,
 	messageEndpointChan chan string,
