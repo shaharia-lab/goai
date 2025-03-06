@@ -8,6 +8,10 @@ import (
 	"strings"
 )
 
+const (
+	ErrorLogField string = "error"
+)
+
 // Logger interface - defines the common logging methods
 type Logger interface {
 	Debugf(format string, args ...interface{})
