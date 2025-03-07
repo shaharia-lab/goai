@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	// ErrorLogField is the key used for error fields in logs
 	ErrorLogField string = "error"
 )
 
