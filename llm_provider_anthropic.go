@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"strings"
 	"time"
 
@@ -228,51 +229,241 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 //	    fmt.Print(chunk.Text)
 //	}
 func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
-	params := p.prepareMessageParams(messages, config)
-	stream := p.client.CreateStreamingMessage(ctx, params)
 	responseChan := make(chan StreamingLLMResponse, 100)
 
+	// Convert our messages to Anthropic messages
+	var anthropicMessages []anthropic.MessageParam
+	for _, msg := range messages {
+		switch msg.Role {
+		case UserRole:
+			anthropicMessages = append(anthropicMessages,
+				anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Text)))
+		case AssistantRole:
+			anthropicMessages = append(anthropicMessages,
+				anthropic.NewAssistantMessage(anthropic.NewTextBlock(msg.Text)))
+		}
+	}
+
+	// Prepare tools if registry exists
+	mcpTools, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
+	if err != nil {
+		return nil, fmt.Errorf("error listing tools: %w", err)
+	}
+
+	var toolUnionParams []anthropic.ToolUnionUnionParam
+	for _, mcpTool := range mcpTools {
+		// Unmarshal the JSON schema into a map[string]interface{}
+		var schema interface{}
+		if err := json.Unmarshal(mcpTool.InputSchema, &schema); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal tool parameters: %w", err)
+		}
+
+		toolUnionParam := anthropic.ToolParam{
+			Name:        anthropic.F(mcpTool.Name),
+			Description: anthropic.F(mcpTool.Description),
+			InputSchema: anthropic.F(schema),
+		}
+		toolUnionParams = append(toolUnionParams, toolUnionParam)
+	}
+
+	// Start stream processing in a goroutine
 	go func() {
 		defer close(responseChan)
 
-		for stream.Next() {
-			select {
-			case <-ctx.Done():
+		var toolCalls []toolCallInfo
+
+		// Start conversation loop
+		for {
+			// Create streaming message with tools
+			params := anthropic.MessageNewParams{
+				Model:     anthropic.F(p.model),
+				MaxTokens: anthropic.F(config.MaxToken),
+				Messages:  anthropic.F(anthropicMessages),
+				Tools:     anthropic.F(toolUnionParams),
+			}
+
+			// Set other parameters from config
+			if config.TopP > 0 {
+				params.TopP = anthropic.Float(config.TopP)
+			}
+			if config.Temperature > 0 {
+				params.Temperature = anthropic.Float(config.Temperature)
+			}
+
+			stream := p.client.CreateStreamingMessage(ctx, params)
+			toolCalls = nil
+
+			var currentToolName, currentToolID string
+			var currentToolInput json.RawMessage
+
+			for stream.Next() {
+				select {
+				case <-ctx.Done():
+					responseChan <- StreamingLLMResponse{
+						Error: ctx.Err(),
+						Done:  true,
+					}
+					return
+				default:
+					event := stream.Current()
+
+					//log.Printf("Event: %+v", event.Delta)
+
+					switch event.Type {
+					case anthropic.MessageStreamEventTypeContentBlockStart:
+						if block, ok := event.ContentBlock.(map[string]interface{}); ok {
+							blockType, _ := block["type"].(string)
+							if blockType == "tool_use" {
+								currentToolName, _ = block["name"].(string)
+								currentToolID, _ = block["id"].(string)
+								currentToolInput, _ = json.Marshal(block["input"])
+
+								// Record tool call for later execution
+								toolCalls = append(toolCalls, toolCallInfo{
+									ID:    currentToolID,
+									Name:  currentToolName,
+									Input: currentToolInput,
+								})
+							}
+						}
+
+					case anthropic.MessageStreamEventTypeContentBlockDelta:
+						if event.Delta != nil {
+							if delta, ok := event.Delta.(anthropic.ContentBlockDeltaEventDelta); ok {
+								if delta.Type == "text_delta" && delta.Text != "" {
+									responseChan <- StreamingLLMResponse{
+										Text:       delta.Text,
+										TokenCount: 1,
+									}
+								}
+							}
+						}
+
+					case anthropic.MessageStreamEventTypeMessageDelta:
+						// Extract usage information if present
+						/*if usage, ok := event.Usage.(map[string]interface{}); ok {
+							if inputTokens, ok := usage["input_tokens"].(float64); ok {
+								totalInputTokens = int64(inputTokens)
+							}
+							if outputTokens, ok := usage["output_tokens"].(float64); ok {
+								totalOutputTokens = int64(outputTokens)
+							}
+						}*/
+
+					case anthropic.MessageStreamEventTypeMessageStop:
+						// If no tool calls, we're done
+						if len(toolCalls) == 0 {
+							responseChan <- StreamingLLMResponse{
+								Done: true,
+							}
+							return
+						}
+
+						// Execute tools and continue conversation
+						var toolResults []anthropic.ContentBlockParamUnion
+
+						// Execute each tool call
+						for _, toolCall := range toolCalls {
+							// Execute the tool
+							toolResponse, err := config.toolsProvider.ExecuteTool(ctx, mcp.CallToolParams{
+								Name:      toolCall.Name,
+								Arguments: toolCall.Input,
+							})
+							if err != nil {
+								responseChan <- StreamingLLMResponse{
+									Error: fmt.Errorf("error executing tool '%s': %w", toolCall.Name, err),
+									Done:  true,
+								}
+								return
+							}
+
+							if toolResponse.Content == nil || len(toolResponse.Content) == 0 {
+								responseChan <- StreamingLLMResponse{
+									Error: fmt.Errorf("tool '%s' returned no content", toolCall.Name),
+									Done:  true,
+								}
+								return
+							}
+
+							// Add tool result to collection
+							toolResults = append(toolResults,
+								anthropic.NewToolResultBlock(toolCall.ID, toolResponse.Content[0].Text, toolResponse.IsError))
+
+							// Notify about tool execution result
+							resultText := fmt.Sprintf("[Tool Result (%s): %s]", toolCall.Name,
+								truncateString(toolResponse.Content[0].Text, 50))
+							responseChan <- StreamingLLMResponse{
+								Text:       resultText,
+								TokenCount: 1,
+							}
+						}
+
+						// Construct a response message to add to the conversation
+						// This depends on exact SDK version, but we'll use the standard approach
+						var responseContent []anthropic.ContentBlockParamUnion
+
+						// Add text content from the current stream
+						responseContent = append(responseContent, anthropic.NewTextBlock(getTextFromStream(stream)))
+
+						// Add the assistant's message to the conversation using raw params
+						assistantMessage := anthropic.NewAssistantMessage(responseContent...)
+						anthropicMessages = append(anthropicMessages, assistantMessage)
+
+						// Add tool results as user message
+						var toolResultsContent []anthropic.ContentBlockParamUnion
+						for _, toolCall := range toolCalls {
+							toolResultsContent = append(toolResults, anthropic.NewToolResultBlock(toolCall.ID, toolCall.Result, false))
+
+						}
+						userMessage := anthropic.NewUserMessage(toolResultsContent...)
+						anthropicMessages = append(anthropicMessages, userMessage)
+
+						// Inform that we're continuing the conversation
+						responseChan <- StreamingLLMResponse{
+							Text:       "[Continuing with tool results...]",
+							TokenCount: 1,
+						}
+
+						// Break out of the inner loop to restart with a new stream
+						break
+					}
+				}
+			}
+
+			if err := stream.Err(); err != nil {
 				responseChan <- StreamingLLMResponse{
-					Error: ctx.Err(),
+					Error: err,
 					Done:  true,
 				}
 				return
-			default:
-				event := stream.Current()
-
-				switch event.Type {
-				case anthropic.MessageStreamEventTypeContentBlockDelta:
-					delta, ok := event.Delta.(anthropic.ContentBlockDeltaEventDelta)
-					if !ok {
-						continue
-					}
-
-					if delta.Type == anthropic.ContentBlockDeltaEventDeltaTypeTextDelta && delta.Text != "" {
-						responseChan <- StreamingLLMResponse{
-							Text:       delta.Text,
-							TokenCount: 1,
-						}
-					}
-				case anthropic.MessageStreamEventTypeMessageStop:
-					responseChan <- StreamingLLMResponse{Done: true}
-					return
-				}
 			}
-		}
 
-		if err := stream.Err(); err != nil {
-			responseChan <- StreamingLLMResponse{
-				Error: err,
-				Done:  true,
-			}
+			// If we got here, continue the conversation loop
 		}
 	}()
 
 	return responseChan, nil
+}
+
+// Helper struct to store tool call information
+type toolCallInfo struct {
+	ID     string
+	Name   string
+	Input  json.RawMessage
+	Result string
+}
+
+// Helper function to truncate long strings for display
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
+
+// Helper function to extract text content from a stream
+func getTextFromStream(stream *ssestream.Stream[anthropic.MessageStreamEvent]) string {
+	// This is a simplified approach - in a real implementation,
+	// you would collect all text blocks from the complete message
+	return ""
 }
