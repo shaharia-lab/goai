@@ -244,12 +244,15 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 		defer close(responseChan)
 		var accumulatedMessage anthropic.Message
 		var currentToolCalls []toolCallInfo
-		var toolInputBuffer bytes.Buffer
+		var currentToolInput json.RawMessage
+		var jsonBuffer bytes.Buffer
+		var activeToolID string
+		var activeToolName string
 
 		for {
 			stream := p.client.CreateStreamingMessage(ctx, params)
-			var currentToolID, currentToolName string
-			toolInputBuffer.Reset()
+			jsonBuffer.Reset()
+			activeToolID = ""
 
 			for stream.Next() {
 				event := stream.Current()
@@ -260,9 +263,10 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 
 				case anthropic.ContentBlockStartEvent:
 					if contentBlock, ok := evt.ContentBlock.AsUnion().(anthropic.ToolUseBlock); ok {
-						currentToolID = contentBlock.ID
-						currentToolName = contentBlock.Name
-						toolInputBuffer.Write(contentBlock.Input)
+						activeToolID = contentBlock.ID
+						activeToolName = contentBlock.Name
+						currentToolInput = contentBlock.Input
+						jsonBuffer.Write(contentBlock.Input)
 					}
 
 				case anthropic.ContentBlockDeltaEvent:
@@ -271,32 +275,29 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 						responseChan <- StreamingLLMResponse{Text: delta.Text}
 
 					case anthropic.InputJSONDelta:
-						// Append raw bytes to maintain proper JSON encoding
-						toolInputBuffer.WriteString(delta.PartialJSON)
+						// Append the partial JSON to the buffer
+						jsonBuffer.WriteString(delta.PartialJSON)
 					}
 
 				case anthropic.MessageDeltaEvent:
 					accumulatedMessage.StopReason = anthropic.MessageStopReason(evt.Delta.StopReason)
-					accumulatedMessage.StopSequence = evt.Delta.StopSequence
 
-					if accumulatedMessage.StopReason == anthropic.MessageStopReasonToolUse {
-						if currentToolID != "" {
-							// Validate JSON before proceeding
-							var raw json.RawMessage = toolInputBuffer.Bytes()
-							if json.Valid(raw) {
-								currentToolCalls = append(currentToolCalls, toolCallInfo{
-									ID:    currentToolID,
-									Name:  currentToolName,
-									Input: raw,
-								})
-							} else {
-								responseChan <- StreamingLLMResponse{
-									Error: fmt.Errorf("invalid tool input JSON: %q", toolInputBuffer.String()),
-									Done:  true,
-								}
-								return
+					if accumulatedMessage.StopReason == anthropic.MessageStopReasonToolUse && activeToolID != "" {
+						//currentToolInput = json.RawMessage(jsonBuffer.Bytes())
+
+						/*if !json.Valid(currentToolInput) {
+							responseChan <- StreamingLLMResponse{
+								Error: fmt.Errorf("invalid tool input JSON: %q", currentToolInput),
+								Done:  true,
 							}
-						}
+							return
+						}*/
+
+						currentToolCalls = append(currentToolCalls, toolCallInfo{
+							Name:  activeToolName,
+							ID:    activeToolID,
+							Input: currentToolInput,
+						})
 					}
 
 				case anthropic.MessageStopEvent:
@@ -312,8 +313,9 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 				return
 			}
 
-			// Execute tools and prepare next iteration
+			// Execute tools with validated JSON
 			toolResults := p.executeTools(ctx, config, currentToolCalls, responseChan)
+
 			params.Messages = anthropic.F(append(
 				[]anthropic.MessageParam{accumulatedMessage.ToParam()},
 				anthropic.NewUserMessage(toolResults...),
