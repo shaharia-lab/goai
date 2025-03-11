@@ -270,6 +270,7 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 			}
 
 			stream := p.client.CreateStreamingMessage(ctx, currentParams)
+			hasToolCalls := false
 
 			for stream.Next() {
 				event := stream.Current()
@@ -277,7 +278,7 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 				switch evt := event.AsUnion().(type) {
 				case anthropic.MessageStartEvent:
 					currentMessage = evt.Message
-					messageContent = "" // Reset message content
+					messageContent = ""
 
 				case anthropic.ContentBlockStartEvent:
 					if contentBlock, ok := evt.ContentBlock.AsUnion().(anthropic.ToolUseBlock); ok {
@@ -286,6 +287,7 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 						jsonBuffer.Reset()
 						jsonBuffer.Write(contentBlock.Input)
 						currentToolInput = contentBlock.Input
+						hasToolCalls = true
 					}
 
 				case anthropic.ContentBlockDeltaEvent:
@@ -294,6 +296,7 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 						messageContent += delta.Text
 						responseChan <- StreamingLLMResponse{
 							Text: delta.Text,
+							Done: false,
 						}
 					case anthropic.InputJSONDelta:
 						jsonBuffer.WriteString(delta.PartialJSON)
@@ -319,35 +322,49 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 					}
 
 				case anthropic.MessageStopEvent:
-					// Add the assistant's message to conversation
+					// Add the assistant's message to conversation if it's not empty
 					if messageContent != "" {
-						conversationMessages = append(conversationMessages, currentMessage.ToParam())
+						conversationMessages = append(conversationMessages, anthropic.MessageParam{
+							Role: anthropic.F(anthropic.MessageParamRoleAssistant), // Changed from User
+							Content: anthropic.F([]anthropic.ContentBlockParamUnion{
+								anthropic.NewTextBlock(messageContent),
+							}),
+						})
 					}
 
 					// If there are tool calls, execute them and continue the conversation
 					if len(currentToolCalls) > 0 {
-						// Execute tools and get results
 						toolResults := p.executeTools(ctx, config, currentToolCalls, responseChan)
 
-						// Add tool results as user message
-						conversationMessages = append(conversationMessages,
-							anthropic.NewUserMessage(toolResults...))
+						// Create a user message with the tool results
+						userMessage := anthropic.MessageParam{
+							Role:    anthropic.F(anthropic.MessageParamRoleUser),
+							Content: anthropic.F(toolResults),
+						}
+						content := userMessage.Content.Value
+						for _, result := range toolResults {
+							content = append(content, result)
+						}
+						userMessage.Content = anthropic.F(content)
+
+						// Add the tool results message to conversation
+						conversationMessages = append(conversationMessages, userMessage)
 
 						responseChan <- StreamingLLMResponse{
 							Text: "\nProcessing tool results...\n",
+							Done: false,
 						}
-
-						// Continue to next iteration to get response with tool results
-						continue
+						break // Break the stream.Next() loop to start a new request
 					}
 
-					// If no more tool calls, we're done
-					responseChan <- StreamingLLMResponse{
-						//TotalInputToken:  int(currentMessage.Usage.InputTokens),
-						//TotalOutputToken: int(currentMessage.Usage.OutputTokens),
-						Done: true,
+					// If no tool calls or we're done processing them, we're finished
+					if !hasToolCalls {
+						responseChan <- StreamingLLMResponse{
+							Text: messageContent,
+							Done: true,
+						}
+						return
 					}
-					return
 				}
 
 				if err := stream.Err(); err != nil {
@@ -357,6 +374,11 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 					}
 					return
 				}
+			}
+
+			// If we had tool calls, continue the loop with the updated conversation
+			if !hasToolCalls {
+				break
 			}
 		}
 	}()
