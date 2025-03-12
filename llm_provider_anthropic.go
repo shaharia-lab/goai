@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
+	"log"
 	"strings"
 	"time"
 
@@ -236,29 +237,30 @@ type ToolInputCollector struct {
 
 func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
 	responseChan := make(chan StreamingLLMResponse, 100)
+	log.Printf("🚀 Starting streaming response with %d initial messages", len(messages))
 
-	// Initial message parameters
 	params := p.prepareMessageParams(messages, config)
 	params.Tools = anthropic.F(prepareTools(config))
+	log.Printf("🔧 Prepared tools: %d", len(params.Tools.Value))
 
 	go func() {
 		defer close(responseChan)
+		defer log.Println("🔴 Closing response channel")
 
-		// Track conversation state
 		var conversationMessages []anthropic.MessageParam
 		if params.Messages.Value != nil {
 			conversationMessages = params.Messages.Value
 		}
+		log.Printf("💬 Initial conversation history: %d messages", len(conversationMessages))
 
-		for {
-			var currentMessage anthropic.Message
+		for iteration := 1; ; iteration++ {
+			log.Printf("🔄 Starting conversation iteration %d", iteration)
 			var currentToolCalls []toolCallInfo
 			var jsonBuffer bytes.Buffer
 			var activeToolID, activeToolName string
 			var currentToolInput json.RawMessage
-			var messageContent string
+			var messageContent strings.Builder
 
-			// Create message parameters for this iteration
 			currentParams := anthropic.MessageNewParams{
 				Model:       params.Model,
 				Messages:    anthropic.F(conversationMessages),
@@ -268,24 +270,29 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 				Temperature: params.Temperature,
 				System:      params.System,
 			}
+			log.Printf("📩 Request params: Model=%s, Messages=%d, MaxTokens=%d",
+				currentParams.Model.Value, len(currentParams.Messages.Value), currentParams.MaxTokens.Value)
 
 			stream := p.client.CreateStreamingMessage(ctx, currentParams)
 			hasToolCalls := false
+			log.Println("⏳ Starting stream processing")
 
 			for stream.Next() {
 				event := stream.Current()
+				log.Printf("🎬 Received event type: %T", event.AsUnion())
 
 				switch evt := event.AsUnion().(type) {
 				case anthropic.MessageStartEvent:
-					currentMessage = evt.Message
-					messageContent = ""
+					log.Printf("🌱 MessageStart: ID=%s", evt.Message.ID)
+					messageContent.Reset()
 
 				case anthropic.ContentBlockStartEvent:
+					log.Printf("🚦 ContentBlockStart: Type=%T", evt.ContentBlock.AsUnion())
 					if contentBlock, ok := evt.ContentBlock.AsUnion().(anthropic.ToolUseBlock); ok {
+						log.Printf("🛠️ ToolUseBlock detected: ID=%s, Name=%s", contentBlock.ID, contentBlock.Name)
 						activeToolID = contentBlock.ID
 						activeToolName = contentBlock.Name
 						jsonBuffer.Reset()
-						jsonBuffer.Write(contentBlock.Input)
 						currentToolInput = contentBlock.Input
 						hasToolCalls = true
 					}
@@ -293,22 +300,23 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 				case anthropic.ContentBlockDeltaEvent:
 					switch delta := evt.Delta.AsUnion().(type) {
 					case anthropic.TextDelta:
-						messageContent += delta.Text
-						responseChan <- StreamingLLMResponse{
-							Text: delta.Text,
-							Done: false,
-						}
+						log.Printf("📝 TextDelta: %q", delta.Text)
+						messageContent.WriteString(delta.Text)
+						responseChan <- StreamingLLMResponse{Text: delta.Text, Done: false}
 					case anthropic.InputJSONDelta:
+						log.Printf("📦 InputJSONDelta: %q", delta.PartialJSON)
 						jsonBuffer.WriteString(delta.PartialJSON)
+						currentToolInput = jsonBuffer.Bytes()
 					}
 
 				case anthropic.MessageDeltaEvent:
-					currentMessage.StopReason = anthropic.MessageStopReason(evt.Delta.StopReason)
-
-					if currentMessage.StopReason == anthropic.MessageStopReasonToolUse && activeToolID != "" {
+					log.Printf("🔼 MessageDelta: StopReason=%s", evt.Delta.StopReason)
+					if string(evt.Delta.StopReason) == string(anthropic.MessageStopReasonToolUse) {
+						log.Printf("🔧 Finalizing tool call: %s/%s", activeToolName, activeToolID)
 						if !json.Valid(currentToolInput) {
+							log.Printf("❌ Invalid JSON input for tool %s: %q", activeToolName, currentToolInput)
 							responseChan <- StreamingLLMResponse{
-								Error: fmt.Errorf("invalid tool input JSON for tool %s", activeToolName),
+								Error: fmt.Errorf("invalid tool input JSON for %s", activeToolName),
 								Done:  false,
 							}
 							continue
@@ -319,65 +327,58 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 							ID:    activeToolID,
 							Input: currentToolInput,
 						})
+						log.Printf("📥 Queued tool call: %s (%d total)", activeToolName, len(currentToolCalls))
 					}
 
 				case anthropic.MessageStopEvent:
-					// Add the assistant's message to conversation if it's not empty
-					if messageContent != "" {
+					log.Printf("🛑 MessageStop: Content=%q, ToolCalls=%d",
+						messageContent.String(), len(currentToolCalls))
+
+					if messageContent.Len() > 0 {
+						log.Printf("💾 Saving assistant message to history: %q", messageContent.String())
 						conversationMessages = append(conversationMessages, anthropic.MessageParam{
-							Role: anthropic.F(anthropic.MessageParamRoleAssistant), // Changed from User
+							Role: anthropic.F(anthropic.MessageParamRoleAssistant),
 							Content: anthropic.F([]anthropic.ContentBlockParamUnion{
-								anthropic.NewTextBlock(messageContent),
+								anthropic.NewTextBlock(messageContent.String()),
 							}),
 						})
 					}
 
-					// If there are tool calls, execute them and continue the conversation
 					if len(currentToolCalls) > 0 {
+						log.Printf("⚙️ Executing %d tool calls", len(currentToolCalls))
 						toolResults := p.executeTools(ctx, config, currentToolCalls, responseChan)
 
-						// Create a user message with the tool results
-						userMessage := anthropic.MessageParam{
+						log.Printf("📨 Adding tool results to history: %d blocks", len(toolResults))
+						conversationMessages = append(conversationMessages, anthropic.MessageParam{
 							Role:    anthropic.F(anthropic.MessageParamRoleUser),
 							Content: anthropic.F(toolResults),
-						}
-						content := userMessage.Content.Value
-						for _, result := range toolResults {
-							content = append(content, result)
-						}
-						userMessage.Content = anthropic.F(content)
-
-						// Add the tool results message to conversation
-						conversationMessages = append(conversationMessages, userMessage)
+						})
 
 						responseChan <- StreamingLLMResponse{
 							Text: "\nProcessing tool results...\n",
 							Done: false,
 						}
-						break // Break the stream.Next() loop to start a new request
-					}
-
-					// If no tool calls or we're done processing them, we're finished
-					if !hasToolCalls {
-						responseChan <- StreamingLLMResponse{
-							Text: messageContent,
-							Done: true,
-						}
+						break
+					} else {
+						log.Println("🏁 Final response complete")
+						responseChan <- StreamingLLMResponse{Done: true}
 						return
 					}
+
+				default:
+					log.Printf("❓ Unexpected event type: %T", evt)
 				}
 
 				if err := stream.Err(); err != nil {
-					responseChan <- StreamingLLMResponse{
-						Error: fmt.Errorf("stream error: %w", err),
-						Done:  true,
-					}
+					log.Printf("🔥 Stream error: %v", err)
+					responseChan <- StreamingLLMResponse{Error: err, Done: true}
 					return
 				}
 			}
 
-			// If we had tool calls, continue the loop with the updated conversation
+			log.Printf("⏩ Stream processing complete. HasToolCalls=%t", hasToolCalls)
 			if !hasToolCalls {
+				log.Println("🚫 No more tool calls, exiting loop")
 				break
 			}
 		}
