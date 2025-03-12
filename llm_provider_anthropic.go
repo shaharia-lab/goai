@@ -260,6 +260,8 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 			var activeToolID, activeToolName string
 			var currentToolInput json.RawMessage
 			var messageContent strings.Builder
+			var currentBlockType anthropic.ContentBlockType
+			streamComplete := false // Flag to track if the stream has completed
 
 			currentParams := anthropic.MessageNewParams{
 				Model:       params.Model,
@@ -274,7 +276,6 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 				currentParams.Model.Value, len(currentParams.Messages.Value), currentParams.MaxTokens.Value)
 
 			stream := p.client.CreateStreamingMessage(ctx, currentParams)
-			hasToolCalls := false
 			log.Println("⏳ Starting stream processing")
 
 			for stream.Next() {
@@ -284,7 +285,6 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 				switch evt := event.AsUnion().(type) {
 				case anthropic.MessageStartEvent:
 					log.Printf("🌱 MessageStart: ID=%s", evt.Message.ID)
-					messageContent.Reset()
 
 				case anthropic.ContentBlockStartEvent:
 					log.Printf("🚦 ContentBlockStart: Type=%T", evt.ContentBlock.AsUnion())
@@ -294,7 +294,10 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 						activeToolName = contentBlock.Name
 						jsonBuffer.Reset()
 						currentToolInput = contentBlock.Input
-						hasToolCalls = true
+						currentBlockType = anthropic.ContentBlockTypeToolUse // for the adding the content to the history
+					}
+					if _, ok := evt.ContentBlock.AsUnion().(anthropic.TextBlock); ok {
+						currentBlockType = anthropic.ContentBlockTypeText // for the adding the content to the history
 					}
 
 				case anthropic.ContentBlockDeltaEvent:
@@ -309,6 +312,9 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 						currentToolInput = jsonBuffer.Bytes()
 					}
 
+				case anthropic.ContentBlockStopEvent:
+					log.Printf("🔚 ContentBlockStop")
+
 				case anthropic.MessageDeltaEvent:
 					log.Printf("🔼 MessageDelta: StopReason=%s", evt.Delta.StopReason)
 					if string(evt.Delta.StopReason) == string(anthropic.MessageStopReasonToolUse) {
@@ -317,9 +323,9 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 							log.Printf("❌ Invalid JSON input for tool %s: %q", activeToolName, currentToolInput)
 							responseChan <- StreamingLLMResponse{
 								Error: fmt.Errorf("invalid tool input JSON for %s", activeToolName),
-								Done:  false,
+								Done:  true,
 							}
-							continue
+							return
 						}
 
 						currentToolCalls = append(currentToolCalls, toolCallInfo{
@@ -331,57 +337,65 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 					}
 
 				case anthropic.MessageStopEvent:
-					log.Printf("🛑 MessageStop: Content=%q, ToolCalls=%d",
-						messageContent.String(), len(currentToolCalls))
-
+					streamComplete = true
+					log.Printf("🛑 MessageStop: Content=%q, ToolCalls=%d", messageContent.String(), len(currentToolCalls))
 					if messageContent.Len() > 0 {
-						log.Printf("💾 Saving assistant message to history: %q", messageContent.String())
+						var contentBlockParam anthropic.ContentBlockParamUnion
+						switch currentBlockType { // check the type we stored when started
+						case anthropic.ContentBlockTypeText:
+							contentBlockParam = anthropic.NewTextBlock(messageContent.String())
+						case anthropic.ContentBlockTypeToolUse:
+							contentBlockParam = anthropic.NewToolUseBlockParam(activeToolID, activeToolName, currentToolInput)
+						}
 						conversationMessages = append(conversationMessages, anthropic.MessageParam{
-							Role: anthropic.F(anthropic.MessageParamRoleAssistant),
-							Content: anthropic.F([]anthropic.ContentBlockParamUnion{
-								anthropic.NewTextBlock(messageContent.String()),
-							}),
+							Role:    anthropic.F(anthropic.MessageParamRoleAssistant),
+							Content: anthropic.F([]anthropic.ContentBlockParamUnion{contentBlockParam}),
 						})
 					}
 
 					if len(currentToolCalls) > 0 {
 						log.Printf("⚙️ Executing %d tool calls", len(currentToolCalls))
 						toolResults := p.executeTools(ctx, config, currentToolCalls, responseChan)
-
 						log.Printf("📨 Adding tool results to history: %d blocks", len(toolResults))
 						conversationMessages = append(conversationMessages, anthropic.MessageParam{
 							Role:    anthropic.F(anthropic.MessageParamRoleUser),
 							Content: anthropic.F(toolResults),
 						})
-
-						responseChan <- StreamingLLMResponse{
-							Text: "\nProcessing tool results...\n",
-							Done: false,
-						}
-						break
-					} else {
-						log.Println("🏁 Final response complete")
-						responseChan <- StreamingLLMResponse{Done: true}
-						return
+						responseChan <- StreamingLLMResponse{Text: "\n", Done: false}
+						continue // Continue to next iteration
 					}
 
-				default:
-					log.Printf("❓ Unexpected event type: %T", evt)
-				}
+				} // End switch
 
 				if err := stream.Err(); err != nil {
 					log.Printf("🔥 Stream error: %v", err)
 					responseChan <- StreamingLLMResponse{Error: err, Done: true}
 					return
 				}
-			}
+			} // End stream.Next() loop
 
-			log.Printf("⏩ Stream processing complete. HasToolCalls=%t", hasToolCalls)
-			if !hasToolCalls {
-				log.Println("🚫 No more tool calls, exiting loop")
-				break
+			log.Printf("⏩ Stream processing complete for iteration %d, streamComplete: %t", iteration, streamComplete)
+
+			// *** KEY CHANGE HERE ***
+			if !streamComplete {
+				// If the stream ended *without* a MessageStopEvent:
+				if iteration > 1 {
+					// After the first iteration, this is an error.
+					log.Printf("⚠️ Stream ended without completion in iteration %d", iteration)
+					responseChan <- StreamingLLMResponse{
+						Text: "\nError: Incomplete response from assistant",
+						Done: true,
+					}
+					return
+				}
+			} else {
+				// If we *did* get a MessageStopEvent, and there are no tool calls, we're done.
+				if len(currentToolCalls) == 0 {
+					responseChan <- StreamingLLMResponse{Done: true}
+					return
+				}
 			}
-		}
+		} // End main loop
 	}()
 
 	return responseChan, nil
