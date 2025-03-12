@@ -253,6 +253,8 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 		}
 		log.Printf("💬 Initial conversation history: %d messages", len(conversationMessages))
 
+		var stopReason anthropic.MessageStopReason // Store the stop reason
+
 		for iteration := 1; ; iteration++ {
 			log.Printf("🔄 Starting conversation iteration %d", iteration)
 			var currentToolCalls []toolCallInfo
@@ -260,8 +262,6 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 			var activeToolID, activeToolName string
 			var currentToolInput json.RawMessage
 			var messageContent strings.Builder
-			var currentBlockType anthropic.ContentBlockType
-			streamComplete := false // Flag to track if the stream has completed
 
 			currentParams := anthropic.MessageNewParams{
 				Model:       params.Model,
@@ -277,6 +277,8 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 
 			stream := p.client.CreateStreamingMessage(ctx, currentParams)
 			log.Println("⏳ Starting stream processing")
+
+			streamClosed := false // Flag for stream closure
 
 			for stream.Next() {
 				event := stream.Current()
@@ -294,10 +296,6 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 						activeToolName = contentBlock.Name
 						jsonBuffer.Reset()
 						currentToolInput = contentBlock.Input
-						currentBlockType = anthropic.ContentBlockTypeToolUse // for the adding the content to the history
-					}
-					if _, ok := evt.ContentBlock.AsUnion().(anthropic.TextBlock); ok {
-						currentBlockType = anthropic.ContentBlockTypeText // for the adding the content to the history
 					}
 
 				case anthropic.ContentBlockDeltaEvent:
@@ -317,6 +315,8 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 
 				case anthropic.MessageDeltaEvent:
 					log.Printf("🔼 MessageDelta: StopReason=%s", evt.Delta.StopReason)
+					stopReason = anthropic.MessageStopReason(evt.Delta.StopReason) // Store the stop reason
+
 					if string(evt.Delta.StopReason) == string(anthropic.MessageStopReasonToolUse) {
 						log.Printf("🔧 Finalizing tool call: %s/%s", activeToolName, activeToolID)
 						if !json.Valid(currentToolInput) {
@@ -337,20 +337,15 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 					}
 
 				case anthropic.MessageStopEvent:
-					streamComplete = true
+					streamClosed = true // Mark the stream as closed
 					log.Printf("🛑 MessageStop: Content=%q, ToolCalls=%d", messageContent.String(), len(currentToolCalls))
+
 					if messageContent.Len() > 0 {
-						var contentBlockParam anthropic.ContentBlockParamUnion
-						switch currentBlockType { // check the type we stored when started
-						case anthropic.ContentBlockTypeText:
-							contentBlockParam = anthropic.NewTextBlock(messageContent.String())
-						case anthropic.ContentBlockTypeToolUse:
-							contentBlockParam = anthropic.NewToolUseBlockParam(activeToolID, activeToolName, currentToolInput)
-						}
 						conversationMessages = append(conversationMessages, anthropic.MessageParam{
 							Role:    anthropic.F(anthropic.MessageParamRoleAssistant),
-							Content: anthropic.F([]anthropic.ContentBlockParamUnion{contentBlockParam}),
+							Content: anthropic.F([]anthropic.ContentBlockParamUnion{anthropic.NewTextBlock(messageContent.String())}),
 						})
+						messageContent.Reset() // Clear the buffer for the next iteration
 					}
 
 					if len(currentToolCalls) > 0 {
@@ -362,7 +357,10 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 							Content: anthropic.F(toolResults),
 						})
 						responseChan <- StreamingLLMResponse{Text: "\n", Done: false}
-						continue // Continue to next iteration
+
+						if string(stopReason) == string(anthropic.MessageStopReasonToolUse) {
+							continue // More tools *in this message*; keep going.
+						}
 					}
 
 				} // End switch
@@ -374,24 +372,35 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 				}
 			} // End stream.Next() loop
 
-			log.Printf("⏩ Stream processing complete for iteration %d, streamComplete: %t", iteration, streamComplete)
+			log.Printf("⏩ Stream processing complete for iteration %d, streamClosed: %t, stopReason: %s", iteration, streamClosed, stopReason)
 
-			// *** KEY CHANGE HERE ***
-			if !streamComplete {
-				// If the stream ended *without* a MessageStopEvent:
-				if iteration > 1 {
-					// After the first iteration, this is an error.
-					log.Printf("⚠️ Stream ended without completion in iteration %d", iteration)
-					responseChan <- StreamingLLMResponse{
-						Text: "\nError: Incomplete response from assistant",
-						Done: true,
-					}
+			// *** KEY CHANGE: Corrected Completion Logic ***
+
+			// Case 1: Explicit Stop (MessageStopEvent received)
+			if streamClosed {
+				// We got a MessageStopEvent.  If there were no tool calls, OR the
+				// stopReason is NOT tool_use, we're done.
+				if len(currentToolCalls) == 0 || string(stopReason) != string(anthropic.MessageStopReasonToolUse) {
+					responseChan <- StreamingLLMResponse{Text: messageContent.String(), Done: true}
 					return
 				}
-			} else {
-				// If we *did* get a MessageStopEvent, and there are no tool calls, we're done.
-				if len(currentToolCalls) == 0 {
-					responseChan <- StreamingLLMResponse{Done: true}
+			}
+
+			// Case 2: Implicit Stop (Stream closed WITHOUT MessageStopEvent)
+			if !streamClosed && iteration > 1 {
+				// *** KEY FIX: Check stopReason from *previous* iteration ***
+				if string(stopReason) == string(anthropic.MessageStopReasonToolUse) {
+					// The previous iteration requested more tools, but we didn't get them.
+					log.Printf("⚠️ Stream ended without completion in iteration %d", iteration)
+					responseChan <- StreamingLLMResponse{
+						Error: fmt.Errorf("incomplete response from assistant in iteration %d", iteration),
+						Done:  true,
+					}
+					return
+				} else {
+					// The stream closed implicitly, but the *previous* iteration did NOT
+					// request more tools.  This is a valid completion.
+					responseChan <- StreamingLLMResponse{Text: messageContent.String(), Done: true}
 					return
 				}
 			}
