@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"strings"
-
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/shaharia-lab/goai/mcp"
+	"log"
 )
 
 // GetStreamingResponse handles streaming LLM responses with tool usage capabilities
@@ -156,33 +154,34 @@ func (p *AnthropicLLMProvider) streamAndProcessMessage(
 		Tools:     anthropic.F(toolUnionParams),
 	}
 
-	msgParam.System = anthropic.F([]anthropic.TextBlockParam{
-		anthropic.NewTextBlock(systemMessage),
-	})
+	if systemMessage != "" {
+		msgParam.System = anthropic.F([]anthropic.TextBlockParam{
+			anthropic.NewTextBlock(systemMessage),
+		})
+	}
 
 	stream := p.client.CreateStreamingMessage(ctx, msgParam)
 
 	var msg anthropic.Message
-	var textBuf strings.Builder
+	//var textBuf strings.Builder
 
 	for stream.Next() {
 		event := stream.Current()
 		msg.Accumulate(event)
 
-		for _, block := range msg.Content {
-			if textBlock, ok := block.AsUnion().(anthropic.TextBlock); ok {
-				if current := textBlock.Text; len(current) > textBuf.Len() {
-					newText := current[textBuf.Len():]
-					if newText != "" {
-						responseChan <- StreamingLLMResponse{
-							Text: newText,
-							Done: false,
-						}
-					}
-					textBuf.Reset()
-					textBuf.WriteString(current)
+		// we will accumulate the text for processing
+		// but at the same time we can send the delta text to the response channel
+		switch evt := event.AsUnion().(type) {
+		case anthropic.ContentBlockDeltaEvent:
+			switch delta := evt.Delta.AsUnion().(type) {
+			case anthropic.TextDelta:
+				responseChan <- StreamingLLMResponse{
+					Text: delta.Text,
+					Done: false,
 				}
 			}
+		default:
+
 		}
 	}
 

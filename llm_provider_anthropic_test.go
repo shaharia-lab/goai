@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/shaharia-lab/goai/mcp"
@@ -202,137 +201,6 @@ func TestAnthropicLLMProvider_GetResponse(t *testing.T) {
 	}
 }
 
-func TestAnthropicLLMProvider_GetStreamingResponse(t *testing.T) {
-	tests := []struct {
-		name        string
-		messages    []LLMMessage
-		config      LLMRequestConfig
-		streamText  []string
-		expectError bool
-	}{
-		{
-			name: "successful streaming response",
-			messages: []LLMMessage{
-				{Role: UserRole, Text: "Hello"},
-			},
-			config: LLMRequestConfig{
-				MaxToken:    100,
-				TopP:        0.9,
-				Temperature: 0.7,
-			},
-			streamText: []string{"Hello", " world", "!"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockClient := &MockAnthropicClient{
-				createStreamingMessageFunc: func(_ context.Context, _ anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEvent] {
-					var events []anthropic.MessageStreamEvent
-
-					// Create start event
-					events = append(events, anthropic.MessageStreamEvent{
-						Type: anthropic.MessageStreamEventTypeMessageStart,
-						Message: anthropic.Message{
-							Role:  anthropic.MessageRoleAssistant,
-							Model: anthropic.ModelClaude_3_5_Sonnet_20240620,
-						},
-					})
-
-					// Create content block delta events
-					for i, text := range tt.streamText {
-						t.Logf("Adding delta event %d with text: %q", i, text)
-						events = append(events, anthropic.MessageStreamEvent{
-							Type:  anthropic.MessageStreamEventTypeContentBlockDelta,
-							Index: int64(i),
-							Delta: anthropic.ContentBlockDeltaEventDelta{
-								Type: anthropic.ContentBlockDeltaEventDeltaTypeTextDelta,
-								Text: text,
-							},
-						})
-					}
-
-					// Add stop event
-					events = append(events, anthropic.MessageStreamEvent{
-						Type: anthropic.MessageStreamEventTypeMessageStop,
-					})
-
-					decoder := &mockDecoder{
-						events: events,
-						index:  -1,
-					}
-
-					stream := ssestream.NewStream[anthropic.MessageStreamEvent](decoder, nil)
-					return stream
-				},
-			}
-
-			provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
-				Client: mockClient,
-				Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
-			})
-
-			ctx := context.Background()
-			stream, err := provider.GetStreamingResponse(ctx, tt.messages, tt.config)
-			assert.NoError(t, err)
-
-			var receivedText string
-			for chunk := range stream {
-				t.Logf("Received streaming chunk: %+v", chunk)
-				if chunk.Error != nil {
-					t.Fatalf("Unexpected error: %v", chunk.Error)
-				}
-				if !chunk.Done {
-					receivedText += chunk.Text
-					t.Logf("Current accumulated text: %q", receivedText)
-				}
-			}
-
-			t.Logf("Final text: %q", receivedText)
-			assert.Equal(t, strings.Join(tt.streamText, ""), receivedText)
-		})
-	}
-}
-
-func createStreamEvent(eventType string, index int64, text string) anthropic.MessageStreamEvent {
-	var event anthropic.MessageStreamEvent
-
-	switch eventType {
-	case "message_start":
-		event = anthropic.MessageStreamEvent{
-			Type: anthropic.MessageStreamEventTypeMessageStart,
-			Message: anthropic.Message{
-				Role:  anthropic.MessageRoleAssistant,
-				Model: anthropic.ModelClaude_3_5_Sonnet_20240620,
-			},
-		}
-	case "content_block_delta":
-		/*textDelta := anthropic.TextDelta{
-			Type: anthropic.TextDeltaTypeTextDelta,
-			Text: text,
-		}*/
-		event = anthropic.MessageStreamEvent{
-			Type:  anthropic.MessageStreamEventTypeContentBlockDelta,
-			Index: index,
-			Delta: anthropic.ContentBlockDeltaEventDelta{
-				Type: anthropic.ContentBlockDeltaEventDeltaTypeTextDelta,
-				Text: text,
-			},
-		}
-	case "content_block_stop":
-		event = anthropic.MessageStreamEvent{
-			Type:  anthropic.MessageStreamEventTypeContentBlockStop,
-			Index: index,
-		}
-	case "message_stop":
-		event = anthropic.MessageStreamEvent{
-			Type: anthropic.MessageStreamEventTypeMessageStop,
-		}
-	}
-
-	return event
-}
-
 func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 	tools := []mcp.Tool{
 		{
@@ -518,4 +386,82 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 			assert.Greater(t, result.CompletionTime, float64(0))
 		})
 	}
+}
+
+func TestAnthropicLLMProvider_GetStreamingResponse_Basic(t *testing.T) {
+	mockClient := &MockAnthropicClient{
+		createStreamingMessageFunc: func(_ context.Context, _ anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEvent] {
+			events := []anthropic.MessageStreamEvent{
+				{
+					Type: anthropic.MessageStreamEventTypeMessageStart,
+					Message: anthropic.Message{
+						Role:  anthropic.MessageRoleAssistant,
+						Model: anthropic.ModelClaude_3_5_Sonnet_20240620,
+					},
+				},
+				{
+					Type:         anthropic.MessageStreamEventTypeContentBlockStart,
+					Index:        0,
+					ContentBlock: anthropic.TextBlock{Type: anthropic.TextBlockTypeText, Text: ""},
+				},
+				{
+					Type:  anthropic.MessageStreamEventTypeContentBlockDelta,
+					Index: 0,
+					Delta: anthropic.ContentBlockDeltaEventDelta{
+						Type: anthropic.ContentBlockDeltaEventDeltaTypeTextDelta,
+						Text: "Hello",
+					},
+				},
+				{
+					Type:  anthropic.MessageStreamEventTypeContentBlockDelta,
+					Index: 0,
+					Delta: anthropic.ContentBlockDeltaEventDelta{
+						Type: anthropic.ContentBlockDeltaEventDeltaTypeTextDelta,
+						Text: " world",
+					},
+				},
+				{
+					Type:  anthropic.MessageStreamEventTypeContentBlockDelta,
+					Index: 0,
+					Delta: anthropic.ContentBlockDeltaEventDelta{
+						Type: anthropic.ContentBlockDeltaEventDeltaTypeTextDelta,
+						Text: "!",
+					},
+				},
+				{
+					Type:  anthropic.MessageStreamEventTypeContentBlockStop,
+					Index: 0,
+				},
+				{
+					Type: anthropic.MessageStreamEventTypeMessageStop,
+				},
+			}
+
+			decoder := &mockDecoder{events: events, index: -1}
+			return ssestream.NewStream[anthropic.MessageStreamEvent](decoder, nil)
+		},
+	}
+
+	provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
+		Client: mockClient,
+		Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
+	})
+
+	ctx := context.Background()
+	stream, err := provider.GetStreamingResponse(ctx, []LLMMessage{
+		{Role: UserRole, Text: "Hello"},
+	}, LLMRequestConfig{MaxToken: 100, toolsProvider: func() *ToolsProvider {
+		return NewToolsProvider()
+	}()})
+	assert.NoError(t, err)
+
+	var receivedText string
+	for chunk := range stream {
+		if chunk.Error != nil {
+			t.Fatal(chunk.Error)
+		}
+		receivedText += chunk.Text
+	}
+
+	assert.Equal(t, "Hello world!", receivedText)
 }
