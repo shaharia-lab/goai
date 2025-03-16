@@ -1,175 +1,175 @@
 package goai
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/shaharia-lab/goai/mcp"
 	"log"
-	"strings"
-
-	"github.com/anthropics/anthropic-sdk-go"
 )
 
-// GetStreamingResponse generates a streaming response using Anthropic's API.
-func (p *AnthropicLLMProvider) GetStreamingResponses(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
-	ch := make(chan StreamingLLMResponse)
+type activeTool struct {
+	ID      string
+	Name    string
+	Input   json.RawMessage
+	Content string
+}
 
+func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
+	var anthropicMessages []anthropic.MessageParam
+	for _, msg := range messages {
+		switch msg.Role {
+		case UserRole:
+			anthropicMessages = append(anthropicMessages,
+				anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Text)))
+		case AssistantRole:
+			anthropicMessages = append(anthropicMessages,
+				anthropic.NewAssistantMessage(anthropic.NewTextBlock(msg.Text)))
+		}
+	}
+
+	// Prepare tools if registry exists
+	mcpTools, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
+	if err != nil {
+		return nil, fmt.Errorf("error listing tools: %w", err)
+	}
+
+	var toolUnionParams []anthropic.ToolUnionUnionParam
+	for _, mcpTool := range mcpTools {
+		// Unmarshal the JSON schema into a map[string]interface{}
+		var schema interface{}
+		if err := json.Unmarshal(mcpTool.InputSchema, &schema); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal tool parameters: %w", err)
+		}
+
+		toolUnionParam := anthropic.ToolParam{
+			Name:        anthropic.F(mcpTool.Name),
+			Description: anthropic.F(mcpTool.Description),
+			InputSchema: anthropic.F(schema),
+		}
+		toolUnionParams = append(toolUnionParams, toolUnionParam)
+	}
+
+	responseChan := make(chan StreamingLLMResponse)
+
+	stream := p.client.CreateStreamingMessage(ctx, anthropic.MessageNewParams{
+		Model:     anthropic.F(p.model),
+		MaxTokens: anthropic.F(config.MaxToken),
+		Messages:  anthropic.F(anthropicMessages),
+		Tools:     anthropic.F(toolUnionParams),
+	})
+
+	//var eventMessageStart anthropic.Message
+	var eventMessageAccumulated []anthropic.Message
+	var msg anthropic.Message
+	//var jsonBuffer bytes.Buffer
+	//var messageContent strings.Builder
+	//selectedTool := activeTool{}
+
+	//var toolName string
+
+	// Start a goroutine to handle the streaming response
 	go func() {
-		defer close(ch)
+		defer close(responseChan)
 
-		// Convert our messages to Anthropic messages
-		var anthropicMessages []anthropic.MessageParam
-		for _, msg := range messages {
-			switch msg.Role {
-			case UserRole:
-				anthropicMessages = append(anthropicMessages,
-					anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Text)))
-			case AssistantRole:
-				// Check if the message has tool results that need to be included
-				anthropicMessages = append(anthropicMessages,
-					anthropic.NewAssistantMessage(anthropic.NewTextBlock(msg.Text)))
+		for stream.Next() {
+			event := stream.Current()
+			msg.Accumulate(event)
+			eventMessageAccumulated = append(eventMessageAccumulated, msg)
+		}
+
+		for {
+			var toolResults []anthropic.ContentBlockParamUnion
+			for _, block := range msg.Content {
+				switch block := block.AsUnion().(type) {
+				case anthropic.TextBlock:
+					p.sendMessage(responseChan, block.Text, false)
+
+				case anthropic.ToolUseBlock:
+					toolResponse, err := config.toolsProvider.ExecuteTool(ctx, mcp.CallToolParams{
+						Name:      block.Name,
+						Arguments: block.Input,
+					})
+					if err != nil {
+						log.Fatalf("error executing tool '%s': %v", block.Name, err)
+					}
+
+					if toolResponse.Content == nil || len(toolResponse.Content) == 0 {
+						log.Fatalf("tool '%s' returned no content", block.Name)
+					}
+
+					// Add tool result to collection
+					toolResults = append(toolResults,
+						anthropic.NewToolResultBlock(block.ID, toolResponse.Content[0].Text, toolResponse.IsError))
+				default:
+				}
 			}
-		}
 
-		// Prepare tools if registry exists
-		mcpTools, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
-		if err != nil {
-			ch <- StreamingLLMResponse{Error: fmt.Errorf("error listing tools: %w", err), Done: true}
-			return
-		}
+			anthropicMessages = append(anthropicMessages, msg.ToParam())
 
-		var toolUnionParams []anthropic.ToolUnionUnionParam
-		for _, mcpTool := range mcpTools {
-			var schema interface{}
-			if err := json.Unmarshal(mcpTool.InputSchema, &schema); err != nil {
-				ch <- StreamingLLMResponse{Error: fmt.Errorf("fail to unmarshal: %w", err), Done: true}
+			// Add tool results as user message and continue the loop
+			anthropicMessages = append(anthropicMessages,
+				anthropic.NewUserMessage(toolResults...))
+
+			if msg.StopReason == anthropic.MessageStopReasonEndTurn {
+				responseChan <- StreamingLLMResponse{
+					Text: "",
+					Done: true,
+				}
+
+				break
+			}
+
+			finalMessage, err := p.client.CreateMessage(ctx, anthropic.MessageNewParams{
+				Model:     anthropic.F(p.model),
+				MaxTokens: anthropic.F(config.MaxToken),
+				Messages:  anthropic.F(anthropicMessages),
+				Tools:     anthropic.F(toolUnionParams),
+			})
+
+			if err != nil {
+				responseChan <- StreamingLLMResponse{
+					Text:  "",
+					Done:  true,
+					Error: err,
+				}
 				return
 			}
 
-			toolUnionParam := anthropic.ToolParam{
-				Name:        anthropic.F(mcpTool.Name),
-				Description: anthropic.F(mcpTool.Description),
-				InputSchema: anthropic.F(schema),
+			msg = *finalMessage
+
+			//p.sendMessage(responseChan, finalMessage.Content[0].AsUnion().(anthropic.TextBlock).Text, false)
+		}
+
+		if err != nil {
+			log.Fatalf("error creating message: %v", err)
+		}
+
+		p.sendMessage(responseChan, "Streaming finished", false)
+		p.sendMessage(responseChan, "", true)
+
+		if err := stream.Err(); err != nil {
+			responseChan <- StreamingLLMResponse{
+				Text:  "",
+				Done:  true,
+				Error: err,
 			}
-			toolUnionParams = append(toolUnionParams, toolUnionParam)
-		}
-
-		// Create single message params
-		messageParams := anthropic.MessageNewParams{
-			Model:     anthropic.F(p.model),
-			MaxTokens: anthropic.F(config.MaxToken),
-			Messages:  anthropic.F(anthropicMessages),
-		}
-
-		// Only include tools if we have them
-		if len(toolUnionParams) > 0 {
-			messageParams.Tools = anthropic.F(toolUnionParams)
-		}
-
-		stream := p.client.CreateStreamingMessage(ctx, messageParams)
-
-		var jsonBuffer bytes.Buffer
-		var activeToolID, activeToolName string
-		var currentToolInput json.RawMessage
-		var messageContent strings.Builder
-
-		for stream.Next() {
-			event := stream.Current()
-
-			switch evt := event.AsUnion().(type) {
-			case anthropic.MessageStartEvent:
-				// Reset state for new message
-				jsonBuffer.Reset()
-				messageContent.Reset()
-			case anthropic.ContentBlockStartEvent:
-				if contentBlock, ok := evt.ContentBlock.AsUnion().(anthropic.ToolUseBlock); ok {
-					activeToolID = contentBlock.ID
-					activeToolName = contentBlock.Name
-					jsonBuffer.Reset()
-					currentToolInput = contentBlock.Input
-				}
-			case anthropic.ContentBlockDeltaEvent:
-				switch delta := evt.Delta.AsUnion().(type) {
-				case anthropic.TextDelta:
-					messageContent.WriteString(delta.Text)
-					ch <- StreamingLLMResponse{Text: delta.Text, Done: false}
-				case anthropic.InputJSONDelta:
-					jsonBuffer.WriteString(delta.PartialJSON)
-					currentToolInput = jsonBuffer.Bytes()
-				}
-			case anthropic.MessageDeltaEvent:
-				if string(evt.Delta.StopReason) == string(anthropic.MessageStopReasonToolUse) {
-					// Verify we have an active tool request before executing
-					if activeToolID == "" || activeToolName == "" {
-						ch <- StreamingLLMResponse{Error: fmt.Errorf("received tool use stop reason without active tool"), Done: true}
-						return
-					}
-
-					// Execute tool and append result to messages
-					toolResponse, err := config.toolsProvider.ExecuteTool(ctx, mcp.CallToolParams{
-						Name:      activeToolName,
-						Arguments: currentToolInput,
-					})
-					if err != nil {
-						ch <- StreamingLLMResponse{Error: fmt.Errorf("error executing tool '%s': %w", activeToolName, err), Done: true}
-						return
-					}
-
-					anthropicMessages = append(anthropicMessages,
-						anthropic.NewAssistantMessage(
-							anthropic.NewToolUseBlockParam(activeToolID, activeToolName, currentToolInput)))
-
-					log.Printf("%+v", toolResponse)
-
-					if toolResponse.Content == nil || len(toolResponse.Content) == 0 {
-						ch <- StreamingLLMResponse{Error: fmt.Errorf("tool '%s' returned no content", activeToolName), Done: true}
-						return
-					}
-
-					anthropicMessages = append(anthropicMessages,
-						anthropic.NewUserMessage(
-							anthropic.NewToolResultBlock(activeToolID, toolResponse.Content[0].Text, false)))
-
-					messageParams.Messages = anthropic.F(anthropicMessages)
-				}
-			case anthropic.MessageStopEvent:
-				messageParams.Tools = anthropic.F(toolUnionParams)
-
-				log.Printf("%+v", messageParams)
-
-				stream = p.client.CreateStreamingMessage(ctx, messageParams)
-			}
-		}
-
-		/*messageParams.Messages = anthropic.F(anthropicMessages)
-		messageParams.Tools = anthropic.F(toolUnionParams)
-		stream = p.client.CreateStreamingMessage(ctx, messageParams)
-		// Handle message start and end events only
-		for stream.Next() {
-			event := stream.Current()
-
-			switch evt := event.AsUnion().(type) {
-			case anthropic.MessageStartEvent:
-				log.Printf("🌱 MessageStart: ID=%s", evt.Message.ID)
-
-			case anthropic.ContentBlockStartEvent:
-				if contentBlock, ok := evt.ContentBlock.AsUnion().(anthropic.ToolUseBlock); ok {
-					log.Printf("🔧 ToolUseBlock: ID=%s, Name=%s", contentBlock.ID, contentBlock.Name)
-				}
-			case anthropic.ContentBlockStopEvent:
-				log.Printf("🔚 ContentBlockStop")
-			}
-		}*/
-
-		if stream.Err() != nil {
-			ch <- StreamingLLMResponse{Error: stream.Err(), Done: true}
 			return
 		}
 
-		ch <- StreamingLLMResponse{Done: true}
+		responseChan <- StreamingLLMResponse{
+			Text: "",
+			Done: true,
+		}
 	}()
 
-	return ch, nil
+	return responseChan, nil
+}
+
+func (p *AnthropicLLMProvider) sendMessage(responseChan chan StreamingLLMResponse, text string, isDone bool) {
+	responseChan <- StreamingLLMResponse{
+		Text: text + "\n",
+		Done: isDone,
+	}
 }
