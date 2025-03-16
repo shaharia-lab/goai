@@ -10,39 +10,30 @@ import (
 	"strings"
 )
 
-type activeTool struct {
-	ID      string
-	Name    string
-	Input   json.RawMessage
-	Content string
-}
-
 // GetStreamingResponse handles streaming LLM responses with tool usage capabilities
 func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
-	// Convert messages to Anthropic format
-	anthropicMessages, err := p.convertToAnthropicMessages(messages)
+	anthropicMessages, systemMessage, err := p.convertToAnthropicMessages(messages)
 	if err != nil {
 		return nil, fmt.Errorf("error converting messages: %w", err)
 	}
 
-	// Prepare tools if registry exists
 	toolUnionParams, err := p.prepareTools(ctx, config)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create response channel
 	responseChan := make(chan StreamingLLMResponse)
 
-	// Start processing in a goroutine
-	go p.processStreamingResponse(ctx, anthropicMessages, toolUnionParams, config, responseChan)
+	go p.processStreamingResponse(ctx, anthropicMessages, toolUnionParams, config, responseChan, systemMessage)
 
 	return responseChan, nil
 }
 
 // convertToAnthropicMessages converts our internal message format to Anthropic's format
-func (p *AnthropicLLMProvider) convertToAnthropicMessages(messages []LLMMessage) ([]anthropic.MessageParam, error) {
+func (p *AnthropicLLMProvider) convertToAnthropicMessages(messages []LLMMessage) ([]anthropic.MessageParam, string, error) {
 	var anthropicMessages []anthropic.MessageParam
+
+	var systemMessage string
 
 	for _, msg := range messages {
 		switch msg.Role {
@@ -52,12 +43,14 @@ func (p *AnthropicLLMProvider) convertToAnthropicMessages(messages []LLMMessage)
 		case AssistantRole:
 			anthropicMessages = append(anthropicMessages,
 				anthropic.NewAssistantMessage(anthropic.NewTextBlock(msg.Text)))
+		case SystemRole:
+			systemMessage = msg.Text
 		default:
-			return nil, fmt.Errorf("unsupported role: %s", msg.Role)
+			return nil, systemMessage, fmt.Errorf("unsupported role: %s", msg.Role)
 		}
 	}
 
-	return anthropicMessages, nil
+	return anthropicMessages, systemMessage, nil
 }
 
 // prepareTools prepares the tool definitions for the Anthropic API
@@ -69,7 +62,6 @@ func (p *AnthropicLLMProvider) prepareTools(ctx context.Context, config LLMReque
 
 	var toolUnionParams []anthropic.ToolUnionUnionParam
 	for _, mcpTool := range mcpTools {
-		// Unmarshal the JSON schema into a map[string]interface{}
 		var schema interface{}
 		if err := json.Unmarshal(mcpTool.InputSchema, &schema); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal tool parameters for %s: %w", mcpTool.Name, err)
@@ -93,19 +85,18 @@ func (p *AnthropicLLMProvider) processStreamingResponse(
 	toolUnionParams []anthropic.ToolUnionUnionParam,
 	config LLMRequestConfig,
 	responseChan chan<- StreamingLLMResponse,
+	systemMessage string,
 ) {
 	defer close(responseChan)
 
-	// Process the first streaming request
 	iterations := 0
-	maxIterations := 10 // Safeguard against infinite loops
+	maxIterations := 10
 	keepProcessing := true
 
 	for keepProcessing && iterations < maxIterations {
 		iterations++
 
-		// Create and process stream for current context
-		msg, err := p.streamAndProcessMessage(ctx, anthropicMessages, toolUnionParams, config, responseChan)
+		msg, err := p.streamAndProcessMessage(ctx, anthropicMessages, toolUnionParams, config, responseChan, systemMessage)
 		if err != nil {
 			responseChan <- StreamingLLMResponse{
 				Text:  "",
@@ -115,23 +106,18 @@ func (p *AnthropicLLMProvider) processStreamingResponse(
 			return
 		}
 
-		// Process tool results if any
 		toolResults := p.processToolResults(ctx, msg, config, responseChan)
 
-		// Add the current message to the history
 		anthropicMessages = append(anthropicMessages, msg.ToParam())
 
-		// If we have tool results, add them as a user message and continue
 		if len(toolResults) > 0 {
 			anthropicMessages = append(anthropicMessages,
 				anthropic.NewUserMessage(toolResults...))
 			keepProcessing = true
 		} else {
-			// No more tool calls, we're done
 			keepProcessing = false
 		}
 
-		// Signal completion if the message is done
 		if msg.StopReason == anthropic.MessageStopReasonEndTurn || !keepProcessing {
 			responseChan <- StreamingLLMResponse{
 				Text: "",
@@ -140,9 +126,7 @@ func (p *AnthropicLLMProvider) processStreamingResponse(
 		}
 	}
 
-	// Safety check for too many iterations
 	if iterations >= maxIterations {
-		// Send a warning and mark as done
 		responseChan <- StreamingLLMResponse{
 			Text: "Warning: Maximum number of tool iterations reached. Stopping.",
 			Done: false,
@@ -162,29 +146,31 @@ func (p *AnthropicLLMProvider) streamAndProcessMessage(
 	toolUnionParams []anthropic.ToolUnionUnionParam,
 	config LLMRequestConfig,
 	responseChan chan<- StreamingLLMResponse,
+	systemMessage string,
 ) (*anthropic.Message, error) {
-	// Initialize the stream
-	stream := p.client.CreateStreamingMessage(ctx, anthropic.MessageNewParams{
+	msgParam := anthropic.MessageNewParams{
 		Model:     anthropic.F(p.model),
 		MaxTokens: anthropic.F(config.MaxToken),
 		Messages:  anthropic.F(anthropicMessages),
 		Tools:     anthropic.F(toolUnionParams),
+	}
+
+	msgParam.System = anthropic.F([]anthropic.TextBlockParam{
+		anthropic.NewTextBlock(systemMessage),
 	})
 
-	// Track the current content block for streaming text
+	stream := p.client.CreateStreamingMessage(ctx, msgParam)
+
 	var msg anthropic.Message
 	var textBuf strings.Builder
 
-	// Process the stream events
 	for stream.Next() {
 		event := stream.Current()
 		msg.Accumulate(event)
 
-		// Extract text from the latest accumulated message if available
 		for _, block := range msg.Content {
 			if textBlock, ok := block.AsUnion().(anthropic.TextBlock); ok {
 				if current := textBlock.Text; len(current) > textBuf.Len() {
-					// Stream only the new characters since last time
 					newText := current[textBuf.Len():]
 					if newText != "" {
 						responseChan <- StreamingLLMResponse{
@@ -192,7 +178,6 @@ func (p *AnthropicLLMProvider) streamAndProcessMessage(
 							Done: false,
 						}
 					}
-					// Update our buffer with all text seen so far
 					textBuf.Reset()
 					textBuf.WriteString(current)
 				}
@@ -200,7 +185,6 @@ func (p *AnthropicLLMProvider) streamAndProcessMessage(
 		}
 	}
 
-	// Check for streaming errors
 	if err := stream.Err(); err != nil {
 		return nil, fmt.Errorf("error in streaming: %w", err)
 	}
@@ -219,13 +203,11 @@ func (p *AnthropicLLMProvider) processToolResults(
 
 	for _, block := range msg.Content {
 		if toolBlock, ok := block.AsUnion().(anthropic.ToolUseBlock); ok {
-			// Notify the user about tool execution with a special message
 			responseChan <- StreamingLLMResponse{
-				Text: fmt.Sprintf("\n[Executing tool: %s]\n", toolBlock.Name),
+				Text: fmt.Sprintf("\n", toolBlock.Name),
 				Done: false,
 			}
 
-			// Execute the tool
 			result := p.executeToolAndGetResult(ctx, toolBlock, config)
 			if result != nil {
 				toolResults = append(toolResults, result)
