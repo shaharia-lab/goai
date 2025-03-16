@@ -116,7 +116,7 @@ func (p *AnthropicLLMProvider) processStreamingResponse(
 		}
 
 		// Process tool results if any
-		toolResults, hasTextContent := p.processContentBlocks(ctx, msg, config, responseChan)
+		toolResults := p.processToolResults(ctx, msg, config, responseChan)
 
 		// Add the current message to the history
 		anthropicMessages = append(anthropicMessages, msg.ToParam())
@@ -127,28 +127,35 @@ func (p *AnthropicLLMProvider) processStreamingResponse(
 				anthropic.NewUserMessage(toolResults...))
 			keepProcessing = true
 		} else {
-			// If no tool usage and message is complete or we've exceeded iterations, we're done
+			// No more tool calls, we're done
 			keepProcessing = false
-			if !hasTextContent || msg.StopReason != anthropic.MessageStopReasonEndTurn {
-				p.sendDone(responseChan)
-			}
 		}
 
 		// Signal completion if the message is done
-		if msg.StopReason == anthropic.MessageStopReasonEndTurn {
-			p.sendDone(responseChan)
-			keepProcessing = false
+		if msg.StopReason == anthropic.MessageStopReasonEndTurn || !keepProcessing {
+			responseChan <- StreamingLLMResponse{
+				Text: "",
+				Done: true,
+			}
 		}
 	}
 
 	// Safety check for too many iterations
 	if iterations >= maxIterations {
-		p.sendMessage(responseChan, "Warning: Maximum number of tool iterations reached. Stopping.", false)
-		p.sendDone(responseChan)
+		// Send a warning and mark as done
+		responseChan <- StreamingLLMResponse{
+			Text: "Warning: Maximum number of tool iterations reached. Stopping.",
+			Done: false,
+		}
+		responseChan <- StreamingLLMResponse{
+			Text: "",
+			Done: true,
+		}
 	}
 }
 
 // streamAndProcessMessage streams a message from Anthropic API and processes it
+// This implementation uses a completely different approach to text streaming to fix whitespace issues
 func (p *AnthropicLLMProvider) streamAndProcessMessage(
 	ctx context.Context,
 	anthropicMessages []anthropic.MessageParam,
@@ -166,25 +173,31 @@ func (p *AnthropicLLMProvider) streamAndProcessMessage(
 
 	// Track the current content block for streaming text
 	var msg anthropic.Message
+	var textBuf strings.Builder
 
 	// Process the stream events
 	for stream.Next() {
 		event := stream.Current()
+		msg.Accumulate(event)
 
-		// Extract text content based on event type
-		switch eventUnion := event.AsUnion().(type) {
-		case anthropic.ContentBlockDeltaEvent:
-			// Only handle text delta events
-			if delta, ok := eventUnion.Delta.AsUnion().(anthropic.TextDelta); ok {
-				// Stream text content to the user as it arrives
-				if delta.Text != "" {
-					p.sendMessage(responseChan, delta.Text, false)
+		// Extract text from the latest accumulated message if available
+		for _, block := range msg.Content {
+			if textBlock, ok := block.AsUnion().(anthropic.TextBlock); ok {
+				if current := textBlock.Text; len(current) > textBuf.Len() {
+					// Stream only the new characters since last time
+					newText := current[textBuf.Len():]
+					if newText != "" {
+						responseChan <- StreamingLLMResponse{
+							Text: newText,
+							Done: false,
+						}
+					}
+					// Update our buffer with all text seen so far
+					textBuf.Reset()
+					textBuf.WriteString(current)
 				}
 			}
 		}
-
-		// Accumulate the message regardless of event type
-		msg.Accumulate(event)
 	}
 
 	// Check for streaming errors
@@ -195,36 +208,32 @@ func (p *AnthropicLLMProvider) streamAndProcessMessage(
 	return &msg, nil
 }
 
-// processContentBlocks processes the content blocks in a message
-func (p *AnthropicLLMProvider) processContentBlocks(
+// processToolResults processes tool usage in a message and returns tool results
+func (p *AnthropicLLMProvider) processToolResults(
 	ctx context.Context,
 	msg *anthropic.Message,
 	config LLMRequestConfig,
 	responseChan chan<- StreamingLLMResponse,
-) ([]anthropic.ContentBlockParamUnion, bool) {
+) []anthropic.ContentBlockParamUnion {
 	var toolResults []anthropic.ContentBlockParamUnion
-	hasTextContent := false
 
 	for _, block := range msg.Content {
-		switch block := block.AsUnion().(type) {
-		case anthropic.TextBlock:
-			hasTextContent = true
-			// We've already streamed the text content in streamAndProcessMessage
-			// No need to send again
+		if toolBlock, ok := block.AsUnion().(anthropic.ToolUseBlock); ok {
+			// Notify the user about tool execution with a special message
+			responseChan <- StreamingLLMResponse{
+				Text: fmt.Sprintf("\n[Executing tool: %s]\n", toolBlock.Name),
+				Done: false,
+			}
 
-		case anthropic.ToolUseBlock:
-			// Let the user know we're executing a tool
-			toolCallMsg := fmt.Sprintf(" [Executing tool: %s]", block.Name)
-			p.sendMessage(responseChan, toolCallMsg, false)
-
-			result := p.executeToolAndGetResult(ctx, block, config)
+			// Execute the tool
+			result := p.executeToolAndGetResult(ctx, toolBlock, config)
 			if result != nil {
 				toolResults = append(toolResults, result)
 			}
 		}
 	}
 
-	return toolResults, hasTextContent
+	return toolResults
 }
 
 // executeToolAndGetResult executes a tool and returns the result
@@ -249,34 +258,4 @@ func (p *AnthropicLLMProvider) executeToolAndGetResult(
 	}
 
 	return anthropic.NewToolResultBlock(block.ID, toolResponse.Content[0].Text, toolResponse.IsError)
-}
-
-// sendMessage sends a message to the response channel
-func (p *AnthropicLLMProvider) sendMessage(responseChan chan<- StreamingLLMResponse, text string, isDone bool) {
-	if text == "" && !isDone {
-		return // Don't send empty non-final messages
-	}
-
-	// Clean up the text - remove leading/trailing whitespace and normalize newlines
-	text = strings.TrimSpace(text)
-
-	if text != "" {
-		responseChan <- StreamingLLMResponse{
-			Text: text,
-			Done: isDone,
-		}
-	} else if isDone {
-		responseChan <- StreamingLLMResponse{
-			Text: "",
-			Done: true,
-		}
-	}
-}
-
-// sendDone sends a done signal to the response channel
-func (p *AnthropicLLMProvider) sendDone(responseChan chan<- StreamingLLMResponse) {
-	responseChan <- StreamingLLMResponse{
-		Text: "",
-		Done: true,
-	}
 }
