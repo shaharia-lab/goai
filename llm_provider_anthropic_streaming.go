@@ -205,7 +205,7 @@ func (p *AnthropicLLMProvider) processToolResults(
 	for _, block := range msg.Content {
 		if toolBlock, ok := block.AsUnion().(anthropic.ToolUseBlock); ok {
 			responseChan <- StreamingLLMResponse{
-				Text: fmt.Sprintf("\n", toolBlock.Name),
+				Text: "\n",
 				Done: false,
 			}
 
