@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/shaharia-lab/goai/mcp"
-	"log"
 )
 
 // GetStreamingResponse handles streaming LLM responses with tool usage capabilities
@@ -204,7 +203,7 @@ func (p *AnthropicLLMProvider) processToolResults(
 	for _, block := range msg.Content {
 		if toolBlock, ok := block.AsUnion().(anthropic.ToolUseBlock); ok {
 			responseChan <- StreamingLLMResponse{
-				Text: "\n",
+				Text: "",
 				Done: false,
 			}
 
@@ -230,12 +229,10 @@ func (p *AnthropicLLMProvider) executeToolAndGetResult(
 	})
 
 	if err != nil {
-		log.Printf("Error executing tool '%s': %v", block.Name, err)
 		return anthropic.NewToolResultBlock(block.ID, fmt.Sprintf("Error: %v", err), true)
 	}
 
 	if toolResponse.Content == nil || len(toolResponse.Content) == 0 {
-		log.Printf("Tool '%s' returned no content", block.Name)
 		return anthropic.NewToolResultBlock(block.ID, "No content returned from tool", true)
 	}
 

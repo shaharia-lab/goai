@@ -635,7 +635,184 @@ func TestAnthropicLLMProvider_GetStreamingResponse_SingleTool(t *testing.T) {
 	}
 
 	t.Logf("Final received text: '%s'", receivedText)
-	t.Logf("Expected text: '%s'", "\nThe weather is Sunny")
+	t.Logf("Expected text: '%s'", "The weather is Sunny")
 
-	assert.Equal(t, "\nThe weather is Sunny", receivedText)
+	assert.Equal(t, "The weather is Sunny", receivedText)
+}
+
+func TestAnthropicLLMProvider_GetStreamingResponse_MultiTool(t *testing.T) {
+	var callCount int
+	mockClient := &MockAnthropicClient{
+		createStreamingMessageFunc: func(_ context.Context, params anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEvent] {
+			callCount++
+			t.Logf("Streaming call #%d with tools: %v", callCount, params.Tools)
+
+			var events []anthropic.MessageStreamEvent
+
+			switch callCount {
+			case 1: // First call: Two tool usages
+				weatherTool := anthropic.ToolUseBlock{
+					ID:    "toolu_01",
+					Name:  "get_weather",
+					Input: json.RawMessage(`{"location":"Berlin"}`),
+					Type:  anthropic.ToolUseBlockTypeToolUse,
+				}
+
+				stockTool := anthropic.ToolUseBlock{
+					ID:    "toolu_02",
+					Name:  "get_stock_price",
+					Input: json.RawMessage(`{"symbol":"GOOGL"}`),
+					Type:  anthropic.ToolUseBlockTypeToolUse,
+				}
+
+				events = []anthropic.MessageStreamEvent{
+					{
+						Type: anthropic.MessageStreamEventTypeMessageStart,
+						Message: anthropic.Message{
+							Role:       anthropic.MessageRoleAssistant,
+							StopReason: anthropic.MessageStopReasonToolUse,
+							Content: []anthropic.ContentBlock{
+								{
+									Type:  anthropic.ContentBlockTypeToolUse,
+									ID:    weatherTool.ID,
+									Name:  weatherTool.Name,
+									Input: weatherTool.Input,
+								},
+								{
+									Type:  anthropic.ContentBlockTypeToolUse,
+									ID:    stockTool.ID,
+									Name:  stockTool.Name,
+									Input: stockTool.Input,
+								},
+							},
+						},
+					},
+					{
+						Type:         anthropic.MessageStreamEventTypeContentBlockStart,
+						Index:        0,
+						ContentBlock: weatherTool,
+					},
+					{
+						Type:  anthropic.MessageStreamEventTypeContentBlockStop,
+						Index: 0,
+					},
+					{
+						Type:         anthropic.MessageStreamEventTypeContentBlockStart,
+						Index:        1,
+						ContentBlock: stockTool,
+					},
+					{
+						Type:  anthropic.MessageStreamEventTypeContentBlockStop,
+						Index: 1,
+					},
+					{
+						Type: anthropic.MessageStreamEventTypeMessageStop,
+					},
+				}
+			case 2: // Second call: Response after processing both tools
+				events = []anthropic.MessageStreamEvent{
+					{
+						Type: anthropic.MessageStreamEventTypeMessageStart,
+						Message: anthropic.Message{
+							Role:       anthropic.MessageRoleAssistant,
+							StopReason: anthropic.MessageStopReasonEndTurn,
+							Content: []anthropic.ContentBlock{
+								{
+									Type: anthropic.ContentBlockTypeText,
+									Text: "The weather is Sunny and GOOGL is at $150",
+								},
+							},
+						},
+					},
+					{
+						Type:         anthropic.MessageStreamEventTypeContentBlockStart,
+						Index:        0,
+						ContentBlock: anthropic.TextBlock{Type: anthropic.TextBlockTypeText, Text: ""},
+					},
+					{
+						Type:  anthropic.MessageStreamEventTypeContentBlockDelta,
+						Index: 0,
+						Delta: anthropic.ContentBlockDeltaEventDelta{
+							Type: anthropic.ContentBlockDeltaEventDeltaTypeTextDelta,
+							Text: "The weather is Sunny",
+						},
+					},
+					{
+						Type:  anthropic.MessageStreamEventTypeContentBlockDelta,
+						Index: 0,
+						Delta: anthropic.ContentBlockDeltaEventDelta{
+							Type: anthropic.ContentBlockDeltaEventDeltaTypeTextDelta,
+							Text: " and GOOGL is at $150",
+						},
+					},
+					{
+						Type:  anthropic.MessageStreamEventTypeContentBlockStop,
+						Index: 0,
+					},
+					{
+						Type: anthropic.MessageStreamEventTypeMessageStop,
+					},
+				}
+			}
+
+			decoder := &mockDecoder{events: events, index: -1}
+			return ssestream.NewStream[anthropic.MessageStreamEvent](decoder, nil)
+		},
+	}
+
+	// Setup mock tools provider with two tools
+	mockToolsProvider := NewToolsProvider()
+	_ = mockToolsProvider.AddTools([]mcp.Tool{
+		{
+			Name:        "get_weather",
+			Description: "Get weather information",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}`),
+			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+				return mcp.CallToolResult{
+					Content: []mcp.ToolResultContent{
+						{Type: "text", Text: "The weather is Sunny"},
+					},
+				}, nil
+			},
+		},
+		{
+			Name:        "get_stock_price",
+			Description: "Get stock price information",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"symbol":{"type":"string"}},"required":["symbol"]}`),
+			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+				return mcp.CallToolResult{
+					Content: []mcp.ToolResultContent{
+						{Type: "text", Text: "GOOGL is at $150"},
+					},
+				}, nil
+			},
+		},
+	})
+
+	provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
+		Client: mockClient,
+		Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
+	})
+
+	ctx := context.Background()
+	stream, err := provider.GetStreamingResponse(ctx, []LLMMessage{
+		{Role: UserRole, Text: "What's the weather in Berlin and GOOGL stock price?"},
+	}, LLMRequestConfig{
+		MaxToken:      200,
+		toolsProvider: mockToolsProvider,
+		AllowedTools:  []string{"get_weather", "get_stock_price"},
+	})
+	assert.NoError(t, err)
+
+	var receivedText string
+	for chunk := range stream {
+		if chunk.Error != nil {
+			t.Fatalf("Error in chunk: %v", chunk.Error)
+		}
+		t.Logf("Received chunk: '%s'", chunk.Text)
+		receivedText += chunk.Text
+	}
+
+	expected := "The weather is Sunny and GOOGL is at $150"
+	assert.Equal(t, expected, receivedText)
 }
