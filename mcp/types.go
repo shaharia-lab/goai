@@ -235,13 +235,6 @@ type CallToolParams struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
-// CallToolParamsStreaming represents parameters for calling a tool.
-type CallToolParamsStreaming struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
-}
-
 // CallToolResult represents the result of calling a tool.
 type CallToolResult struct {
 	Content []ToolResultContent `json:"content"`
