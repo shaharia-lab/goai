@@ -170,7 +170,7 @@ func (p *AnthropicLLMProvider) streamAndProcessMessage(
 		msg.Accumulate(event)
 
 		// we will accumulate the text for processing
-		// but at the same time we can send the delta text to the response channel
+		// but at the same time we can send the delta
 		switch evt := event.AsUnion().(type) {
 		case anthropic.ContentBlockDeltaEvent:
 			switch delta := evt.Delta.AsUnion().(type) {

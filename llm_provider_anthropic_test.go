@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"testing"
-
 	"github.com/shaharia-lab/goai/mcp"
+	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
@@ -55,15 +54,23 @@ func (d *mockDecoder) Event() ssestream.Event {
 
 	event := d.events[d.index]
 
-	// Create a custom payload that can be unmarshaled correctly
-	payload := map[string]interface{}{
-		"type":  event.Type,
-		"delta": event.Delta,
-		"index": event.Index,
-	}
+	payload := make(map[string]interface{})
+	payload["type"] = event.Type
+	payload["index"] = event.Index
 
-	if event.Type == anthropic.MessageStreamEventTypeMessageStart {
+	switch event.Type {
+	case anthropic.MessageStreamEventTypeMessageStart:
 		payload["message"] = event.Message
+	case anthropic.MessageStreamEventTypeContentBlockStart:
+		payload["content_block"] = event.ContentBlock
+	case anthropic.MessageStreamEventTypeContentBlockDelta:
+		payload["delta"] = event.Delta
+	case anthropic.MessageStreamEventTypeContentBlockStop:
+		// No additional fields
+	case anthropic.MessageStreamEventTypeMessageDelta:
+		payload["delta"] = event.Delta
+	case anthropic.MessageStreamEventTypeMessageStop:
+		// No additional fields
 	}
 
 	data, err := json.Marshal(payload)
@@ -464,4 +471,171 @@ func TestAnthropicLLMProvider_GetStreamingResponse_Basic(t *testing.T) {
 	}
 
 	assert.Equal(t, "Hello world!", receivedText)
+}
+
+func TestAnthropicLLMProvider_GetStreamingResponse_SingleTool(t *testing.T) {
+	var callCount int
+	mockClient := &MockAnthropicClient{
+		createStreamingMessageFunc: func(_ context.Context, params anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEvent] {
+			// Debug log the request params to ensure tool setup is correct
+			t.Logf("Creating streaming message call #%d with %d tools", callCount+1, len(params.Tools.String()))
+
+			callCount++
+			var events []anthropic.MessageStreamEvent
+
+			// Create two different event streams based on call count
+			if callCount == 1 {
+				// First call: Tool usage
+				toolUseBlock := anthropic.ToolUseBlock{
+					ID:    "toolu_01",
+					Name:  "get_weather",
+					Input: json.RawMessage(`{"location":"Berlin"}`),
+					Type:  anthropic.ToolUseBlockTypeToolUse,
+				}
+
+				// This is the first important point - we need to make sure the Message object
+				// contains the tool use block in its Content field
+				msg := anthropic.Message{
+					Role:       anthropic.MessageRoleAssistant,
+					StopReason: anthropic.MessageStopReasonToolUse,
+					Content: []anthropic.ContentBlock{
+						{
+							Type: anthropic.ContentBlockTypeText, // or appropriate type
+							Text: func() string {
+								s, _ := toolUseBlock.Input.MarshalJSON()
+								return string(s)
+							}(), // adjust according to your toolUseBlock structure
+						},
+					},
+				}
+
+				events = []anthropic.MessageStreamEvent{
+					// MessageStart with properly populated Message field
+					{
+						Type:    anthropic.MessageStreamEventTypeMessageStart,
+						Message: msg,
+					},
+					// ContentBlockStart for the tool use
+					{
+						Type:         anthropic.MessageStreamEventTypeContentBlockStart,
+						Index:        0,
+						ContentBlock: toolUseBlock,
+					},
+					// ContentBlockStop to end the block
+					{
+						Type:  anthropic.MessageStreamEventTypeContentBlockStop,
+						Index: 0,
+					},
+					// MessageStop to end the message
+					{
+						Type: anthropic.MessageStreamEventTypeMessageStop,
+					},
+				}
+			} else {
+				// Second call: Text response after tool use
+				textBlock := anthropic.TextBlock{
+					Type: anthropic.TextBlockTypeText,
+					Text: "The weather is Sunny",
+				}
+
+				msg := anthropic.Message{
+					Role:       anthropic.MessageRoleAssistant,
+					StopReason: anthropic.MessageStopReasonEndTurn,
+					Content: []anthropic.ContentBlock{
+						{
+							Type: anthropic.ContentBlockTypeText,
+							Text: textBlock.Text, // if textBlock is a string
+							// or textBlock.Text if textBlock is a struct with a Text field
+						},
+					},
+				}
+
+				events = []anthropic.MessageStreamEvent{
+					// MessageStart with text content
+					{
+						Type:    anthropic.MessageStreamEventTypeMessageStart,
+						Message: msg,
+					},
+					// ContentBlockStart for the text block
+					{
+						Type:         anthropic.MessageStreamEventTypeContentBlockStart,
+						Index:        0,
+						ContentBlock: textBlock,
+					},
+					// ContentBlockDelta to stream the text content
+					{
+						Type:  anthropic.MessageStreamEventTypeContentBlockDelta,
+						Index: 0,
+						Delta: anthropic.ContentBlockDeltaEventDelta{
+							Type: anthropic.ContentBlockDeltaEventDeltaTypeTextDelta,
+							Text: "The weather is Sunny",
+						},
+					},
+					// ContentBlockStop to end the block
+					{
+						Type:  anthropic.MessageStreamEventTypeContentBlockStop,
+						Index: 0,
+					},
+					// MessageStop to end the message
+					{
+						Type: anthropic.MessageStreamEventTypeMessageStop,
+					},
+				}
+			}
+
+			decoder := &mockDecoder{events: events, index: -1}
+			return ssestream.NewStream[anthropic.MessageStreamEvent](decoder, nil)
+		},
+	}
+
+	// Setup mock tools provider
+	mockToolsProvider := NewToolsProvider()
+	_ = mockToolsProvider.AddTools([]mcp.Tool{
+		{
+			Name:        "get_weather",
+			Description: "Get the weather",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}`),
+			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+				t.Logf("Tool handler called with input: %s", params.Arguments)
+				return mcp.CallToolResult{
+					Content: []mcp.ToolResultContent{
+						{
+							Type: "text",
+							Text: "The weather is Sunny",
+						},
+					},
+					IsError: false,
+				}, nil
+			},
+		},
+	})
+
+	provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
+		Client: mockClient,
+		Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
+	})
+
+	ctx := context.Background()
+	stream, err := provider.GetStreamingResponse(ctx, []LLMMessage{
+		{Role: UserRole, Text: "Weather in Berlin?"},
+	}, LLMRequestConfig{
+		MaxToken:      100,
+		toolsProvider: mockToolsProvider,
+		AllowedTools:  []string{"get_weather"},
+	})
+	assert.NoError(t, err)
+
+	var receivedText string
+	for chunk := range stream {
+		if chunk.Error != nil {
+			t.Fatalf("Error in chunk: %v", chunk.Error)
+		}
+		t.Logf("Received chunk: '%s', Done: %v", chunk.Text, chunk.Done)
+		receivedText += chunk.Text
+	}
+
+	t.Logf("Final received text: '%s'", receivedText)
+	t.Logf("Expected text: '%s'", "\nThe weather is Sunny")
+
+	assert.Equal(t, "\nThe weather is Sunny", receivedText)
 }
