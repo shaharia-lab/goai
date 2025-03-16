@@ -13,7 +13,7 @@ import (
 )
 
 // GetStreamingResponse generates a streaming response using Anthropic's API.
-func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
+func (p *AnthropicLLMProvider) GetStreamingResponse_LATEST(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
 	responseChan := make(chan StreamingLLMResponse, 100)
 	log.Printf("🚀 Starting streaming response with %d initial messages", len(messages))
 
