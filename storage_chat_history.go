@@ -3,9 +3,10 @@ package goai
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ChatHistoryStorage defines the interface for conversation history storage

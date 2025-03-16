@@ -2,9 +2,10 @@ package goai
 
 import (
 	"context"
+	"time"
+
 	"github.com/shaharia-lab/goai/observability"
 	"go.opentelemetry.io/otel/attribute"
-	"time"
 )
 
 // TracingLLMProvider implements the decorator pattern for tracing
