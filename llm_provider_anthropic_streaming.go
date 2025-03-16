@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/shaharia-lab/goai/mcp"
 	"log"
 	"strings"
+
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/shaharia-lab/goai/mcp"
 )
 
 // GetStreamingResponse handles streaming LLM responses with tool usage capabilities
