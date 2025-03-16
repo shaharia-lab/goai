@@ -3,8 +3,9 @@ package goai
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // LLMMessageRole represents the role of a message in a conversation.
