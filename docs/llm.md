@@ -234,6 +234,24 @@ For more details about AWS Bedrock API can be found [here](https://docs.aws.amaz
 
 ### OpenAI Compatible
 
+#### Google Gemini
+
+```go
+// Create client
+client := goai.NewOpenAIClient(
+    "{GEMINI_API_KEY}",
+    option.WithBaseURL("https://generativelanguage.googleapis.com/v1beta/openai/"),
+)
+
+// Initialize provider
+provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
+    Client: client,
+    Model:  "gemini-2.0-flash",
+})
+```
+
+For more details about Google Gemini API can be found [here](https://ai.google.dev/gemini-api/docs/openai)
+
 #### xAI
 
 ```go
