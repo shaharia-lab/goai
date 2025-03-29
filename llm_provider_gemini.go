@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/shaharia-lab/goai/mcp"
 	"log"
 	"time"
 
 	"github.com/google/generative-ai-go/genai"
+	"github.com/shaharia-lab/goai/mcp"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
@@ -60,26 +60,41 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 	startTime := time.Now()
 	model := p.client.GenerativeModel(p.modelName)
 
-	currentHistory, err := mapLLMMessagesToGenaiContent(messages)
+	cs := model.StartChat()
+
+	initialHistory, err := mapLLMMessagesToGenaiContent(messages)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("failed to map initial messages: %w", err)
+	}
+
+	if len(initialHistory) > 1 {
+		cs.History = initialHistory[:len(initialHistory)-1]
+	}
+
+	var initialParts []genai.Part
+	if len(initialHistory) > 0 {
+		initialParts = initialHistory[len(initialHistory)-1].Parts
+	}
+	if len(initialParts) == 0 {
+
+		return LLMResponse{}, errors.New("cannot start LLM conversation with empty initial message parts")
 	}
 
 	genaiConfig, err := mapLLMConfigToGenaiConfig(config)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("failed to map request config: %w", err)
 	}
+
 	model.GenerationConfig = *genaiConfig
 
-	var genaiTools []*genai.Tool
 	var activeTools map[string]mcp.Tool
-	if config.toolsProvider != nil && len(config.AllowedTools) > 0 {
+	if len(config.AllowedTools) > 0 {
 		fetchedTools, err := p.toolsProvider.ListTools(ctx, config.AllowedTools)
 		if err != nil {
 			return LLMResponse{}, fmt.Errorf("failed to get toolsProvider from provider: %w", err)
 		}
 		activeTools = make(map[string]mcp.Tool, len(fetchedTools))
-		genaiTools = make([]*genai.Tool, 0, len(fetchedTools))
+		genaiTools := make([]*genai.Tool, 0, len(fetchedTools))
 		for _, customTool := range fetchedTools {
 			gTool, err := ConvertToGenaiTool(customTool)
 			if err != nil {
@@ -89,29 +104,43 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 			activeTools[customTool.Name] = customTool
 		}
 		if len(genaiTools) > 0 {
+
 			model.Tools = genaiTools
 		}
 	}
 
 	var finalResponse *genai.GenerateContentResponse
+	sendParts := initialParts
+
 	for turn := 0; turn < MaxToolTurns; turn++ {
 
-		log.Printf("Gemini Request Turn %d: History Len=%d\n", turn+1, len(currentHistory))
-		resp, err := model.GenerateContent(ctx, currentHistory...)
+		log.Printf("Gemini Request Turn %d: Sending %d parts\n", turn+1, len(sendParts))
+
+		resp, err := cs.SendMessage(ctx, sendParts...)
 		if err != nil {
-			return LLMResponse{}, fmt.Errorf("gemini API call failed (turn %d): %w", turn+1, err)
+
+			return LLMResponse{}, fmt.Errorf("gemini SendMessage failed (turn %d): %w", turn+1, err)
 		}
 
 		if len(resp.Candidates) == 0 {
 			if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != genai.BlockReasonUnspecified {
 				return LLMResponse{}, fmt.Errorf("request blocked by API (turn %d): %s", turn+1, resp.PromptFeedback.BlockReason.String())
 			}
+
 			return LLMResponse{}, fmt.Errorf("gemini API returned no candidates (turn %d)", turn+1)
 		}
 		candidate := resp.Candidates[0]
 
+		if candidate.Content != nil {
+			cs.History = append(cs.History, candidate.Content)
+		} else {
+
+			log.Printf("Warning: Candidate content is nil in API response (turn %d).", turn+1)
+		}
+
 		funcCalls := findFunctionCalls(candidate)
 		if len(funcCalls) == 0 {
+
 			if candidate.FinishReason != genai.FinishReasonStop && candidate.FinishReason != genai.FinishReasonMaxTokens {
 				log.Printf("Warning: Gemini response finished with reason: %s", candidate.FinishReason)
 				if candidate.FinishReason == genai.FinishReasonSafety {
@@ -124,14 +153,8 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 		}
 
 		log.Printf("Gemini Response Turn %d: Received %d function call(s).", turn+1, len(funcCalls))
-		if candidate.Content != nil && len(candidate.Content.Parts) > 0 {
-			// Add the LLM's turn which contains the function call request(s)
-			currentHistory = append(currentHistory, candidate.Content)
-		} else {
-			log.Printf("Warning: Candidate content is nil or empty despite function calls being found.")
-		}
 
-		functionResponses := make([]genai.Part, 0, len(funcCalls))
+		functionResponseParts := make([]genai.Part, 0, len(funcCalls))
 		for _, fc := range funcCalls {
 			log.Printf("Executing tool: %s", fc.Name)
 			toolToRun, exists := activeTools[fc.Name]
@@ -144,9 +167,11 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 				resultMap, err := callResultToMap(toolResult)
 				if err != nil {
 					log.Printf("Error marshaling error result for tool '%s': %v", fc.Name, err)
+
 					continue
 				}
-				functionResponses = append(functionResponses, genai.FunctionResponse{
+
+				functionResponseParts = append(functionResponseParts, genai.FunctionResponse{
 					Name:     fc.Name,
 					Response: resultMap,
 				})
@@ -158,7 +183,7 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 				log.Printf("Error marshaling arguments for tool '%s': %v", fc.Name, err)
 				toolResult := mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: fmt.Sprintf("Invalid arguments format for tool '%s': %v", fc.Name, err)}}}
 				resultMap, _ := callResultToMap(toolResult)
-				functionResponses = append(functionResponses, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
+				functionResponseParts = append(functionResponseParts, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
 				continue
 			}
 			callParams := mcp.CallToolParams{
@@ -181,29 +206,39 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 				resultMap = map[string]any{"error": fmt.Sprintf("Failed to format tool result: %v", err)}
 			}
 
-			functionResponses = append(functionResponses, genai.FunctionResponse{
+			functionResponseParts = append(functionResponseParts, genai.FunctionResponse{
 				Name:     fc.Name,
 				Response: resultMap,
 			})
 		}
 
-		if len(functionResponses) > 0 {
-			// Add the consolidated function results as a single turn in history
-			currentHistory = append(currentHistory, &genai.Content{
+		if len(functionResponseParts) > 0 {
+
+			cs.History = append(cs.History, &genai.Content{
 				Role:  RoleFunction,
-				Parts: functionResponses,
+				Parts: functionResponseParts,
 			})
+
+			sendParts = []genai.Part{}
+		} else {
+
+			log.Printf("Warning: No function response parts generated for turn %d.", turn+1)
+
+			finalResponse = resp
+			break
 		}
 
 		if turn == MaxToolTurns-1 {
 			log.Printf("Warning: Reached maximum tool turns (%d). Returning last response.", MaxToolTurns)
+
 			finalResponse = resp
 			break
 		}
 	}
 
 	if finalResponse == nil {
-		return LLMResponse{}, errors.New("no final response generated after tool loop")
+
+		return LLMResponse{}, errors.New("no final response could be determined after tool loop")
 	}
 
 	llmResponse := LLMResponse{
@@ -211,6 +246,7 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 	}
 
 	if len(finalResponse.Candidates) > 0 {
+
 		llmResponse.Text = extractTextFromParts(finalResponse.Candidates[0].Content.Parts)
 	}
 
@@ -218,7 +254,8 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 		llmResponse.TotalInputToken = int(finalResponse.UsageMetadata.PromptTokenCount)
 		llmResponse.TotalOutputToken = int(finalResponse.UsageMetadata.CandidatesTokenCount)
 	} else {
-		log.Println("Warning: UsageMetadata missing in the final Gemini response.")
+
+		log.Println("Warning: UsageMetadata may not be available on the final SendMessage response.")
 	}
 
 	return llmResponse, nil
@@ -227,25 +264,37 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
 	model := p.client.GenerativeModel(p.modelName)
 
-	currentHistory, err := mapLLMMessagesToGenaiContent(messages)
+	cs := model.StartChat()
+
+	initialHistory, err := mapLLMMessagesToGenaiContent(messages)
 	if err != nil {
 		return nil, fmt.Errorf("failed to map initial messages: %w", err)
 	}
+	if len(initialHistory) > 1 {
+		cs.History = initialHistory[:len(initialHistory)-1]
+	}
+	var initialParts []genai.Part
+	if len(initialHistory) > 0 {
+		initialParts = initialHistory[len(initialHistory)-1].Parts
+	}
+	if len(initialParts) == 0 {
+		return nil, errors.New("cannot start LLM streaming conversation with empty initial message parts")
+	}
+
 	genaiConfig, err := mapLLMConfigToGenaiConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to map request config: %w", err)
 	}
 	model.GenerationConfig = *genaiConfig
 
-	var genaiTools []*genai.Tool
 	var activeTools map[string]mcp.Tool
-	if config.toolsProvider != nil && len(config.AllowedTools) > 0 {
+	if len(config.AllowedTools) > 0 {
 		fetchedTools, err := p.toolsProvider.ListTools(ctx, config.AllowedTools)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get toolsProvider: %w", err)
 		}
 		activeTools = make(map[string]mcp.Tool, len(fetchedTools))
-		genaiTools = make([]*genai.Tool, 0, len(fetchedTools))
+		genaiTools := make([]*genai.Tool, 0, len(fetchedTools))
 		for _, customTool := range fetchedTools {
 			gTool, err := ConvertToGenaiTool(customTool)
 			if err != nil {
@@ -259,12 +308,12 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 		}
 	}
 
-	finalHistoryForStreaming := currentHistory
+	sendParts := initialParts
 	for turn := 0; turn < MaxToolTurns; turn++ {
-		log.Printf("Streaming Pre-flight Turn %d: History Len=%d\n", turn+1, len(finalHistoryForStreaming))
-		resp, err := model.GenerateContent(ctx, finalHistoryForStreaming...)
+		log.Printf("Streaming Pre-flight Turn %d: Sending %d parts\n", turn+1, len(sendParts))
+		resp, err := cs.SendMessage(ctx, sendParts...)
 		if err != nil {
-			return nil, fmt.Errorf("gemini pre-flight API call failed (turn %d): %w", turn+1, err)
+			return nil, fmt.Errorf("gemini pre-flight SendMessage failed (turn %d): %w", turn+1, err)
 		}
 		if len(resp.Candidates) == 0 {
 			if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != genai.BlockReasonUnspecified {
@@ -274,32 +323,35 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 		}
 		candidate := resp.Candidates[0]
 
+		if candidate.Content != nil {
+			cs.History = append(cs.History, candidate.Content)
+		} else {
+			log.Printf("Warning: Pre-flight candidate content is nil (turn %d).", turn+1)
+		}
+
 		funcCalls := findFunctionCalls(candidate)
 		if len(funcCalls) == 0 {
 			log.Printf("Streaming Pre-flight Turn %d: Tool resolution complete.", turn+1)
-			finalHistoryForStreaming = currentHistory
+
 			break
 		}
 
 		log.Printf("Streaming Pre-flight Turn %d: Received %d function call(s).", turn+1, len(funcCalls))
-		if candidate.Content != nil && len(candidate.Content.Parts) > 0 {
-			currentHistory = append(currentHistory, candidate.Content)
-		}
+		functionResponseParts := make([]genai.Part, 0, len(funcCalls))
 
-		functionResponses := make([]genai.Part, 0, len(funcCalls))
 		for _, fc := range funcCalls {
 			toolToRun, exists := activeTools[fc.Name]
 			if !exists || toolToRun.Handler == nil {
 				toolResult := mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: fmt.Sprintf("Tool '%s' not found.", fc.Name)}}}
 				resultMap, _ := callResultToMap(toolResult)
-				functionResponses = append(functionResponses, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
+				functionResponseParts = append(functionResponseParts, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
 				continue
 			}
 			argsJSON, err := json.Marshal(fc.Args)
 			if err != nil {
 				toolResult := mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: fmt.Sprintf("Invalid args for '%s': %v", fc.Name, err)}}}
 				resultMap, _ := callResultToMap(toolResult)
-				functionResponses = append(functionResponses, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
+				functionResponseParts = append(functionResponseParts, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
 				continue
 			}
 			callParams := mcp.CallToolParams{Name: fc.Name, Arguments: json.RawMessage(argsJSON)}
@@ -315,16 +367,21 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 				log.Printf("Error converting tool result to map for '%s' in streaming pre-flight: %v", fc.Name, err)
 				resultMap = map[string]any{"error": fmt.Sprintf("Failed to format tool result: %v", err)}
 			}
-			functionResponses = append(functionResponses, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
-		}
-		if len(functionResponses) > 0 {
-			currentHistory = append(currentHistory, &genai.Content{
-				Role:  RoleFunction,
-				Parts: functionResponses,
-			})
+			functionResponseParts = append(functionResponseParts, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
 		}
 
-		finalHistoryForStreaming = currentHistory
+		if len(functionResponseParts) > 0 {
+
+			cs.History = append(cs.History, &genai.Content{
+				Role:  RoleFunction,
+				Parts: functionResponseParts,
+			})
+			sendParts = []genai.Part{}
+		} else {
+			log.Printf("Warning: No function response parts generated during pre-flight turn %d.", turn+1)
+
+			break
+		}
 
 		if turn == MaxToolTurns-1 {
 			log.Printf("Warning: Reached maximum tool turns (%d) during streaming pre-flight.", MaxToolTurns)
@@ -332,9 +389,29 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 		}
 	}
 
+	var partsForStream []genai.Part
+	if len(cs.History) > 0 {
+
+		partsForStream = cs.History[len(cs.History)-1].Parts
+		log.Printf("Attempting to start stream based on the %d parts from the *last* history item (Role: %s). Context might be incomplete.", len(partsForStream), cs.History[len(cs.History)-1].Role)
+
+		lastUserParts := findLastUserParts(cs.History)
+		if len(lastUserParts) > 0 {
+			log.Printf("Attempting to start stream based on the parts from the *last user message* in history.")
+			partsForStream = lastUserParts
+		} else if len(partsForStream) == 0 {
+			return nil, fmt.Errorf("cannot determine appropriate parts to initiate streaming after tool loop")
+		}
+
+	} else {
+
+		return nil, fmt.Errorf("history is empty, cannot initiate stream")
+	}
+
 	streamChan := make(chan StreamingLLMResponse, 1)
-	log.Printf("Starting final streaming call with history Len=%d", len(finalHistoryForStreaming))
-	iter := model.GenerateContentStream(ctx, finalHistoryForStreaming...)
+	log.Printf("Starting final streaming call with %d parts derived from history.", len(partsForStream))
+
+	iter := model.GenerateContentStream(ctx, partsForStream...)
 
 	go func() {
 		defer close(streamChan)
@@ -383,6 +460,7 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 }
 
 func mapLLMMessagesToGenaiContent(messages []LLMMessage) ([]*genai.Content, error) {
+
 	genaiMessages := make([]*genai.Content, 0, len(messages))
 	for _, msg := range messages {
 		var role GeminiRole
@@ -400,8 +478,11 @@ func mapLLMMessagesToGenaiContent(messages []LLMMessage) ([]*genai.Content, erro
 
 		if len(genaiMessages) > 0 && genaiMessages[len(genaiMessages)-1].Role == role {
 			lastContent := genaiMessages[len(genaiMessages)-1]
-			lastContent.Parts = append(lastContent.Parts, genai.Text(msg.Text))
-			continue
+
+			if _, ok := lastContent.Parts[len(lastContent.Parts)-1].(genai.Text); ok {
+				lastContent.Parts = append(lastContent.Parts, genai.Text(msg.Text))
+				continue
+			}
 		}
 
 		genaiMessages = append(genaiMessages, &genai.Content{
@@ -412,11 +493,11 @@ func mapLLMMessagesToGenaiContent(messages []LLMMessage) ([]*genai.Content, erro
 	if len(genaiMessages) > 0 && genaiMessages[0].Role == GeminiRoleModel {
 		return nil, errors.New("conversation history cannot start with an assistant/model message")
 	}
-
 	return genaiMessages, nil
 }
 
 func mapLLMConfigToGenaiConfig(config LLMRequestConfig) (*genai.GenerationConfig, error) {
+
 	genaiConfig := &genai.GenerationConfig{}
 	if config.MaxToken > 0 {
 		if config.MaxToken > int64(^uint32(0)>>1) {
@@ -444,6 +525,7 @@ func mapLLMConfigToGenaiConfig(config LLMRequestConfig) (*genai.GenerationConfig
 }
 
 func extractTextFromParts(parts []genai.Part) string {
+
 	var textContent string
 	for _, part := range parts {
 		if text, ok := part.(genai.Text); ok {
@@ -454,6 +536,7 @@ func extractTextFromParts(parts []genai.Part) string {
 }
 
 func findFunctionCalls(candidate *genai.Candidate) []*genai.FunctionCall {
+
 	calls := make([]*genai.FunctionCall, 0)
 	if candidate == nil || candidate.Content == nil {
 		return calls
@@ -466,20 +549,109 @@ func findFunctionCalls(candidate *genai.Candidate) []*genai.FunctionCall {
 	return calls
 }
 
-func ConvertToGenaiTool(customTool mcp.Tool) (*genai.Tool, error) {
-	var parametersSchema *genai.Schema
-	if len(customTool.InputSchema) > 0 && string(customTool.InputSchema) != "null" {
-		parametersSchema = &genai.Schema{}
-		err := json.Unmarshal(customTool.InputSchema, parametersSchema)
-		if err != nil {
-			return nil, fmt.Errorf("unmarshal schema for tool '%s': %w", customTool.Name, err)
+func findLastUserParts(history []*genai.Content) []genai.Part {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == GeminiRoleUser {
+			return history[i].Parts
 		}
 	}
+	return nil
+}
+
+type IntermediateJSONSchema struct {
+	Type        string                             `json:"type"`
+	Description string                             `json:"description,omitempty"`
+	Properties  map[string]*IntermediateJSONSchema `json:"properties,omitempty"`
+	Required    []string                           `json:"required,omitempty"`
+	Items       *IntermediateJSONSchema            `json:"items,omitempty"`
+	Enum        []string                           `json:"enum,omitempty"`
+}
+
+func convertJSONSchemaToGenaiSchema(js *IntermediateJSONSchema) (*genai.Schema, error) {
+	if js == nil {
+		return nil, nil
+	}
+
+	gs := &genai.Schema{
+		Description: js.Description,
+		Required:    js.Required,
+		Enum:        js.Enum,
+	}
+
+	switch js.Type {
+	case "string":
+		gs.Type = genai.TypeString
+	case "number":
+		gs.Type = genai.TypeNumber
+	case "integer":
+		gs.Type = genai.TypeInteger
+	case "boolean":
+		gs.Type = genai.TypeBoolean
+	case "array":
+		gs.Type = genai.TypeArray
+
+		var err error
+		gs.Items, err = convertJSONSchemaToGenaiSchema(js.Items)
+		if err != nil {
+			return nil, fmt.Errorf("failed converting array items: %w", err)
+		}
+
+		if gs.Items == nil && js.Items != nil {
+
+			return nil, fmt.Errorf("array type specified but item schema conversion failed or resulted in nil")
+		} else if js.Items == nil {
+
+		}
+
+	case "object":
+		gs.Type = genai.TypeObject
+
+		if len(js.Properties) > 0 {
+			gs.Properties = make(map[string]*genai.Schema)
+			for k, v := range js.Properties {
+				var err error
+				gs.Properties[k], err = convertJSONSchemaToGenaiSchema(v)
+				if err != nil {
+					return nil, fmt.Errorf("failed converting object property '%s': %w", k, err)
+				}
+			}
+		}
+	case "":
+
+		gs.Type = genai.TypeUnspecified
+	default:
+
+		return nil, fmt.Errorf("unsupported JSON schema type string: '%s'", js.Type)
+	}
+
+	return gs, nil
+}
+
+func ConvertToGenaiTool(customTool mcp.Tool) (*genai.Tool, error) {
+	var parametersSchema *genai.Schema
+
+	if len(customTool.InputSchema) > 0 && string(customTool.InputSchema) != "null" {
+
+		var intermediateSchema IntermediateJSONSchema
+		err := json.Unmarshal(customTool.InputSchema, &intermediateSchema)
+		if err != nil {
+
+			return nil, fmt.Errorf("unmarshal raw JSON schema for tool '%s': %w", customTool.Name, err)
+		}
+
+		parametersSchema, err = convertJSONSchemaToGenaiSchema(&intermediateSchema)
+		if err != nil {
+
+			return nil, fmt.Errorf("convert JSON schema to genai schema for tool '%s': %w", customTool.Name, err)
+		}
+	}
+
 	funcDecl := &genai.FunctionDeclaration{
 		Name:        customTool.Name,
 		Description: customTool.Description,
 		Parameters:  parametersSchema,
 	}
+
 	return &genai.Tool{FunctionDeclarations: []*genai.FunctionDeclaration{funcDecl}}, nil
 }
 
