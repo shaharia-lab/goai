@@ -259,6 +259,74 @@ func TestGeminiProvider_GetResponse_SingleToolCall(t *testing.T) {
 	mockChatSession.AssertExpectations(t)
 }
 
+func TestGeminiProvider_GetResponse_MultipleToolCalls(t *testing.T) {
+	mockService, mockLogger, mockToolsProvider := setupTest()
+	mockChatSession := new(MockChatSessionService)
+
+	provider, err := NewGeminiProvider(mockService, mockLogger)
+	assert.NoError(t, err)
+
+	messages := []LLMMessage{{Role: UserRole, Text: "What is the capital of Germany and what's the weather like there?"}}
+	config := LLMRequestConfig{
+		AllowedTools:  []string{"get_capital", "get_weather"},
+		toolsProvider: mockToolsProvider,
+	}
+
+	funcCallArgs1 := map[string]any{"country": "Germany"}
+	funcCallResponse1 := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content:      &genai.Content{Parts: []genai.Part{genai.FunctionCall{Name: "get_capital", Args: funcCallArgs1}}, Role: "model"},
+			FinishReason: genai.FinishReasonStop,
+		}},
+		UsageMetadata: &genai.UsageMetadata{PromptTokenCount: 30, CandidatesTokenCount: 15},
+	}
+
+	funcCallArgs2 := map[string]any{"location": "Berlin"}
+	funcCallResponse2 := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content:      &genai.Content{Parts: []genai.Part{genai.FunctionCall{Name: "get_weather", Args: funcCallArgs2}}, Role: "model"},
+			FinishReason: genai.FinishReasonStop,
+		}},
+		UsageMetadata: &genai.UsageMetadata{PromptTokenCount: 50, CandidatesTokenCount: 15},
+	}
+
+	finalText := "The capital of Germany is Berlin, where the weather is currently Sunny, 15C."
+	finalTextResponse := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content:      &genai.Content{Parts: []genai.Part{genai.Text(finalText)}, Role: "model"},
+			FinishReason: genai.FinishReasonStop,
+		}},
+		UsageMetadata: &genai.UsageMetadata{PromptTokenCount: 80, CandidatesTokenCount: 25},
+	}
+
+	mockService.On("ConfigureModel", mock.AnythingOfType("*genai.GenerationConfig"), mock.AnythingOfType("[]*genai.Tool")).Return(nil).Once() // Using AnythingOfType for tools
+	mockService.On("StartChat", []*genai.Content{}).Return(mockChatSession).Once()
+
+	mockChatSession.On("SendMessage", mock.Anything, mock.AnythingOfType("[]genai.Part")).Return(funcCallResponse1, nil).Once()
+	mockChatSession.On("AppendHistory", funcCallResponse1.Candidates[0].Content).Return().Once()
+	mockChatSession.On("AppendHistory", mock.MatchedBy(func(content *genai.Content) bool { // Check get_capital result
+		return content.Role == RoleFunction && len(content.Parts) == 1 && content.Parts[0].(genai.FunctionResponse).Name == "get_capital"
+	})).Return().Once()
+
+	mockChatSession.On("SendMessage", mock.Anything, []genai.Part{genai.Text("")}).Return(funcCallResponse2, nil).Once()
+	mockChatSession.On("AppendHistory", funcCallResponse2.Candidates[0].Content).Return().Once()
+	mockChatSession.On("AppendHistory", mock.MatchedBy(func(content *genai.Content) bool { // Check get_weather result
+		return content.Role == RoleFunction && len(content.Parts) == 1 && content.Parts[0].(genai.FunctionResponse).Name == "get_weather"
+	})).Return().Once()
+
+	mockChatSession.On("SendMessage", mock.Anything, []genai.Part{genai.Text("")}).Return(finalTextResponse, nil).Once()
+	mockChatSession.On("AppendHistory", finalTextResponse.Candidates[0].Content).Return().Once()
+
+	response, err := provider.GetResponse(context.Background(), messages, config)
+
+	assert.NoError(t, err)
+	assert.Equal(t, finalText, response.Text)
+	assert.Equal(t, 80, response.TotalInputToken)
+	assert.Equal(t, 25, response.TotalOutputToken)
+	mockService.AssertExpectations(t)
+	mockChatSession.AssertExpectations(t)
+}
+
 func TestGeminiProvider_GetResponse_ApiError(t *testing.T) {
 	mockService, mockLogger, _ := setupTest()
 	mockChatSession := new(MockChatSessionService)
