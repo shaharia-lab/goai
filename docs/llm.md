@@ -16,7 +16,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	
+
 	"github.com/openai/openai-go"
 	"github.com/shaharia-lab/goai"
 )
