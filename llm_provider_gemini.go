@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/generative-ai-go/genai"
 	"github.com/shaharia-lab/goai/mcp"
-	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
@@ -297,9 +296,13 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 
 	var activeTools map[string]mcp.Tool
 	if len(config.AllowedTools) > 0 {
+		// Check provider existence first
+		if config.toolsProvider == nil {
+			return nil, errors.New("request config allows tools but provides no toolsProvider")
+		}
 		fetchedTools, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get toolsProvider: %w", err)
+			return nil, fmt.Errorf("failed to get tools from config.toolsProvider: %w", err)
 		}
 		activeTools = make(map[string]mcp.Tool, len(fetchedTools))
 		genaiTools := make([]*genai.Tool, 0, len(fetchedTools))
@@ -316,18 +319,26 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 		}
 	}
 
+	// --- FIX: Declare variable to capture the final synchronous response ---
+	var finalSyncResponse *genai.GenerateContentResponse
+	var loopError error // To capture errors within the loop
+
 	sendParts := initialParts
 	for turn := 0; turn < MaxToolTurns; turn++ {
 		log.Printf("Streaming Pre-flight Turn %d: Sending %d parts\n", turn+1, len(sendParts))
 		resp, err := cs.SendMessage(ctx, sendParts...)
 		if err != nil {
-			return nil, fmt.Errorf("gemini pre-flight SendMessage failed (turn %d): %w", turn+1, err)
+			// Capture the error and break the loop, handle it after the loop
+			loopError = fmt.Errorf("gemini pre-flight SendMessage failed (turn %d): %w", turn+1, err)
+			break
 		}
 		if len(resp.Candidates) == 0 {
 			if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != genai.BlockReasonUnspecified {
-				return nil, fmt.Errorf("request blocked by API during pre-flight (turn %d): %s", turn+1, resp.PromptFeedback.BlockReason.String())
+				loopError = fmt.Errorf("request blocked by API during pre-flight (turn %d): %s", turn+1, resp.PromptFeedback.BlockReason.String())
+			} else {
+				loopError = fmt.Errorf("gemini pre-flight API returned no candidates (turn %d)", turn+1)
 			}
-			return nil, fmt.Errorf("gemini pre-flight API returned no candidates (turn %d)", turn+1)
+			break
 		}
 		candidate := resp.Candidates[0]
 
@@ -340,40 +351,51 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 		funcCalls := findFunctionCalls(candidate)
 		if len(funcCalls) == 0 {
 			log.Printf("Streaming Pre-flight Turn %d: Tool resolution complete.", turn+1)
-
-			break
+			// --- FIX: Assign the successful final response ---
+			finalSyncResponse = resp
+			break // Exit loop successfully
 		}
 
 		log.Printf("Streaming Pre-flight Turn %d: Received %d function call(s).", turn+1, len(funcCalls))
 		functionResponseParts := make([]genai.Part, 0, len(funcCalls))
+		allToolExecutionsSuccessful := true // Reset flag for this turn's calls
 
 		for _, fc := range funcCalls {
 			toolToRun, exists := activeTools[fc.Name]
 			if !exists || toolToRun.Handler == nil {
 				toolResult := mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: fmt.Sprintf("Tool '%s' not found.", fc.Name)}}}
-				resultMap, _ := callResultToMap(toolResult)
+				resultMap, mapErr := callResultToMap(toolResult)
+				if mapErr != nil { // Check error from callResultToMap
+					log.Printf("Error marshaling error result for tool '%s': %v", fc.Name, mapErr)
+					allToolExecutionsSuccessful = false
+					continue
+				}
 				functionResponseParts = append(functionResponseParts, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
+				allToolExecutionsSuccessful = false // Mark as unsuccessful if tool wasn't found
 				continue
 			}
-			argsJSON, err := json.Marshal(fc.Args)
-			if err != nil {
-				toolResult := mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: fmt.Sprintf("Invalid args for '%s': %v", fc.Name, err)}}}
+			argsJSON, marshalErr := json.Marshal(fc.Args)
+			if marshalErr != nil {
+				toolResult := mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: fmt.Sprintf("Invalid args for '%s': %v", fc.Name, marshalErr)}}}
 				resultMap, _ := callResultToMap(toolResult)
 				functionResponseParts = append(functionResponseParts, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
+				allToolExecutionsSuccessful = false // Mark as unsuccessful on marshal error
 				continue
 			}
 			callParams := mcp.CallToolParams{Name: fc.Name, Arguments: json.RawMessage(argsJSON)}
-			toolResult, err := toolToRun.Handler(ctx, callParams)
-			if err != nil {
+			toolResult, handlerErr := toolToRun.Handler(ctx, callParams)
+			if handlerErr != nil {
 				if !toolResult.IsError {
 					toolResult.IsError = true
-					toolResult.Content = append(toolResult.Content, mcp.ToolResultContent{Type: "text", Text: fmt.Sprintf("Handler error: %v", err)})
+					toolResult.Content = append(toolResult.Content, mcp.ToolResultContent{Type: "text", Text: fmt.Sprintf("Handler error: %v", handlerErr)})
 				}
+				allToolExecutionsSuccessful = false // Mark as unsuccessful on handler error
 			}
-			resultMap, err := callResultToMap(toolResult)
-			if err != nil {
-				log.Printf("Error converting tool result to map for '%s' in streaming pre-flight: %v", fc.Name, err)
-				resultMap = map[string]any{"error": fmt.Sprintf("Failed to format tool result: %v", err)}
+			resultMap, mapErr := callResultToMap(toolResult)
+			if mapErr != nil {
+				log.Printf("Error converting tool result to map for '%s' in streaming pre-flight: %v", fc.Name, mapErr)
+				resultMap = map[string]any{"error": fmt.Sprintf("Failed to format tool result: %v", mapErr)}
+				allToolExecutionsSuccessful = false // Mark as unsuccessful on result map error
 			}
 			functionResponseParts = append(functionResponseParts, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
 		}
@@ -383,82 +405,80 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 				Role:  RoleFunction,
 				Parts: functionResponseParts,
 			})
-			sendParts = []genai.Part{genai.Text("")}
+			if !allToolExecutionsSuccessful { // Log warning if needed
+				log.Printf("Warning: One or more tool executions failed or had errors during pre-flight turn %d.", turn+1)
+			}
+			sendParts = []genai.Part{genai.Text("")} // Send dummy part for next turn
 		} else {
 			log.Printf("Error: No function response parts could be generated during pre-flight turn %d. Aborting stream setup.", turn+1)
+			// If generating responses failed entirely, capture error and break
+			loopError = fmt.Errorf("failed to generate any function responses during pre-flight turn %d", turn+1)
 			break
 		}
 
 		if turn == MaxToolTurns-1 {
 			log.Printf("Warning: Reached maximum tool turns (%d) during streaming pre-flight.", MaxToolTurns)
-			break
+			// Capture error if max turns hit without resolution
+			loopError = fmt.Errorf("reached maximum tool turns (%d) during streaming pre-flight", MaxToolTurns)
+			break // Exit loop
 		}
+	} // End pre-flight loop
+
+	// --- After Pre-flight Loop ---
+
+	// Check if the pre-flight loop exited due to an error
+	if loopError != nil {
+		return nil, loopError // Return the captured error
 	}
 
-	var partsForStream []genai.Part
-	if len(cs.History) > 0 {
-
-		partsForStream = cs.History[len(cs.History)-1].Parts
-		log.Printf("Attempting to start stream based on the %d parts from the *last* history item (Role: %s). Context might be incomplete.", len(partsForStream), cs.History[len(cs.History)-1].Role)
-
-		lastUserParts := findLastUserParts(cs.History)
-		if len(lastUserParts) > 0 {
-			log.Printf("Attempting to start stream based on the parts from the *last user message* in history.")
-			partsForStream = lastUserParts
-		} else if len(partsForStream) == 0 {
-			return nil, fmt.Errorf("cannot determine appropriate parts to initiate streaming after tool loop")
-		}
-
-	} else {
-
-		return nil, fmt.Errorf("history is empty, cannot initiate stream")
+	// Check if we successfully got a final response during pre-flight
+	if finalSyncResponse == nil {
+		// This implies the loop finished (e.g., max turns or break without error)
+		// but we never reached a state with no function calls.
+		return nil, errors.New("pre-flight tool loop finished, but no final response was captured")
 	}
 
+	// We have the final response from the sync part (finalSyncResponse). Now simulate streaming it.
+	finalContent := finalSyncResponse.Candidates[0].Content // Use content from the captured response
+	finalText := extractTextFromParts(finalContent.Parts)
+
+	// Sanity check if the captured final response *still* had function calls (shouldn't happen if logic above is correct)
+	hasFunctionCall := false
+	if finalContent != nil {
+		for _, part := range finalContent.Parts {
+			if _, ok := part.(genai.FunctionCall); ok {
+				hasFunctionCall = true
+				break
+			}
+			if _, ok := part.(*genai.FunctionCall); ok {
+				hasFunctionCall = true
+				break
+			}
+		}
+	}
+	if hasFunctionCall {
+		return nil, fmt.Errorf("internal error: pre-flight loop captured a final response that still contained function calls")
+	}
+
+	// --- Simulate Streaming ---
 	streamChan := make(chan StreamingLLMResponse, 1)
-	log.Printf("Starting final streaming call with %d parts derived from history.", len(partsForStream))
-
-	iter := model.GenerateContentStream(ctx, partsForStream...)
 
 	go func() {
 		defer close(streamChan)
-		var cumulativeOutputTokens int = 0
+		var outputTokens int = 0
+		// Use the captured final response object for token count
+		if finalSyncResponse != nil && finalSyncResponse.UsageMetadata != nil { // Check nil again just in case
+			outputTokens = int(finalSyncResponse.UsageMetadata.CandidatesTokenCount)
+		} else { // Log if metadata is missing, but don't use the nil check from before
+			log.Printf("Warning: UsageMetadata missing on final synchronous response object.")
+		}
 
-		for {
-			resp, err := iter.Next()
-			if errors.Is(err, iterator.Done) {
-				return
-			}
-			if err != nil {
-				log.Printf("Error during Gemini stream: %v", err)
-				streamChan <- StreamingLLMResponse{Error: fmt.Errorf("gemini stream error: %w", err), Done: true}
-				return
-			}
-
-			if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != genai.BlockReasonUnspecified {
-				streamChan <- StreamingLLMResponse{Error: fmt.Errorf("prompt blocked during stream: %s", resp.PromptFeedback.BlockReason.String()), Done: true}
-				return
-			}
-			if len(resp.Candidates) > 0 && resp.Candidates[0].FinishReason == genai.FinishReasonSafety {
-				streamChan <- StreamingLLMResponse{Error: fmt.Errorf("response stopped during stream due to safety: %s", resp.Candidates[0].FinishReason.String()), Done: true}
-				return
-			}
-
-			chunkText := ""
-			currentOutputTokens := 0
-			if len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
-				chunkText = extractTextFromParts(resp.Candidates[0].Content.Parts)
-			}
-			if resp.UsageMetadata != nil {
-				currentOutputTokens = int(resp.UsageMetadata.CandidatesTokenCount)
-				cumulativeOutputTokens = currentOutputTokens
-			}
-
-			streamChan <- StreamingLLMResponse{
-				Text:       chunkText,
-				Done:       false,
-				Error:      nil,
-				TokenCount: cumulativeOutputTokens,
-			}
+		log.Printf("Simulating stream: Sending final pre-flight response text.")
+		streamChan <- StreamingLLMResponse{
+			Text:       finalText,
+			Done:       true,
+			Error:      nil,
+			TokenCount: outputTokens,
 		}
 	}()
 
