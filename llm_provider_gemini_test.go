@@ -303,3 +303,70 @@ func TestGeminiProvider_GetStreamingResponse_SimpleTextSimulated(t *testing.T) {
 	mockService.AssertExpectations(t)
 	mockChatSession.AssertExpectations(t)
 }
+
+func TestGeminiProvider_GetStreamingResponse_SingleToolCallSimulated(t *testing.T) {
+	// Arrange
+	mockService, mockLogger, mockToolsProvider := setupTest()
+	mockChatSession := new(MockChatSessionService)
+
+	provider, err := NewGeminiProvider(mockService, mockLogger)
+	assert.NoError(t, err)
+
+	messages := []LLMMessage{{Role: UserRole, Text: "Weather London?"}}
+	config := LLMRequestConfig{
+		AllowedTools:  []string{"get_weather"},
+		toolsProvider: mockToolsProvider,
+	}
+
+	// Mock Responses for pre-flight loop
+	funcCallArgs := map[string]any{"location": "London"}
+	funcCallResponse := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content:      &genai.Content{Parts: []genai.Part{genai.FunctionCall{Name: "get_weather", Args: funcCallArgs}}, Role: "model"},
+			FinishReason: genai.FinishReasonStop,
+		}},
+		UsageMetadata: &genai.UsageMetadata{PromptTokenCount: 16, CandidatesTokenCount: 11},
+	}
+
+	finalTextContent := "It's likely cloudy in London."
+	finalTextResponse := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content:      &genai.Content{Parts: []genai.Part{genai.Text(finalTextContent)}, Role: "model"},
+			FinishReason: genai.FinishReasonStop,
+		}},
+		UsageMetadata: &genai.UsageMetadata{PromptTokenCount: 60, CandidatesTokenCount: 8},
+	}
+
+	mockService.On("ConfigureModel", mock.AnythingOfType("*genai.GenerationConfig"), mock.AnythingOfType("[]*genai.Tool")).Return(nil).Once()
+	mockService.On("StartChat", []*genai.Content{}).Return(mockChatSession).Once()
+
+	mockChatSession.On("SendMessage", mock.Anything, []genai.Part{genai.Text("Weather London?")}).Return(funcCallResponse, nil).Once()
+	mockChatSession.On("AppendHistory", funcCallResponse.Candidates[0].Content).Return().Once()
+	mockChatSession.On("AppendHistory", mock.MatchedBy(func(content *genai.Content) bool {
+		return content.Role == RoleFunction && len(content.Parts) == 1 && content.Parts[0].(genai.FunctionResponse).Name == "get_weather"
+	})).Return().Once()
+
+	mockChatSession.On("SendMessage", mock.Anything, []genai.Part{genai.Text("")}).Return(finalTextResponse, nil).Once()
+	mockChatSession.On("AppendHistory", finalTextResponse.Candidates[0].Content).Return().Once() // Expect final text append
+
+	streamChan, err := provider.GetStreamingResponse(context.Background(), messages, config)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, streamChan)
+
+	receivedChunks := []StreamingLLMResponse{}
+	for chunk := range streamChan {
+		receivedChunks = append(receivedChunks, chunk)
+	}
+
+	assert.Equal(t, 1, len(receivedChunks), "Expected exactly one chunk for simulated stream after tool call")
+	if len(receivedChunks) == 1 {
+		assert.NoError(t, receivedChunks[0].Error)
+		assert.True(t, receivedChunks[0].Done)
+		assert.Equal(t, finalTextContent, receivedChunks[0].Text)
+		assert.Equal(t, 8, receivedChunks[0].TokenCount)
+	}
+
+	mockService.AssertExpectations(t)
+	mockChatSession.AssertExpectations(t)
+}
