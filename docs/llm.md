@@ -192,6 +192,31 @@ config := goai.NewRequestConfig(
 
 ## Available Providers
 
+### Google Gemini
+
+**Supported features:**
+
+- Streaming responses
+- Non-streaming (synchronous) responses
+- Tool calling
+
+```go
+geminiAPIKey := os.Getenv("GEMINI_API_KEY")
+geminiModel := "gemini-2.0-flash"
+
+googleGeminiService, err := goai.NewGoogleGeminiService(geminiAPIKey, geminiModel)
+if err != nil {
+    log.Fatalf("Error creating Real Gemini Service: %v", err)
+}
+
+llmProvider, err := goai.NewGeminiProvider(googleGeminiService, observability.NewDefaultLogger())
+if err != nil {
+    panic(fmt.Sprintf("Error creating Gemini provider: %v", err))
+}
+```
+
+For more details about Google Gemini API can be found [here](https://ai.google.dev/gemini-api/docs)
+
 ### OpenAI
 
 ```go
@@ -201,9 +226,15 @@ llmProvider := goai.NewOpenAILLMProvider(goai.OpenAIProviderConfig{
 })
 ```
 
-For more details about OpenAI API can be found [here](https://platform.openai.com/docs/api-reference/chat)
+For more details about Google Gemini API can be found [here](https://platform.openai.com/docs/api-reference/chat)
 
 ### Anthropic
+
+**Supported features:**
+
+- Streaming responses
+- Non-streaming (synchronous) responses
+- Tool calling
 
 ```go
 llmProvider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{

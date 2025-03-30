@@ -41,9 +41,9 @@ type GoogleGeminiStreamIteratorService struct {
 	iter *genai.GenerateContentResponseIterator
 }
 
-// NewRealGeminiService creates a new instance of GoogleGeminiService
-func NewRealGeminiService(ctx context.Context, apiKey, modelName string) (GeminiModelService, error) {
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+// NewGoogleGeminiService creates a new instance of GoogleGeminiService
+func NewGoogleGeminiService(apiKey, modelName string) (GeminiModelService, error) {
+	client, err := genai.NewClient(context.Background(), option.WithAPIKey(apiKey))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create real genai client: %w", err)
 	}
