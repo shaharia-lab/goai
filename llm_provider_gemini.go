@@ -84,29 +84,21 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 	var initialParts []genai.Part
 
 	if len(initialHistory) > 0 {
-		// Calculate parts from the last message
 		initialParts = initialHistory[len(initialHistory)-1].Parts
-		// Calculate history *before* the last message
 		if len(initialHistory) > 1 {
 			historyForSession = initialHistory[:len(initialHistory)-1]
 		} else {
-			// If only one message, history before it is empty
 			historyForSession = []*genai.Content{}
 		}
 	} else {
-		// No messages provided at all
 		return LLMResponse{}, errors.New("cannot start LLM conversation with empty initial message list")
 	}
 
-	// Check if the parts for the message to be sent are valid
 	if len(initialParts) == 0 {
-		// This could happen if the last message had empty text
 		return LLMResponse{}, errors.New("cannot send message with empty parts")
 	}
 
-	// --- Start Chat Session with the *correct* initial history ---
-	sessionService := p.service.StartChat(historyForSession) // SINGLE CALL with history *before* current message
-
+	sessionService := p.service.StartChat(historyForSession)
 	var finalResponse *genai.GenerateContentResponse
 	sendParts := initialParts
 	var loopError error
