@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/shaharia-lab/goai/observability"
 	"time"
 
 	"github.com/google/generative-ai-go/genai"
 	"github.com/shaharia-lab/goai/mcp"
+	"github.com/shaharia-lab/goai/observability"
 )
 
 const (

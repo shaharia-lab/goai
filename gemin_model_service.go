@@ -3,6 +3,7 @@ package goai
 import (
 	"context"
 	"fmt"
+
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
 )
