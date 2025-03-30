@@ -3,6 +3,7 @@ package goai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/shaharia-lab/goai/observability"
 	"testing"
@@ -104,7 +105,7 @@ func setupTest() (*MockGeminiModelService, observability.Logger, *ToolsProvider)
 	tools := []mcp.Tool{
 		{
 			Name:        "get_weather",
-			Description: "Get weather for location",
+			Description: "Fetches the current weather conditions for a specific location.",
 			InputSchema: json.RawMessage(`{
                 "type": "object",
                 "properties": {
@@ -163,6 +164,142 @@ func TestGeminiProvider_GetResponse_SimpleText(t *testing.T) {
 	assert.Equal(t, 10, response.TotalInputToken)
 	assert.Equal(t, 3, response.TotalOutputToken)
 	assert.True(t, response.CompletionTime > 0)
+	mockService.AssertExpectations(t)
+	mockChatSession.AssertExpectations(t)
+}
+
+func TestGeminiProvider_GetResponse_SingleToolCall(t *testing.T) {
+	mockService, mockLogger, mockToolsProvider := setupTest()
+	mockChatSession := new(MockChatSessionService)
+
+	provider, err := NewGeminiProvider(mockService, mockLogger)
+	assert.NoError(t, err)
+
+	messages := []LLMMessage{{Role: UserRole, Text: "Weather Berlin?"}}
+	config := LLMRequestConfig{
+		AllowedTools:  []string{"get_weather"},
+		toolsProvider: mockToolsProvider,
+	}
+
+	funcCallArgs := map[string]any{"location": "Berlin"}
+	funcCallResponse := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content: &genai.Content{Parts: []genai.Part{
+				genai.FunctionCall{Name: "get_weather", Args: funcCallArgs},
+			}, Role: "model"},
+			FinishReason: genai.FinishReasonStop,
+		}},
+		UsageMetadata: &genai.UsageMetadata{PromptTokenCount: 15, CandidatesTokenCount: 10},
+	}
+
+	finalTextResponse := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content:      &genai.Content{Parts: []genai.Part{genai.Text("Okay, the weather in Berlin is Sunny and 24C.")}, Role: "model"},
+			FinishReason: genai.FinishReasonStop,
+		}},
+		UsageMetadata: &genai.UsageMetadata{PromptTokenCount: 50, CandidatesTokenCount: 12},
+	}
+
+	finalTextResponse = &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content:      &genai.Content{Parts: []genai.Part{genai.Text("Okay, the weather in Berlin is Sunny and 24C.")}, Role: "model"},
+			FinishReason: genai.FinishReasonStop,
+		}},
+		UsageMetadata: &genai.UsageMetadata{PromptTokenCount: 50, CandidatesTokenCount: 12},
+	}
+
+	mockService.On("ConfigureModel",
+		mock.AnythingOfType("*genai.GenerationConfig"),
+		mock.AnythingOfType("[]*genai.Tool"),
+	).Return(nil).Once()
+	mockService.On("StartChat", []*genai.Content{}).Return(mockChatSession).Once()
+	mockChatSession.On("SendMessage", mock.Anything, []genai.Part{genai.Text("Weather Berlin?")}).Return(funcCallResponse, nil).Once()
+
+	mockChatSession.On("AppendHistory", funcCallResponse.Candidates[0].Content).Return().Once()
+	mockChatSession.On("AppendHistory", mock.MatchedBy(func(content *genai.Content) bool {
+		if content.Role != RoleFunction || len(content.Parts) != 1 {
+			return false
+		}
+		fr, ok := content.Parts[0].(genai.FunctionResponse)
+		return ok && fr.Name == "get_weather"
+	})).Return().Once()
+	mockChatSession.On("SendMessage", mock.Anything, []genai.Part{genai.Text("")}).Return(finalTextResponse, nil).Once()
+	mockChatSession.On("AppendHistory", finalTextResponse.Candidates[0].Content).Return().Once()
+
+	response, err := provider.GetResponse(context.Background(), messages, config)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "Okay, the weather in Berlin is Sunny and 24C.", response.Text)
+	assert.Equal(t, 50, response.TotalInputToken)
+	assert.Equal(t, 12, response.TotalOutputToken)
+	mockService.AssertExpectations(t)
+	mockChatSession.AssertExpectations(t)
+}
+
+func TestGeminiProvider_GetResponse_ApiError(t *testing.T) {
+	mockService, mockLogger, _ := setupTest()
+	mockChatSession := new(MockChatSessionService)
+	apiError := errors.New("mock API error 500")
+
+	provider, err := NewGeminiProvider(mockService, mockLogger)
+	assert.NoError(t, err)
+
+	messages := []LLMMessage{{Role: UserRole, Text: "Hello"}}
+	config := LLMRequestConfig{}
+
+	mockService.On("ConfigureModel", mock.Anything, mock.Anything).Return(nil).Once()
+	mockService.On("StartChat", mock.Anything).Return(mockChatSession).Once()
+	mockChatSession.On("SendMessage", mock.Anything, mock.Anything).Return((*genai.GenerateContentResponse)(nil), apiError).Once()
+
+	_, err = provider.GetResponse(context.Background(), messages, config)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "mock API error 500")
+	mockService.AssertExpectations(t)
+	mockChatSession.AssertExpectations(t)
+}
+
+func TestGeminiProvider_GetStreamingResponse_SimpleTextSimulated(t *testing.T) {
+	mockService, mockLogger, _ := setupTest()
+	mockChatSession := new(MockChatSessionService)
+
+	provider, err := NewGeminiProvider(mockService, mockLogger)
+	assert.NoError(t, err)
+
+	messages := []LLMMessage{{Role: UserRole, Text: "Stream test"}}
+	config := LLMRequestConfig{}
+
+	mockSyncResponse := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content:      &genai.Content{Parts: []genai.Part{genai.Text("Stream response text")}, Role: "model"},
+			FinishReason: genai.FinishReasonStop,
+		}},
+		UsageMetadata: &genai.UsageMetadata{PromptTokenCount: 8, CandidatesTokenCount: 4},
+	}
+
+	mockService.On("ConfigureModel", mock.Anything, mock.Anything).Return(nil).Once()
+	mockService.On("StartChat", mock.Anything).Return(mockChatSession).Once()
+	mockChatSession.On("SendMessage", mock.Anything, []genai.Part{genai.Text("Stream test")}).Return(mockSyncResponse, nil).Once()
+	mockChatSession.On("AppendHistory", mockSyncResponse.Candidates[0].Content).Return().Once()
+
+	streamChan, err := provider.GetStreamingResponse(context.Background(), messages, config)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, streamChan)
+
+	receivedChunks := []StreamingLLMResponse{}
+	for chunk := range streamChan {
+		receivedChunks = append(receivedChunks, chunk)
+	}
+
+	assert.Equal(t, 1, len(receivedChunks), "Expected exactly one chunk for simulated stream")
+	if len(receivedChunks) == 1 {
+		assert.NoError(t, receivedChunks[0].Error)
+		assert.True(t, receivedChunks[0].Done)
+		assert.Equal(t, "Stream response text", receivedChunks[0].Text)
+		assert.Equal(t, 4, receivedChunks[0].TokenCount)
+	}
+
 	mockService.AssertExpectations(t)
 	mockChatSession.AssertExpectations(t)
 }
