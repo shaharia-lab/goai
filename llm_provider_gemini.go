@@ -80,26 +80,32 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 		return LLMResponse{}, fmt.Errorf("failed to map initial messages: %w", err)
 	}
 
-	sessionService := p.service.StartChat(initialHistory)
-
+	var historyForSession []*genai.Content
 	var initialParts []genai.Part
+
 	if len(initialHistory) > 0 {
+		// Calculate parts from the last message
 		initialParts = initialHistory[len(initialHistory)-1].Parts
-		var historyForSession []*genai.Content
+		// Calculate history *before* the last message
 		if len(initialHistory) > 1 {
 			historyForSession = initialHistory[:len(initialHistory)-1]
-			initialParts = initialHistory[len(initialHistory)-1].Parts
-		} else if len(initialHistory) == 1 {
-			historyForSession = []*genai.Content{}
-			initialParts = initialHistory[0].Parts
 		} else {
-			return LLMResponse{}, errors.New("cannot start LLM conversation with empty initial message")
+			// If only one message, history before it is empty
+			historyForSession = []*genai.Content{}
 		}
-		sessionService = p.service.StartChat(historyForSession)
+	} else {
+		// No messages provided at all
+		return LLMResponse{}, errors.New("cannot start LLM conversation with empty initial message list")
 	}
+
+	// Check if the parts for the message to be sent are valid
 	if len(initialParts) == 0 {
-		return LLMResponse{}, errors.New("cannot determine initial message parts to send")
+		// This could happen if the last message had empty text
+		return LLMResponse{}, errors.New("cannot send message with empty parts")
 	}
+
+	// --- Start Chat Session with the *correct* initial history ---
+	sessionService := p.service.StartChat(historyForSession) // SINGLE CALL with history *before* current message
 
 	var finalResponse *genai.GenerateContentResponse
 	sendParts := initialParts
