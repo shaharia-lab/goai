@@ -98,41 +98,64 @@ func (m *MockStreamIteratorService) Next() (*genai.GenerateContentResponse, erro
 	return nil, iterator.Done
 }
 
-func setupTest() (*MockGeminiModelService, observability.Logger, *ToolsProvider) {
+func getCapitalHandler(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+	var input struct {
+		Country string `json:"country"`
+	}
+	if err := json.Unmarshal(params.Arguments, &input); err != nil || input.Country == "" {
+		return mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: "Invalid country"}}}, nil
+	}
+	capitals := map[string]string{"Germany": "Berlin", "France": "Paris"} // Simple map
+	capital, ok := capitals[input.Country]
+	if !ok {
+		return mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: "Country not found"}}}, nil
+	}
+	return mcp.CallToolResult{Content: []mcp.ToolResultContent{{Type: "text", Text: capital}}}, nil
+}
+
+func getWeatherHandler(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+	var input struct {
+		Location string `json:"location"`
+	}
+	if err := json.Unmarshal(params.Arguments, &input); err != nil || input.Location == "" {
+		return mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: "Invalid location"}}}, nil
+	}
+	// Simulate different weather
+	weather := "Cloudy, 10C"
+	if input.Location == "Berlin" {
+		weather = "Sunny, 15C"
+	}
+	return mcp.CallToolResult{Content: []mcp.ToolResultContent{{Type: "text", Text: weather}}}, nil
+}
+
+func setupTest() (*MockGeminiModelService, observability.Logger, *ToolsProvider) { // Changed return type
 	mockService := new(MockGeminiModelService)
 	mockLogger := observability.NewNullLogger()
+	toolsProvider := NewToolsProvider() // Assuming NewToolsProvider exists and returns *InMemoryToolsProvider
 
 	tools := []mcp.Tool{
 		{
 			Name:        "get_weather",
 			Description: "Fetches the current weather conditions for a specific location.",
-			InputSchema: json.RawMessage(`{
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string"}
-                },
-                "required": ["location"]
-            }`),
-			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
-				var input struct {
-					Location string `json:"location"`
-				}
-				json.Unmarshal(params.Arguments, &input)
-				return mcp.CallToolResult{
-					Content: []mcp.ToolResultContent{{
-						Type: "text",
-						Text: fmt.Sprintf("Weather in %s: Sunny", input.Location),
-					}},
-				}, nil
-			},
+			InputSchema: json.RawMessage(`{"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}`),
+			Handler:     getWeatherHandler, // Use defined handler
 		},
+		// --- ADD SECOND TOOL ---
+		{
+			Name:        "get_capital",
+			Description: "Gets the capital city of a given country.",
+			InputSchema: json.RawMessage(`{"type": "object", "properties": {"country": {"type": "string"}}, "required": ["country"]}`),
+			Handler:     getCapitalHandler, // Use defined handler
+		},
+		// --- END ADD ---
 	}
 
-	toolsProvider := NewToolsProvider()
-	toolsProvider.AddTools(tools)
-	mockToolsProvider := toolsProvider
+	err := toolsProvider.AddTools(tools)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to add tools in test setup: %v", err)) // Panic on setup error
+	}
 
-	return mockService, mockLogger, mockToolsProvider
+	return mockService, mockLogger, toolsProvider
 }
 
 func TestGeminiProvider_GetResponse_SimpleText(t *testing.T) {
