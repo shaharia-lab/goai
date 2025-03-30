@@ -226,7 +226,7 @@ llmProvider := goai.NewOpenAILLMProvider(goai.OpenAIProviderConfig{
 })
 ```
 
-For more details about Google Gemini API can be found [here](https://platform.openai.com/docs/api-reference/chat)
+For more details about OpenAI API can be found [here](https://platform.openai.com/docs/api-reference/chat)
 
 ### Anthropic
 
