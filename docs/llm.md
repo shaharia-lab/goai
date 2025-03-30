@@ -255,6 +255,10 @@ For more details about Anthropic API can be found [here](https://docs.anthropic.
 
 ### AWS Bedrock
 
+- ❌ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ❌ Tool calling
+
 ```go
 // Initialize AWS config
 awsConfig, err := config.LoadDefaultConfig(ctx)
@@ -301,6 +305,12 @@ For more details about Google Gemini API can be found [here](https://ai.google.d
 
 #### xAI
 
+**Supported features:**
+
+- ✅ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ❌ Tool calling
+
 ```go
 // Create client
 client := goai.NewOpenAIClient(
@@ -318,6 +328,12 @@ provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 For more details about xAI API can be found [here](https://docs.x.ai/docs/guides/chat)
 
 #### Hugging Face
+
+**Supported features:**
+
+- ✅ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ❌ Tool calling
 
 ```go
 // Create client
@@ -337,6 +353,12 @@ For more details about Hugging Face API can be found [here](https://huggingface.
 
 #### DeepSeek
 
+**Supported features:**
+
+- ✅ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ❌ Tool calling
+
 ```go
 // Create client
 client := goai.NewOpenAIClient(
@@ -354,6 +376,12 @@ provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 For more details about DeepSeek API can be found [here](https://api-docs.deepseek.com/)
 
 #### Mistral AI
+
+**Supported features:**
+
+- ✅ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ❌ Tool calling
 
 ```go
 // Create client
