@@ -24,12 +24,11 @@ const (
 type GeminiRole = string
 
 type GeminiProvider struct {
-	client        *genai.Client
-	modelName     string
-	toolsProvider ToolsProvider
+	client    *genai.Client
+	modelName string
 }
 
-func NewGeminiProvider(ctx context.Context, apiKey, modelName string, toolsProvider ToolsProvider) (*GeminiProvider, error) {
+func NewGeminiProvider(ctx context.Context, apiKey, modelName string) (*GeminiProvider, error) {
 	if apiKey == "" {
 		return nil, errors.New("API key cannot be empty")
 	}
@@ -43,9 +42,8 @@ func NewGeminiProvider(ctx context.Context, apiKey, modelName string, toolsProvi
 	}
 
 	return &GeminiProvider{
-		client:        client,
-		modelName:     modelName,
-		toolsProvider: toolsProvider,
+		client:    client,
+		modelName: modelName,
 	}, nil
 }
 
@@ -60,41 +58,26 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 	startTime := time.Now()
 	model := p.client.GenerativeModel(p.modelName)
 
-	cs := model.StartChat()
-
-	initialHistory, err := mapLLMMessagesToGenaiContent(messages)
-	if err != nil {
-		return LLMResponse{}, fmt.Errorf("failed to map initial messages: %w", err)
-	}
-
-	if len(initialHistory) > 1 {
-		cs.History = initialHistory[:len(initialHistory)-1]
-	}
-
-	var initialParts []genai.Part
-	if len(initialHistory) > 0 {
-		initialParts = initialHistory[len(initialHistory)-1].Parts
-	}
-	if len(initialParts) == 0 {
-
-		return LLMResponse{}, errors.New("cannot start LLM conversation with empty initial message parts")
-	}
-
+	// --- Apply configurations to the model *before* starting chat ---
 	genaiConfig, err := mapLLMConfigToGenaiConfig(config)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("failed to map request config: %w", err)
 	}
-
-	model.GenerationConfig = *genaiConfig
+	model.GenerationConfig = *genaiConfig // Apply GenerationConfig here
 
 	var activeTools map[string]mcp.Tool
+	var genaiTools []*genai.Tool
+
 	if len(config.AllowedTools) > 0 {
-		fetchedTools, err := p.toolsProvider.ListTools(ctx, config.AllowedTools)
+		if config.toolsProvider == nil {
+			return LLMResponse{}, errors.New("request config allows tools but provides no toolsProvider")
+		}
+		fetchedTools, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
 		if err != nil {
-			return LLMResponse{}, fmt.Errorf("failed to get toolsProvider from provider: %w", err)
+			return LLMResponse{}, fmt.Errorf("failed to get tools from config.toolsProvider: %w", err)
 		}
 		activeTools = make(map[string]mcp.Tool, len(fetchedTools))
-		genaiTools := make([]*genai.Tool, 0, len(fetchedTools))
+		genaiTools = make([]*genai.Tool, 0, len(fetchedTools))
 		for _, customTool := range fetchedTools {
 			gTool, err := ConvertToGenaiTool(customTool)
 			if err != nil {
@@ -103,58 +86,78 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 			genaiTools = append(genaiTools, gTool)
 			activeTools[customTool.Name] = customTool
 		}
-		if len(genaiTools) > 0 {
+	}
+	model.Tools = genaiTools
 
-			model.Tools = genaiTools
-		}
+	// --- Start Chat Session *after* configuring the model ---
+	cs := model.StartChat()
+
+	initialHistory, err := mapLLMMessagesToGenaiContent(messages)
+	if err != nil {
+		return LLMResponse{}, fmt.Errorf("failed to map initial messages: %w", err)
+	}
+
+	// Set history and initial parts for the first SendMessage call
+	if len(initialHistory) > 1 {
+		cs.History = initialHistory[:len(initialHistory)-1]
+	}
+	var initialParts []genai.Part
+	if len(initialHistory) > 0 {
+		initialParts = initialHistory[len(initialHistory)-1].Parts
+	}
+	if len(initialParts) == 0 {
+		return LLMResponse{}, errors.New("cannot start LLM conversation with empty initial message parts")
 	}
 
 	var finalResponse *genai.GenerateContentResponse
 	sendParts := initialParts
+	var loopError error
 
+	// --- Tool loop starts ---
 	for turn := 0; turn < MaxToolTurns; turn++ {
-
 		log.Printf("Gemini Request Turn %d: Sending %d parts\n", turn+1, len(sendParts))
-
-		resp, err := cs.SendMessage(ctx, sendParts...)
+		resp, err := cs.SendMessage(ctx, sendParts...) // SendMessage uses the session's model config
 		if err != nil {
-
-			return LLMResponse{}, fmt.Errorf("gemini SendMessage failed (turn %d): %w", turn+1, err)
+			loopError = fmt.Errorf("gemini SendMessage failed (turn %d): %w", turn+1, err)
+			break
 		}
 
 		if len(resp.Candidates) == 0 {
 			if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != genai.BlockReasonUnspecified {
-				return LLMResponse{}, fmt.Errorf("request blocked by API (turn %d): %s", turn+1, resp.PromptFeedback.BlockReason.String())
+				loopError = fmt.Errorf("request blocked by API (turn %d): %s", turn+1, resp.PromptFeedback.BlockReason.String())
+			} else {
+				loopError = fmt.Errorf("gemini API returned no candidates (turn %d)", turn+1)
 			}
-
-			return LLMResponse{}, fmt.Errorf("gemini API returned no candidates (turn %d)", turn+1)
+			break
 		}
 		candidate := resp.Candidates[0]
 
 		if candidate.Content != nil {
 			cs.History = append(cs.History, candidate.Content)
 		} else {
-
 			log.Printf("Warning: Candidate content is nil in API response (turn %d).", turn+1)
 		}
 
 		funcCalls := findFunctionCalls(candidate)
 		if len(funcCalls) == 0 {
-
 			if candidate.FinishReason != genai.FinishReasonStop && candidate.FinishReason != genai.FinishReasonMaxTokens {
-				log.Printf("Warning: Gemini response finished with reason: %s", candidate.FinishReason)
+				log.Printf("Warning: Gemini response finished with non-standard reason: %s", candidate.FinishReason)
 				if candidate.FinishReason == genai.FinishReasonSafety {
-					return LLMResponse{}, fmt.Errorf("gemini response stopped due to safety settings")
+					loopError = fmt.Errorf("gemini response stopped due to safety settings")
+					break
 				}
 			}
+			//log.Printf("%+v", candidate.FinishReason)
+			log.Printf("%+v", candidate.Content.Parts[0])
 			finalResponse = resp
-			log.Printf("Gemini Response Turn %d: Final text response received.", turn+1)
+			log.Printf("Gemini Response Turn %d: Received non-function-call response. Assuming final.", turn+1)
 			break
 		}
 
 		log.Printf("Gemini Response Turn %d: Received %d function call(s).", turn+1, len(funcCalls))
-
 		functionResponseParts := make([]genai.Part, 0, len(funcCalls))
+		allToolExecutionsSuccessful := true
+
 		for _, fc := range funcCalls {
 			log.Printf("Executing tool: %s", fc.Name)
 			toolToRun, exists := activeTools[fc.Name]
@@ -164,46 +167,43 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 					IsError: true,
 					Content: []mcp.ToolResultContent{{Type: "text", Text: fmt.Sprintf("Tool '%s' not found or not runnable.", fc.Name)}},
 				}
-				resultMap, err := callResultToMap(toolResult)
-				if err != nil {
-					log.Printf("Error marshaling error result for tool '%s': %v", fc.Name, err)
-
+				resultMap, mapErr := callResultToMap(toolResult)
+				if mapErr != nil {
+					log.Printf("Error marshaling error result for tool '%s': %v", fc.Name, mapErr)
+					allToolExecutionsSuccessful = false
 					continue
 				}
-
-				functionResponseParts = append(functionResponseParts, genai.FunctionResponse{
-					Name:     fc.Name,
-					Response: resultMap,
-				})
+				functionResponseParts = append(functionResponseParts, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
+				allToolExecutionsSuccessful = false
 				continue
 			}
 
-			argsJSON, err := json.Marshal(fc.Args)
-			if err != nil {
-				log.Printf("Error marshaling arguments for tool '%s': %v", fc.Name, err)
-				toolResult := mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: fmt.Sprintf("Invalid arguments format for tool '%s': %v", fc.Name, err)}}}
+			argsJSON, marshalErr := json.Marshal(fc.Args)
+			if marshalErr != nil {
+				log.Printf("Error marshaling arguments for tool '%s': %v", fc.Name, marshalErr)
+				toolResult := mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: fmt.Sprintf("Invalid arguments format for tool '%s': %v", fc.Name, marshalErr)}}}
 				resultMap, _ := callResultToMap(toolResult)
 				functionResponseParts = append(functionResponseParts, genai.FunctionResponse{Name: fc.Name, Response: resultMap})
+				allToolExecutionsSuccessful = false
 				continue
 			}
-			callParams := mcp.CallToolParams{
-				Name:      fc.Name,
-				Arguments: json.RawMessage(argsJSON),
-			}
+			callParams := mcp.CallToolParams{Name: fc.Name, Arguments: json.RawMessage(argsJSON)}
 
-			toolResult, err := toolToRun.Handler(ctx, callParams)
-			if err != nil {
-				log.Printf("Error executing tool handler '%s': %v", fc.Name, err)
+			toolResult, handlerErr := toolToRun.Handler(ctx, callParams)
+			if handlerErr != nil {
+				log.Printf("Error executing tool handler '%s': %v", fc.Name, handlerErr)
 				if !toolResult.IsError {
 					toolResult.IsError = true
-					toolResult.Content = append(toolResult.Content, mcp.ToolResultContent{Type: "text", Text: fmt.Sprintf("Handler error: %v", err)})
+					toolResult.Content = append(toolResult.Content, mcp.ToolResultContent{Type: "text", Text: fmt.Sprintf("Handler error: %v", handlerErr)})
 				}
+				allToolExecutionsSuccessful = false
 			}
 
-			resultMap, err := callResultToMap(toolResult)
-			if err != nil {
-				log.Printf("Error converting tool result to map for '%s': %v", fc.Name, err)
-				resultMap = map[string]any{"error": fmt.Sprintf("Failed to format tool result: %v", err)}
+			resultMap, mapErr := callResultToMap(toolResult)
+			if mapErr != nil {
+				log.Printf("Error converting tool result to map for '%s': %v", fc.Name, mapErr)
+				resultMap = map[string]any{"error": fmt.Sprintf("Failed to format tool result: %v", mapErr)}
+				allToolExecutionsSuccessful = false
 			}
 
 			functionResponseParts = append(functionResponseParts, genai.FunctionResponse{
@@ -213,51 +213,59 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 		}
 
 		if len(functionResponseParts) > 0 {
-
 			cs.History = append(cs.History, &genai.Content{
 				Role:  RoleFunction,
 				Parts: functionResponseParts,
 			})
-
-			sendParts = []genai.Part{}
+			if !allToolExecutionsSuccessful {
+				log.Printf("Warning: One or more tool executions failed or had errors during turn %d.", turn+1)
+			}
+			// Prepare for the next SendMessage call - send a dummy non-empty part
+			sendParts = []genai.Part{genai.Text("")} // <-- FIX: Send empty text part instead of empty slice
 		} else {
-
-			log.Printf("Warning: No function response parts generated for turn %d.", turn+1)
-
-			finalResponse = resp
+			log.Printf("Error: No function response parts could be generated for turn %d. Aborting loop.", turn+1)
+			loopError = fmt.Errorf("failed to generate any function responses for turn %d", turn+1)
 			break
 		}
 
 		if turn == MaxToolTurns-1 {
-			log.Printf("Warning: Reached maximum tool turns (%d). Returning last response.", MaxToolTurns)
-
-			finalResponse = resp
-			break
+			log.Printf("Warning: Reached maximum tool turns (%d).", MaxToolTurns)
+			loopError = fmt.Errorf("reached maximum tool turns (%d) without final text response", MaxToolTurns)
 		}
-	}
+	} // End tool calling loop
 
+	// --- After Loop Processing ---
+	if loopError != nil {
+		return LLMResponse{}, loopError
+	}
 	if finalResponse == nil {
-
-		return LLMResponse{}, errors.New("no final response could be determined after tool loop")
+		return LLMResponse{}, errors.New("tool loop finished, but no final response was captured")
+	}
+	if finalResponse != nil && len(finalResponse.Candidates) > 0 {
+		finalFuncCalls := findFunctionCalls(finalResponse.Candidates[0])
+		if len(finalFuncCalls) > 0 {
+			log.Printf("Error: Loop finished, but the captured 'finalResponse' still contained %d function call(s).", len(finalFuncCalls))
+			return LLMResponse{}, fmt.Errorf("tool loop finished, but final response required further tool calls (max turns likely reached)")
+		}
+	} else if finalResponse == nil {
+		return LLMResponse{}, errors.New("internal error: loop finished with nil finalResponse despite no loopError")
 	}
 
+	// --- Construct final LLMResponse ---
 	llmResponse := LLMResponse{
 		CompletionTime: time.Since(startTime).Seconds(),
 	}
-
 	if len(finalResponse.Candidates) > 0 {
-
 		llmResponse.Text = extractTextFromParts(finalResponse.Candidates[0].Content.Parts)
+	} else {
+		log.Println("Warning: Final response captured but has no candidates.")
 	}
-
 	if finalResponse.UsageMetadata != nil {
 		llmResponse.TotalInputToken = int(finalResponse.UsageMetadata.PromptTokenCount)
 		llmResponse.TotalOutputToken = int(finalResponse.UsageMetadata.CandidatesTokenCount)
 	} else {
-
 		log.Println("Warning: UsageMetadata may not be available on the final SendMessage response.")
 	}
-
 	return llmResponse, nil
 }
 
@@ -289,7 +297,7 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 
 	var activeTools map[string]mcp.Tool
 	if len(config.AllowedTools) > 0 {
-		fetchedTools, err := p.toolsProvider.ListTools(ctx, config.AllowedTools)
+		fetchedTools, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get toolsProvider: %w", err)
 		}
@@ -371,15 +379,13 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 		}
 
 		if len(functionResponseParts) > 0 {
-
 			cs.History = append(cs.History, &genai.Content{
 				Role:  RoleFunction,
 				Parts: functionResponseParts,
 			})
-			sendParts = []genai.Part{}
+			sendParts = []genai.Part{genai.Text("")}
 		} else {
-			log.Printf("Warning: No function response parts generated during pre-flight turn %d.", turn+1)
-
+			log.Printf("Error: No function response parts could be generated during pre-flight turn %d. Aborting stream setup.", turn+1)
 			break
 		}
 
@@ -497,7 +503,6 @@ func mapLLMMessagesToGenaiContent(messages []LLMMessage) ([]*genai.Content, erro
 }
 
 func mapLLMConfigToGenaiConfig(config LLMRequestConfig) (*genai.GenerationConfig, error) {
-
 	genaiConfig := &genai.GenerationConfig{}
 	if config.MaxToken > 0 {
 		if config.MaxToken > int64(^uint32(0)>>1) {
@@ -525,7 +530,6 @@ func mapLLMConfigToGenaiConfig(config LLMRequestConfig) (*genai.GenerationConfig
 }
 
 func extractTextFromParts(parts []genai.Part) string {
-
 	var textContent string
 	for _, part := range parts {
 		if text, ok := part.(genai.Text); ok {
@@ -536,16 +540,29 @@ func extractTextFromParts(parts []genai.Part) string {
 }
 
 func findFunctionCalls(candidate *genai.Candidate) []*genai.FunctionCall {
-
 	calls := make([]*genai.FunctionCall, 0)
 	if candidate == nil || candidate.Content == nil {
 		return calls
 	}
 	for _, part := range candidate.Content.Parts {
-		if fc, ok := part.(*genai.FunctionCall); ok {
-			calls = append(calls, fc)
+		log.Printf("Checking part: %+v (Type: %T)", part, part) // Keep logging type for confirmation
+
+		// --- CHANGE THE TYPE ASSERTION HERE ---
+		// Try asserting the value type first
+		if fcValue, ok := part.(genai.FunctionCall); ok {
+			log.Printf("Found function call VALUE: %+v", fcValue)
+			// IMPORTANT: Need a pointer for the slice. Take the address.
+			fcPointer := &fcValue
+			calls = append(calls, fcPointer)
+			// Optionally, also check for pointer just in case (though less likely based on logs)
+		} else if fcPointer, ok := part.(*genai.FunctionCall); ok {
+			log.Printf("Found function call POINTER: %+v", fcPointer)
+			calls = append(calls, fcPointer)
 		}
+		// --- END CHANGE ---
+
 	}
+	log.Printf("findFunctionCalls returning %d calls", len(calls)) // Add log to see result
 	return calls
 }
 
