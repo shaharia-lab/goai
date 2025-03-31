@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/shaharia-lab/goai/observability"
 	"testing"
 
 	"github.com/google/generative-ai-go/genai"
 	"github.com/shaharia-lab/goai/mcp"
+	"github.com/shaharia-lab/goai/observability"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
