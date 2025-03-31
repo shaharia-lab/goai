@@ -9,6 +9,7 @@ and tool calling capabilities.
 
 Here's a complete example using OpenAI's GPT-3.5:
 
+<!-- markdownlint-disable -->
 ```go
 package main
 
@@ -16,7 +17,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	
+
 	"github.com/openai/openai-go"
 	"github.com/shaharia-lab/goai"
 )
@@ -49,6 +50,7 @@ func main() {
 	fmt.Printf("Input token: %d, Output token: %d", response.TotalInputToken, response.TotalOutputToken)
 }
 ```
+<!-- markdownlint-enable -->
 
 ## Tool Calling
 
@@ -192,7 +194,40 @@ config := goai.NewRequestConfig(
 
 ## Available Providers
 
+### Google Gemini
+
+**Supported features:**
+
+- ✅ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ✅ Tool calling
+
+For using OpenAI compatible API, please refer to the [OpenAI Compatible](#gemini-from-google) section. _(Not recommended)_
+
+```go
+geminiAPIKey := os.Getenv("GEMINI_API_KEY")
+geminiModel := "gemini-2.0-flash"
+
+googleGeminiService, err := goai.NewGoogleGeminiService(geminiAPIKey, geminiModel)
+if err != nil {
+    log.Fatalf("Error creating Real Gemini Service: %v", err)
+}
+
+llmProvider, err := goai.NewGeminiProvider(googleGeminiService, observability.NewDefaultLogger())
+if err != nil {
+    panic(fmt.Sprintf("Error creating Gemini provider: %v", err))
+}
+```
+
+For more details about Google Gemini API can be found [here](https://ai.google.dev/gemini-api/docs)
+
 ### OpenAI
+
+**Supported features:**
+
+- ✅ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ❌ Tool calling
 
 ```go
 llmProvider := goai.NewOpenAILLMProvider(goai.OpenAIProviderConfig{
@@ -205,6 +240,12 @@ For more details about OpenAI API can be found [here](https://platform.openai.co
 
 ### Anthropic
 
+**Supported features:**
+
+- ✅ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ✅ Tool calling
+
 ```go
 llmProvider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{
     Client: goai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY")),
@@ -215,6 +256,10 @@ llmProvider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{
 For more details about Anthropic API can be found [here](https://docs.anthropic.com/en/api/getting-started)
 
 ### AWS Bedrock
+
+- ❌ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ❌ Tool calling
 
 ```go
 // Initialize AWS config
@@ -234,7 +279,39 @@ For more details about AWS Bedrock API can be found [here](https://docs.aws.amaz
 
 ### OpenAI Compatible
 
+#### Gemini from Google
+
+**Supported features:**
+
+- ✅ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ❌ Tool calling
+
+For full support, it's recommended to use the dedicated Google Gemini provider as shown [above](#google-gemini).
+
+```go
+// Create client
+client := goai.NewOpenAIClient(
+    "{GEMINI_API_KEY}",
+    option.WithBaseURL("https://generativelanguage.googleapis.com/v1beta/openai/"),
+)
+
+// Initialize provider
+provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
+    Client: client,
+    Model:  "gemini-2.0-flash",
+})
+```
+
+For more details about Google Gemini API can be found [here](https://ai.google.dev/gemini-api/docs/openai)
+
 #### xAI
+
+**Supported features:**
+
+- ✅ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ❌ Tool calling
 
 ```go
 // Create client
@@ -254,6 +331,12 @@ For more details about xAI API can be found [here](https://docs.x.ai/docs/guides
 
 #### Hugging Face
 
+**Supported features:**
+
+- ✅ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ❌ Tool calling
+
 ```go
 // Create client
 client := goai.NewOpenAIClient(
@@ -272,6 +355,12 @@ For more details about Hugging Face API can be found [here](https://huggingface.
 
 #### DeepSeek
 
+**Supported features:**
+
+- ✅ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ❌ Tool calling
+
 ```go
 // Create client
 client := goai.NewOpenAIClient(
@@ -289,6 +378,12 @@ provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 For more details about DeepSeek API can be found [here](https://api-docs.deepseek.com/)
 
 #### Mistral AI
+
+**Supported features:**
+
+- ✅ Streaming responses
+- ✅ Non-streaming (synchronous) responses
+- ❌ Tool calling
 
 ```go
 // Create client
