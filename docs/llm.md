@@ -202,7 +202,7 @@ config := goai.NewRequestConfig(
 - ✅ Non-streaming (synchronous) responses
 - ✅ Tool calling
 
-For using OpenAI compatible API, please refer to the [OpenAI Compatible](#google-gemini-1) section. _(Not recommended)_
+For using OpenAI compatible API, please refer to the [OpenAI Compatible](#gemini-from-google) section. _(Not recommended)_
 
 ```go
 geminiAPIKey := os.Getenv("GEMINI_API_KEY")
@@ -279,7 +279,7 @@ For more details about AWS Bedrock API can be found [here](https://docs.aws.amaz
 
 ### OpenAI Compatible
 
-#### Google Gemini
+#### Gemini from Google
 
 **Supported features:**
 
