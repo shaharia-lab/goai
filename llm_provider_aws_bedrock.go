@@ -60,9 +60,9 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 		ModelId:  &p.model,
 		Messages: bedrockMessages,
 		InferenceConfig: &types.InferenceConfiguration{
-			Temperature: aws.Float32(float32(config.Temperature)),
-			TopP:        aws.Float32(float32(config.TopP)),
-			MaxTokens:   aws.Int32(int32(config.MaxToken)),
+			Temperature: aws.Float32(float32(config.temperature)),
+			TopP:        aws.Float32(float32(config.topP)),
+			MaxTokens:   aws.Int32(int32(config.maxToken)),
 		},
 	}
 
@@ -169,9 +169,9 @@ func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages 
 		ModelId:  &p.model,
 		Messages: bedrockMessages,
 		InferenceConfig: &types.InferenceConfiguration{
-			Temperature: aws.Float32(float32(config.Temperature)),
-			TopP:        aws.Float32(float32(config.TopP)),
-			MaxTokens:   aws.Int32(int32(config.MaxToken)),
+			Temperature: aws.Float32(float32(config.temperature)),
+			TopP:        aws.Float32(float32(config.topP)),
+			MaxTokens:   aws.Int32(int32(config.maxToken)),
 		},
 	}
 

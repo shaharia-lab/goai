@@ -40,10 +40,10 @@ func (t *TracingLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 		attribute.Int("total_output_token", response.TotalOutputToken),
 		attribute.Int("message_count", len(messages)),
 		attribute.Float64("completion_time", time.Since(startTime).Seconds()),
-		attribute.Int64("max_token", config.MaxToken),
-		attribute.Float64("temperature", config.Temperature),
-		attribute.Float64("top_p", config.TopP),
-		attribute.Int64("top_k", config.TopK),
+		attribute.Int64("max_token", config.maxToken),
+		attribute.Float64("temperature", config.temperature),
+		attribute.Float64("top_p", config.topP),
+		attribute.Int64("top_k", config.topK),
 	)
 
 	return response, nil

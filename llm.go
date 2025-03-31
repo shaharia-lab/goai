@@ -31,7 +31,7 @@ type LLMRequest struct {
 //	// Create LLM request client
 //	llm := goai.NewLLMRequest(config, provider)
 func NewLLMRequest(config LLMRequestConfig, provider LLMProvider) *LLMRequest {
-	if !config.DisableTracing {
+	if !config.enableTracing {
 		if _, isAlreadyTraced := provider.(*TracingLLMProvider); !isAlreadyTraced {
 			provider = NewTracingLLMProvider(provider)
 		}
