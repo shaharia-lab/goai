@@ -9,6 +9,7 @@ and tool calling capabilities.
 
 Here's a complete example using OpenAI's GPT-3.5:
 
+<!-- markdownlint-disable -->
 ```go
 package main
 
@@ -49,6 +50,7 @@ func main() {
 	fmt.Printf("Input token: %d, Output token: %d", response.TotalInputToken, response.TotalOutputToken)
 }
 ```
+<!-- markdownlint-enable -->
 
 ## Tool Calling
 
