@@ -20,31 +20,58 @@ const (
 
 	// SystemRole represents a message from the system
 	SystemRole LLMMessageRole = "system"
+
+	// DefaultMaxToken is the default maximum number of tokens for LLM responses
+	DefaultMaxToken int64 = 1000
+
+	// DefaultTopP is the default top-p sampling value for LLM responses
+	DefaultTopP float64 = 0.5
+
+	// DefaultTemperature is the default temperature value for LLM responses
+	DefaultTemperature float64 = 0.5
+
+	// DefaultTopK is the default top-k sampling value for LLM responses
+	DefaultTopK int64 = 40
+
+	// DefaultMaxIterations is the default maximum number of iterations for LLM responses
+	DefaultMaxIterations int = 10
 )
 
 // DefaultConfig holds the default values for LLMRequestConfig
 var DefaultConfig = LLMRequestConfig{
-	MaxToken:      500,
-	TopP:          0.5,
-	Temperature:   0.5,
-	TopK:          40,
+	maxToken:      DefaultMaxToken,
+	topP:          DefaultTopP,
+	temperature:   DefaultTemperature,
+	topK:          DefaultTopK,
 	toolsProvider: NewToolsProvider(),
+	enableTracing: false,
+	allowedTools:  []string{},
+	maxIterations: DefaultMaxIterations,
 }
 
 // LLMRequestConfig defines configuration parameters for LLM requests.
 type LLMRequestConfig struct {
-	toolsProvider  *ToolsProvider
-	MaxToken       int64
-	TopP           float64
-	Temperature    float64
-	TopK           int64
-	DisableTracing bool
-	AllowedTools   []string
+	toolsProvider *ToolsProvider
+	maxToken      int64
+	topP          float64
+	temperature   float64
+	topK          int64
+	enableTracing bool
+	allowedTools  []string
+	maxIterations int
 }
 
-func WithTracingDisabled() RequestOption {
+// WithTracingEnabled sets the tracing option for the LLM request configuration.
+func WithTracingEnabled() RequestOption {
 	return func(c *LLMRequestConfig) {
-		c.DisableTracing = true
+		c.enableTracing = true
+	}
+}
+
+// WithMaxIterations sets the maximum number of iterations for the LLM request.
+func WithMaxIterations(maxIterations int) RequestOption {
+	return func(c *LLMRequestConfig) {
+		c.maxIterations = maxIterations
 	}
 }
 
@@ -68,7 +95,7 @@ type RequestOption func(*LLMRequestConfig)
 func WithMaxToken(maxToken int64) RequestOption {
 	return func(c *LLMRequestConfig) {
 		if maxToken > 0 {
-			c.MaxToken = maxToken
+			c.maxToken = maxToken
 		}
 	}
 }
@@ -77,7 +104,7 @@ func WithMaxToken(maxToken int64) RequestOption {
 func WithTopP(topP float64) RequestOption {
 	return func(c *LLMRequestConfig) {
 		if topP > 0 {
-			c.TopP = topP
+			c.topP = topP
 		}
 	}
 }
@@ -86,7 +113,7 @@ func WithTopP(topP float64) RequestOption {
 func WithTemperature(temp float64) RequestOption {
 	return func(c *LLMRequestConfig) {
 		if temp > 0 {
-			c.Temperature = temp
+			c.temperature = temp
 		}
 	}
 }
@@ -95,7 +122,7 @@ func WithTemperature(temp float64) RequestOption {
 func WithTopK(topK int64) RequestOption {
 	return func(c *LLMRequestConfig) {
 		if topK > 0 {
-			c.TopK = topK
+			c.topK = topK
 		}
 	}
 }
@@ -108,7 +135,7 @@ func UseToolsProvider(provider *ToolsProvider) RequestOption {
 
 func WithAllowedTools(allowedTools []string) RequestOption {
 	return func(c *LLMRequestConfig) {
-		c.AllowedTools = allowedTools
+		c.allowedTools = allowedTools
 	}
 }
 

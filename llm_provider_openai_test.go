@@ -183,8 +183,8 @@ func TestOpenAILLMProvider_GetResponse_WithTools(t *testing.T) {
 				{Role: UserRole, Text: "What's the weather in New York?"},
 			},
 			config: LLMRequestConfig{
-				MaxToken:    100,
-				Temperature: 0.7,
+				maxToken:    100,
+				temperature: 0.7,
 				toolsProvider: func() *ToolsProvider {
 					provider := NewToolsProvider()
 					_ = provider.AddTools([]mcp.Tool{
@@ -257,8 +257,8 @@ func TestOpenAILLMProvider_GetResponse_WithTools(t *testing.T) {
 				{Role: UserRole, Text: "Hello"},
 			},
 			config: LLMRequestConfig{
-				MaxToken:      100,
-				Temperature:   0.7,
+				maxToken:      100,
+				temperature:   0.7,
 				toolsProvider: NewToolsProvider(),
 			},
 			responses: []string{

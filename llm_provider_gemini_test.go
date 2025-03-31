@@ -172,7 +172,7 @@ func TestGeminiProvider_GetResponse_SingleToolCall(t *testing.T) {
 
 	messages := []LLMMessage{{Role: UserRole, Text: "Weather Berlin?"}}
 	config := LLMRequestConfig{
-		AllowedTools:  []string{"get_weather"},
+		allowedTools:  []string{"get_weather"},
 		toolsProvider: mockToolsProvider,
 	}
 
@@ -240,7 +240,7 @@ func TestGeminiProvider_GetResponse_MultipleToolCalls(t *testing.T) {
 
 	messages := []LLMMessage{{Role: UserRole, Text: "What is the capital of Germany and what's the weather like there?"}}
 	config := LLMRequestConfig{
-		AllowedTools:  []string{"get_capital", "get_weather"},
+		allowedTools:  []string{"get_capital", "get_weather"},
 		toolsProvider: mockToolsProvider,
 	}
 
@@ -377,7 +377,7 @@ func TestGeminiProvider_GetStreamingResponse_SingleToolCallSimulated(t *testing.
 
 	messages := []LLMMessage{{Role: UserRole, Text: "Weather London?"}}
 	config := LLMRequestConfig{
-		AllowedTools:  []string{"get_weather"},
+		allowedTools:  []string{"get_weather"},
 		toolsProvider: mockToolsProvider,
 	}
 
@@ -442,7 +442,7 @@ func TestGeminiProvider_GetStreamingResponse_MultipleToolCallsSimulated(t *testi
 
 	messages := []LLMMessage{{Role: UserRole, Text: "What is the capital of France and its weather?"}}
 	config := LLMRequestConfig{
-		AllowedTools:  []string{"get_capital", "get_weather"},
+		allowedTools:  []string{"get_capital", "get_weather"},
 		toolsProvider: mockToolsProvider,
 	}
 

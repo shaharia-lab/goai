@@ -54,7 +54,7 @@ func (p *AnthropicLLMProvider) convertToAnthropicMessages(messages []LLMMessage)
 
 // prepareTools prepares the tool definitions for the Anthropic API
 func (p *AnthropicLLMProvider) prepareTools(ctx context.Context, config LLMRequestConfig) ([]anthropic.ToolUnionUnionParam, error) {
-	mcpTools, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
+	mcpTools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
 	if err != nil {
 		return nil, fmt.Errorf("error listing tools: %w", err)
 	}
@@ -149,7 +149,7 @@ func (p *AnthropicLLMProvider) streamAndProcessMessage(
 ) (*anthropic.Message, error) {
 	msgParam := anthropic.MessageNewParams{
 		Model:     anthropic.F(p.model),
-		MaxTokens: anthropic.F(config.MaxToken),
+		MaxTokens: anthropic.F(config.maxToken),
 		Messages:  anthropic.F(anthropicMessages),
 		Tools:     anthropic.F(toolUnionParams),
 	}

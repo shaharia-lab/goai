@@ -51,11 +51,11 @@ func (p *GeminiProvider) GetResponse(ctx context.Context, messages []LLMMessage,
 
 	var activeTools map[string]mcp.Tool
 	var genaiTools []*genai.Tool
-	if len(config.AllowedTools) > 0 {
+	if len(config.allowedTools) > 0 {
 		if config.toolsProvider == nil {
 			return LLMResponse{}, errors.New("request config allows tools but provides no toolsProvider")
 		}
-		fetchedTools, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
+		fetchedTools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
 		if err != nil {
 			return LLMResponse{}, fmt.Errorf("failed to get tools from config.toolsProvider: %w", err)
 		}
@@ -235,11 +235,11 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 	}
 	var activeTools map[string]mcp.Tool
 	var genaiTools []*genai.Tool
-	if len(config.AllowedTools) > 0 {
+	if len(config.allowedTools) > 0 {
 		if config.toolsProvider == nil {
 			return nil, errors.New("request config allows tools but provides no toolsProvider")
 		}
-		fetchedTools, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
+		fetchedTools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get tools from config.toolsProvider: %w", err)
 		}
@@ -450,26 +450,26 @@ func (p *GeminiProvider) mapLLMMessagesToGenaiContent(messages []LLMMessage) ([]
 
 func mapLLMConfigToGenaiConfig(config LLMRequestConfig) (*genai.GenerationConfig, error) {
 	genaiConfig := &genai.GenerationConfig{}
-	if config.MaxToken > 0 {
-		if config.MaxToken > int64(^uint32(0)>>1) {
-			return nil, fmt.Errorf("MaxToken %d exceeds int32 limit", config.MaxToken)
+	if config.maxToken > 0 {
+		if config.maxToken > int64(^uint32(0)>>1) {
+			return nil, fmt.Errorf("maxToken %d exceeds int32 limit", config.maxToken)
 		}
-		maxTokens := int32(config.MaxToken)
+		maxTokens := int32(config.maxToken)
 		genaiConfig.MaxOutputTokens = &maxTokens
 	}
-	if config.Temperature >= 0 {
-		temp := float32(config.Temperature)
+	if config.temperature >= 0 {
+		temp := float32(config.temperature)
 		genaiConfig.Temperature = &temp
 	}
-	if config.TopP > 0 {
-		topP := float32(config.TopP)
+	if config.topP > 0 {
+		topP := float32(config.topP)
 		genaiConfig.TopP = &topP
 	}
-	if config.TopK > 0 {
-		if config.TopK > int64(^uint32(0)>>1) {
-			return nil, fmt.Errorf("TopK %d exceeds int32 limit", config.TopK)
+	if config.topK > 0 {
+		if config.topK > int64(^uint32(0)>>1) {
+			return nil, fmt.Errorf("topK %d exceeds int32 limit", config.topK)
 		}
-		topK := int32(config.TopK)
+		topK := int32(config.topK)
 		genaiConfig.TopK = &topK
 	}
 	return genaiConfig, nil

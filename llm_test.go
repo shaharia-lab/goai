@@ -48,9 +48,9 @@ func TestLLMRequest_Generate(t *testing.T) {
 		{
 			name: "successful generation",
 			config: LLMRequestConfig{
-				MaxToken:    100,
-				TopP:        0.9,
-				Temperature: 0.7,
+				maxToken:    100,
+				topP:        0.9,
+				temperature: 0.7,
 			},
 			mockResponse: LLMResponse{
 				Text:             "Hello, world!",
@@ -68,9 +68,9 @@ func TestLLMRequest_Generate(t *testing.T) {
 		{
 			name: "provider error",
 			config: LLMRequestConfig{
-				MaxToken:    100,
-				TopP:        0.9,
-				Temperature: 0.7,
+				maxToken:    100,
+				topP:        0.9,
+				temperature: 0.7,
 			},
 			mockError:     errors.New("provider error"),
 			expectedError: true,
@@ -127,7 +127,7 @@ func TestLLMRequest_GenerateStream(t *testing.T) {
 		{
 			name: "successful streaming",
 			config: LLMRequestConfig{
-				MaxToken: 100,
+				maxToken: 100,
 			},
 			messages: []LLMMessage{
 				{Role: UserRole, Text: "Hello"},
@@ -141,7 +141,7 @@ func TestLLMRequest_GenerateStream(t *testing.T) {
 		{
 			name: "provider error",
 			config: LLMRequestConfig{
-				MaxToken: 100,
+				maxToken: 100,
 			},
 			messages: []LLMMessage{
 				{Role: UserRole, Text: "Hello"},
@@ -152,7 +152,7 @@ func TestLLMRequest_GenerateStream(t *testing.T) {
 		{
 			name: "context cancellation",
 			config: LLMRequestConfig{
-				MaxToken: 100,
+				maxToken: 100,
 			},
 			messages: []LLMMessage{
 				{Role: UserRole, Text: "Hello"},

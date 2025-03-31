@@ -77,9 +77,9 @@ func (p *AnthropicLLMProvider) prepareMessageParams(messages []LLMMessage, confi
 	params := anthropic.MessageNewParams{
 		Model:       anthropic.F(p.model),
 		Messages:    anthropic.F(anthropicMessages),
-		MaxTokens:   anthropic.F(config.MaxToken),
-		TopP:        anthropic.Float(config.TopP),
-		Temperature: anthropic.Float(config.Temperature),
+		MaxTokens:   anthropic.F(config.maxToken),
+		TopP:        anthropic.Float(config.topP),
+		Temperature: anthropic.Float(config.temperature),
 	}
 
 	// Add system message if present
@@ -115,7 +115,7 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 	}
 
 	// Prepare tools if registry exists
-	mcpTools, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
+	mcpTools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("error listing tools: %w", err)
 	}
@@ -142,7 +142,7 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 	for {
 		message, err := p.client.CreateMessage(ctx, anthropic.MessageNewParams{
 			Model:     anthropic.F(p.model),
-			MaxTokens: anthropic.F(config.MaxToken),
+			MaxTokens: anthropic.F(config.maxToken),
 			Messages:  anthropic.F(anthropicMessages),
 			Tools:     anthropic.F(toolUnionParams),
 		})
