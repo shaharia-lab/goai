@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/shaharia-lab/goai/observability"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/shaharia-lab/goai/observability"
 )
 
 // ChatHistoryStorage defines the interface for conversation history storage
