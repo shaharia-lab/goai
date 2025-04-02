@@ -29,7 +29,7 @@ func main() {
 		},
 	}
 
-	db, err := weaviate.New(options)
+	db, err := weaviate.AsEmbedded(options)
 	if err != nil {
 		logger.Fatalf("Failed to initialize embedded Weaviate: %v", err)
 	}

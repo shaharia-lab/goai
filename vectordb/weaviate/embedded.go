@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/shaharia-lab/goai/observability"
 	"io"
 	"log"
 	"net"
@@ -66,7 +67,7 @@ type EmbeddedDB struct {
 	downloadURL   string
 	parsedVersion string
 	mu            sync.Mutex
-	logger        *log.Logger
+	logger        observability.Logger
 }
 
 func getDefaultBinaryPath() string {
@@ -99,10 +100,10 @@ func getDefaultPersistenceDataPath() string {
 	return filepath.Join(".", ".local", "share", "weaviate")
 }
 
-func New(options Options) (*EmbeddedDB, error) {
+func AsEmbedded(options Options, logger observability.Logger) (*EmbeddedDB, error) {
 	db := &EmbeddedDB{
 		options: options,
-		logger:  log.New(os.Stdout, "[weaviate-embedded] ", log.LstdFlags),
+		logger:  logger,
 	}
 
 	if db.options.PersistenceDataPath == "" {
@@ -155,13 +156,13 @@ func (db *EmbeddedDB) Start() error {
 	if db.process != nil {
 		listeningHTTP, listeningGRPC := db.checkListening()
 		if listeningHTTP && listeningGRPC {
-			db.logger.Printf("Weaviate already running with PID %d and listening on http:%d, grpc:%d", db.process.Pid, db.options.Port, db.options.GRPCPort)
+			db.logger.Infof("Weaviate already running with PID %d and listening on http:%d, grpc:%d", db.process.Pid, db.options.Port, db.options.GRPCPort)
 			return nil
 		}
 
-		db.logger.Printf("Existing process found (PID %d) but not listening correctly. Attempting to stop and restart.", db.process.Pid)
+		db.logger.Infof("Existing process found (PID %d) but not listening correctly. Attempting to stop and restart.", db.process.Pid)
 		if err := db.stopInternal(); err != nil {
-			db.logger.Printf("Warning: failed to stop existing process: %v", err)
+			db.logger.Infof("Warning: failed to stop existing process: %v", err)
 		}
 	}
 
@@ -249,13 +250,13 @@ func (db *EmbeddedDB) Start() error {
 			if strings.HasPrefix(envVar, prefix) {
 				cmd.Env[i] = fmt.Sprintf("%s=%s", key, value)
 				found = true
-				// db.logger.Printf("Overriding env var: %s=%s", key, value) // uncomment for debug
+				// db.logger.Infof("Overriding env var: %s=%s", key, value) // uncomment for debug
 				break
 			}
 		}
 		if !found {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
-			// db.logger.Printf("Adding user env var: %s=%s", key, value) // uncomment for debug
+			// db.logger.Infof("Adding user env var: %s=%s", key, value) // uncomment for debug
 		}
 	}
 
@@ -264,29 +265,29 @@ func (db *EmbeddedDB) Start() error {
 	// cmd.Stderr = os.Stderr
 
 	// --- Start the process ---
-	db.logger.Printf("Starting Weaviate binary: %s %v", db.binaryPath, cmdArgs)
-	// db.logger.Printf("Using Environment: %v", cmd.Env) // uncomment for extensive debugging
+	db.logger.Infof("Starting Weaviate binary: %s %v", db.binaryPath, cmdArgs)
+	// db.logger.Infof("Using Environment: %v", cmd.Env) // uncomment for extensive debugging
 
 	err := cmd.Start()
 	if err != nil {
 		return fmt.Errorf("failed to start Weaviate process: %w", err)
 	}
 	db.process = cmd.Process
-	db.logger.Printf("Weaviate process started with PID %d", db.process.Pid)
+	db.logger.Infof("Weaviate process started with PID %d", db.process.Pid)
 
 	// --- Wait for process to be ready ---
-	db.logger.Printf("Waiting for Weaviate to be ready on http:%d and grpc:%d...", db.options.Port, db.options.GRPCPort)
+	db.logger.Infof("Waiting for Weaviate to be ready on http:%d and grpc:%d...", db.options.Port, db.options.GRPCPort)
 	ready := db.waitForListening(startupTimeout)
 	if !ready {
 		// Process started but didn't become ready
-		db.logger.Printf("Weaviate process (PID %d) did not become ready within %v.", db.process.Pid, startupTimeout)
+		db.logger.Infof("Weaviate process (PID %d) did not become ready within %v.", db.process.Pid, startupTimeout)
 		// Try to clean up the potentially lingering process
 		_ = db.stopInternal() // Ignore error here, main error is startup failure
 		return fmt.Errorf("embedded Weaviate did not start listening on ports http:%d, grpc:%d within %v",
 			db.options.Port, db.options.GRPCPort, startupTimeout)
 	}
 
-	db.logger.Printf("Weaviate is ready!")
+	db.logger.Infof("Weaviate is ready!")
 
 	// Start a goroutine to wait for the process to exit unexpectedly
 	go db.monitorProcessExit()
@@ -304,12 +305,12 @@ func (db *EmbeddedDB) Stop() error {
 // stopInternal is the non-locking version for internal use.
 func (db *EmbeddedDB) stopInternal() error {
 	if db.process == nil {
-		db.logger.Println("Stop called but no process was running.")
+		db.logger.Info("Stop called but no process was running.")
 		return nil // Not running, nothing to do
 	}
 
 	pid := db.process.Pid
-	db.logger.Printf("Attempting to stop Weaviate process with PID %d...", pid)
+	db.logger.Infof("Attempting to stop Weaviate process with PID %d...", pid)
 
 	// Try graceful shutdown first (SIGTERM/Interrupt)
 	sig := syscall.SIGTERM
@@ -321,19 +322,19 @@ func (db *EmbeddedDB) stopInternal() error {
 	if err != nil {
 		// Check if the error is because the process already exited
 		if errors.Is(err, os.ErrProcessDone) {
-			db.logger.Printf("Process with PID %d already exited.", pid)
+			db.logger.Infof("Process with PID %d already exited.", pid)
 			db.process = nil
 			return nil
 		}
-		db.logger.Printf("Failed to send signal %v to process PID %d: %v. Attempting forceful kill.", sig, pid, err)
+		db.logger.Infof("Failed to send signal %v to process PID %d: %v. Attempting forceful kill.", sig, pid, err)
 		// Fallback to SIGKILL if SIGTERM failed (or on Windows initially)
 		if killErr := db.process.Kill(); killErr != nil {
 			if errors.Is(killErr, os.ErrProcessDone) {
-				db.logger.Printf("Process with PID %d already exited before kill.", pid)
+				db.logger.Infof("Process with PID %d already exited before kill.", pid)
 				db.process = nil
 				return nil
 			}
-			db.logger.Printf("Failed to kill process PID %d: %v", pid, killErr)
+			db.logger.Infof("Failed to kill process PID %d: %v", pid, killErr)
 			// Don't clear db.process here, maybe it's just a permissions issue
 			return fmt.Errorf("failed to stop process %d: initial signal error: %w, kill error: %v", pid, err, killErr)
 		}
@@ -343,12 +344,12 @@ func (db *EmbeddedDB) stopInternal() error {
 	state, waitErr := db.process.Wait()
 	if waitErr != nil && !errors.Is(waitErr, os.ErrProcessDone) {
 		// Waiting failed for reasons other than it being already done.
-		db.logger.Printf("Error waiting for process %d to exit: %v", pid, waitErr)
+		db.logger.Infof("Error waiting for process %d to exit: %v", pid, waitErr)
 		// We might have killed it successfully anyway, hard to tell for sure without state
 	} else if state != nil {
-		db.logger.Printf("Process %d exited with state: %s", pid, state.String())
+		db.logger.Infof("Process %d exited with state: %s", pid, state.String())
 	} else {
-		db.logger.Printf("Process %d stopped.", pid) // State might be nil if killed forcefully or already exited
+		db.logger.Infof("Process %d stopped.", pid) // State might be nil if killed forcefully or already exited
 	}
 
 	db.process = nil // Mark as stopped
@@ -435,18 +436,18 @@ func (db *EmbeddedDB) determineDownloadURL() error {
 		} else {
 			db.parsedVersion = "unknown-version-from-url"
 		}
-		db.logger.Printf("Using direct download URL: %s (Parsed version: %s)", db.downloadURL, db.parsedVersion)
+		db.logger.Infof("Using direct download URL: %s (Parsed version: %s)", db.downloadURL, db.parsedVersion)
 		return nil
 	}
 
 	// 2. Check if version is "latest"
 	if version == "latest" {
-		db.logger.Println("Fetching latest Weaviate release information from GitHub...")
+		db.logger.Info("Fetching latest Weaviate release information from GitHub...")
 		tag, err := getLatestWeaviateVersionTag()
 		if err != nil {
 			return fmt.Errorf("failed to get latest version tag: %w", err)
 		}
-		db.logger.Printf("Latest Weaviate version tag: %s", tag)
+		db.logger.Infof("Latest Weaviate version tag: %s", tag)
 		db.parsedVersion = tag // tag already includes "v"
 		// Now build the URL from the tag
 		return db.buildDownloadURLFromTag(tag)
@@ -456,7 +457,7 @@ func (db *EmbeddedDB) determineDownloadURL() error {
 	if versionPattern.MatchString(version) {
 		versionTag := "v" + version // Prepend 'v' for GitHub tags
 		db.parsedVersion = versionTag
-		db.logger.Printf("Using specific version: %s", versionTag)
+		db.logger.Infof("Using specific version: %s", versionTag)
 		return db.buildDownloadURLFromTag(versionTag)
 	}
 
@@ -528,7 +529,7 @@ func (db *EmbeddedDB) buildDownloadURLFromTag(versionTag string) error {
 		machineType,
 		packageFormat,
 	)
-	db.logger.Printf("Constructed download URL: %s", db.downloadURL)
+	db.logger.Infof("Constructed download URL: %s", db.downloadURL)
 	return nil
 }
 
@@ -536,7 +537,7 @@ func (db *EmbeddedDB) buildDownloadURLFromTag(versionTag string) error {
 func (db *EmbeddedDB) ensureBinaryExists() error {
 	_, err := os.Stat(db.binaryPath)
 	if err == nil {
-		db.logger.Printf("Weaviate binary already exists: %s", db.binaryPath)
+		db.logger.Infof("Weaviate binary already exists: %s", db.binaryPath)
 		// Optional: Add a checksum verification here if needed
 		return nil // Binary exists
 	}
@@ -546,7 +547,7 @@ func (db *EmbeddedDB) ensureBinaryExists() error {
 	}
 
 	// Binary does not exist, proceed with download and extraction
-	db.logger.Printf("Weaviate binary not found at %s. Downloading from %s...", db.binaryPath, db.downloadURL)
+	db.logger.Infof("Weaviate binary not found at %s. Downloading from %s...", db.binaryPath, db.downloadURL)
 
 	// --- Download ---
 	resp, err := http.Get(db.downloadURL)
@@ -568,7 +569,7 @@ func (db *EmbeddedDB) ensureBinaryExists() error {
 	// Ensure temp file is cleaned up on error
 	defer func() {
 		if err != nil { // Only remove if there was an error during download/extract
-			db.logger.Printf("Cleaning up temporary download file: %s", tmpFilePath)
+			db.logger.Infof("Cleaning up temporary download file: %s", tmpFilePath)
 			_ = os.Remove(tmpFilePath)
 		}
 	}()
@@ -583,7 +584,7 @@ func (db *EmbeddedDB) ensureBinaryExists() error {
 		return fmt.Errorf("failed to close temporary file %s: %w", tmpFilePath, err)
 	}
 
-	db.logger.Printf("Download complete. Extracting binary from %s...", tmpFilePath)
+	db.logger.Infof("Download complete. Extracting binary from %s...", tmpFilePath)
 
 	// --- Extract ---
 	// We need to extract only the 'weaviate' executable and place it at db.binaryPath
@@ -598,7 +599,7 @@ func (db *EmbeddedDB) ensureBinaryExists() error {
 	}
 
 	// Clean up the downloaded archive file regardless of extraction success/failure
-	db.logger.Printf("Cleaning up downloaded archive: %s", tmpFilePath)
+	db.logger.Infof("Cleaning up downloaded archive: %s", tmpFilePath)
 	_ = os.Remove(tmpFilePath)
 
 	if err != nil {
@@ -607,7 +608,7 @@ func (db *EmbeddedDB) ensureBinaryExists() error {
 		return fmt.Errorf("failed to extract binary: %w", err)
 	}
 
-	db.logger.Printf("Binary extracted successfully to %s", targetExecutablePath)
+	db.logger.Infof("Binary extracted successfully to %s", targetExecutablePath)
 
 	// --- Set Executable Permissions ---
 	err = os.Chmod(targetExecutablePath, 0755) // Read/Write/Execute for user, Read/Execute for group/others
@@ -616,7 +617,7 @@ func (db *EmbeddedDB) ensureBinaryExists() error {
 		_ = os.Remove(targetExecutablePath)
 		return fmt.Errorf("failed to set executable permissions on %s: %w", targetExecutablePath, err)
 	}
-	db.logger.Printf("Executable permissions set on %s", targetExecutablePath)
+	db.logger.Infof("Executable permissions set on %s", targetExecutablePath)
 
 	return nil
 }
@@ -734,7 +735,7 @@ func (db *EmbeddedDB) waitForListening(timeout time.Duration) bool {
 		}
 
 		if time.Since(startTime) > timeout {
-			db.logger.Printf("Timeout waiting for ports. HTTP Listening: %v, gRPC Listening: %v", httpListening, grpcListening)
+			db.logger.Infof("Timeout waiting for ports. HTTP Listening: %v, gRPC Listening: %v", httpListening, grpcListening)
 			return false // Timeout reached
 		}
 
@@ -743,7 +744,7 @@ func (db *EmbeddedDB) waitForListening(timeout time.Duration) bool {
 		procStillRunning := db.process != nil
 		db.mu.Unlock()
 		if !procStillRunning {
-			db.logger.Println("Process exited unexpectedly while waiting for ports.")
+			db.logger.Info("Process exited unexpectedly while waiting for ports.")
 			return false
 		}
 
@@ -818,16 +819,16 @@ func (db *EmbeddedDB) monitorProcessExit() {
 	// This avoids clearing the state if Stop() was called followed quickly by a Start().
 	if db.process != nil && db.process.Pid == pid {
 		if err != nil {
-			db.logger.Printf("Error waiting for process PID %d to exit: %v", pid, err)
+			db.logger.Infof("Error waiting for process PID %d to exit: %v", pid, err)
 		} else if state != nil {
-			db.logger.Printf("Weaviate process PID %d exited unexpectedly with state: %s", pid, state.String())
+			db.logger.Infof("Weaviate process PID %d exited unexpectedly with state: %s", pid, state.String())
 		} else {
-			db.logger.Printf("Weaviate process PID %d exited unexpectedly.", pid)
+			db.logger.Infof("Weaviate process PID %d exited unexpectedly.", pid)
 		}
 		db.process = nil // Mark as no longer running
 	} else {
 		// Process already cleared or replaced, likely due to Stop() or another Start()
-		db.logger.Printf("Process PID %d exited, but internal state was already updated.", pid)
+		db.logger.Infof("Process PID %d exited, but internal state was already updated.", pid)
 	}
 }
 
@@ -851,19 +852,19 @@ func (db *EmbeddedDB) StartAndWatch() error {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	db.logger.Println("Embedded Weaviate running. Press Ctrl+C to stop.")
+	db.logger.Info("Embedded Weaviate running. Press Ctrl+C to stop.")
 
 	// Block until a signal is received
 	sig := <-sigs
-	db.logger.Printf("Received signal: %s. Shutting down Weaviate...", sig)
+	db.logger.Infof("Received signal: %s. Shutting down Weaviate...", sig)
 
 	// Attempt to stop the database
 	stopErr := db.Stop()
 	if stopErr != nil {
-		db.logger.Printf("Error stopping Weaviate: %v", stopErr)
+		db.logger.Infof("Error stopping Weaviate: %v", stopErr)
 		return stopErr // Return the error from stopping
 	}
 
-	db.logger.Println("Weaviate stopped gracefully.")
+	db.logger.Info("Weaviate stopped gracefully.")
 	return nil
 }
