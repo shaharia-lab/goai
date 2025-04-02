@@ -40,6 +40,8 @@ const (
 	defaultScheme             = "http"
 	githubAPILatestReleaseURL = "https://api.github.com/repos/weaviate/weaviate/releases/latest"
 	weaviateExecutableName    = "weaviate"
+	defaultReadTimeout        = 600 * time.Second
+	defaultWriteTimeout       = 600 * time.Second
 )
 
 var (
@@ -57,6 +59,10 @@ type Options struct {
 	GRPCPort            int
 	Scheme              string
 	AdditionalEnvVars   map[string]string
+	EnableModules       []string
+	QueryDefaultLimit   int
+	RedirectStdout      bool
+	RedirectStderr      bool
 }
 
 // EmbeddedDB manages the embedded Weaviate instance.
@@ -70,36 +76,7 @@ type EmbeddedDB struct {
 	logger        observability.Logger
 }
 
-func getDefaultBinaryPath() string {
-	cacheDir, err := os.UserCacheDir()
-	if err != nil {
-		usr, err := user.Current()
-		if err == nil {
-			return filepath.Join(usr.HomeDir, ".cache", "weaviate-embedded")
-		}
-		// Fallback if everything else fails
-		return filepath.Join(".", ".cache", "weaviate-embedded")
-	}
-	return filepath.Join(cacheDir, "weaviate-embedded")
-}
-
-func getDefaultPersistenceDataPath() string {
-	dataHome := os.Getenv("XDG_DATA_HOME")
-	if dataHome != "" {
-		return filepath.Join(dataHome, "weaviate")
-	}
-
-	usr, err := user.Current()
-	if err == nil {
-		localShare := filepath.Join(usr.HomeDir, ".local", "share")
-		_ = os.MkdirAll(localShare, 0755)
-		return filepath.Join(localShare, "weaviate")
-
-	}
-
-	return filepath.Join(".", ".local", "share", "weaviate")
-}
-
+// AsEmbedded initializes the EmbeddedDB instance with the provided options and logger.
 func AsEmbedded(options Options, logger observability.Logger) (*EmbeddedDB, error) {
 	db := &EmbeddedDB{
 		options: options,
@@ -107,7 +84,11 @@ func AsEmbedded(options Options, logger observability.Logger) (*EmbeddedDB, erro
 	}
 
 	if db.options.PersistenceDataPath == "" {
-		db.options.PersistenceDataPath = getDefaultPersistenceDataPath()
+		dataPath := getDefaultPersistenceDataPath()
+		db.logger.WithFields(map[string]interface{}{
+			"persistence_data_path": dataPath,
+		}).Debugf("Using default PersistenceDataPath")
+		db.options.PersistenceDataPath = dataPath
 	}
 	if db.options.BinaryPath == "" {
 		db.options.BinaryPath = getDefaultBinaryPath()
@@ -128,14 +109,25 @@ func AsEmbedded(options Options, logger observability.Logger) (*EmbeddedDB, erro
 		db.options.Scheme = defaultScheme
 	}
 
-	if err := checkSupportedPlatform(); err != nil {
-		return nil, err
+	if db.options.QueryDefaultLimit == 0 {
+		db.options.QueryDefaultLimit = 20
 	}
 
+	if len(db.options.EnableModules) == 0 {
+		db.options.EnableModules = []string{"text2vec-openai", "text2vec-cohere", "text2vec-huggingface", "ref2vec-centroid", "generative-openai", "qna-openai", "reranker-cohere"}
+	}
+
+	db.logger.Debug("checking supported platform")
+	if err := checkSupportedPlatform(); err != nil {
+		return nil, fmt.Errorf("weaviate: unsupported platform: %w", err)
+	}
+
+	db.logger.Debug("ensuring necessary directories exist")
 	if err := db.ensurePathsExist(); err != nil {
 		return nil, fmt.Errorf("failed to create directories: %w", err)
 	}
 
+	db.logger.Debug("determining download URL and version for Weaviate binary")
 	if err := db.determineDownloadURL(); err != nil {
 		return nil, fmt.Errorf("failed to determine download URL: %w", err)
 	}
@@ -145,13 +137,22 @@ func AsEmbedded(options Options, logger observability.Logger) (*EmbeddedDB, erro
 		db.options.BinaryPath,
 		fmt.Sprintf("%s-%s-%s", weaviateExecutableName, db.parsedVersion, hex.EncodeToString(versionHash[:])),
 	)
+	db.logger.WithFields(map[string]interface{}{"binary_path": db.binaryPath}).Info("determined download URL and version for Weaviate binary")
 
 	return db, nil
 }
 
+// Start starts the Weaviate process and waits for it to be ready.
 func (db *EmbeddedDB) Start() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
+
+	db.logger.WithFields(map[string]interface{}{
+		"binary_path": db.binaryPath,
+		"port":        db.options.Port,
+		"grpc_port":   db.options.GRPCPort,
+		"hostname":    db.options.Hostname,
+	}).Debug("starting Weaviate process")
 
 	if db.process != nil {
 		listeningHTTP, listeningGRPC := db.checkListening()
@@ -160,11 +161,19 @@ func (db *EmbeddedDB) Start() error {
 			return nil
 		}
 
-		db.logger.Infof("Existing process found (PID %d) but not listening correctly. Attempting to stop and restart.", db.process.Pid)
+		db.logger.WithFields(map[string]interface{}{
+			"process_pid": db.process.Pid,
+		}).Debug("Existing process found but not listening correctly. Attempting to stop and restart")
+
 		if err := db.stopInternal(); err != nil {
-			db.logger.Infof("Warning: failed to stop existing process: %v", err)
+			db.logger.WithErr(err).Warn("Warning: failed to stop existing process")
 		}
 	}
+
+	db.logger.WithFields(map[string]interface{}{
+		"port":      db.options.Port,
+		"grpc_port": db.options.GRPCPort,
+	}).Debug("checking if ports are free")
 
 	errHttp := checkPortFree(db.options.Hostname, db.options.Port)
 	errGrpc := checkPortFree(db.options.Hostname, db.options.GRPCPort)
@@ -183,9 +192,11 @@ func (db *EmbeddedDB) Start() error {
 		if errHttp != nil && errGrpc != nil {
 			errMsg += fmt.Sprintf(". If a Weaviate instance is running, try connecting using ConnectToLocal(port=%d, grpcPort=%d)", db.options.Port, db.options.GRPCPort)
 		}
+
 		return errors.New(errMsg)
 	}
 
+	db.logger.Debug("ensuring binary exists")
 	if err := db.ensureBinaryExists(); err != nil {
 		return fmt.Errorf("failed to ensure Weaviate binary exists: %w", err)
 	}
@@ -194,8 +205,8 @@ func (db *EmbeddedDB) Start() error {
 		"--host", db.options.Hostname,
 		"--port", strconv.Itoa(db.options.Port),
 		"--scheme", db.options.Scheme,
-		"--read-timeout=600s", // Match Python client defaults
-		"--write-timeout=600s",
+		fmt.Sprintf("--read-timeout=%ds", int(defaultReadTimeout.Seconds())),
+		fmt.Sprintf("--write-timeout=%ds", int(defaultWriteTimeout.Seconds())),
 	}
 
 	cmd := exec.Command(db.binaryPath, cmdArgs...)
@@ -216,14 +227,14 @@ func (db *EmbeddedDB) Start() error {
 	}
 
 	setEnv("AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED", "true")
-	setEnv("QUERY_DEFAULTS_LIMIT", "20")
+	setEnv("QUERY_DEFAULTS_LIMIT", strconv.Itoa(db.options.QueryDefaultLimit))
 	setEnv("PERSISTENCE_DATA_PATH", db.options.PersistenceDataPath)
 	setEnv("GRPC_PORT", strconv.Itoa(db.options.GRPCPort))
-	setEnv("PROFILING_PORT", strconv.Itoa(getRandomPort())) // Less critical, get random
+	setEnv("PROFILING_PORT", strconv.Itoa(getRandomPort()))
 
 	gossipBindPort := getRandomPort()
-	dataBindPort := gossipBindPort + 1 // Convention from Python client
-	raftPort := dataBindPort + 1       // Avoid collision with dataBindPort
+	dataBindPort := gossipBindPort + 1
+	raftPort := dataBindPort + 1
 	raftInternalRPCPort := raftPort + 1
 
 	setEnv("CLUSTER_GOSSIP_BIND_PORT", strconv.Itoa(gossipBindPort))
@@ -232,50 +243,62 @@ func (db *EmbeddedDB) Start() error {
 	setEnv("RAFT_INTERNAL_RPC_PORT", strconv.Itoa(raftInternalRPCPort))
 
 	setEnv("RAFT_BOOTSTRAP_EXPECT", "1")
-	// Corrected: Python script had CLUSTER_IN_LOCALHOST, which isn't a standard Weaviate env var.
-	// The combination of other settings implies a single-node setup.
-	// We need a CLUSTER_HOSTNAME and RAFT_JOIN for Weaviate > 1.18
+
 	clusterHostname := fmt.Sprintf("Embedded_at_%d", db.options.Port)
 	setEnv("CLUSTER_HOSTNAME", clusterHostname)
 	setEnv("RAFT_JOIN", fmt.Sprintf("%s:%d", clusterHostname, raftPort))
 
-	setEnv("ENABLE_MODULES", "text2vec-openai,text2vec-cohere,text2vec-huggingface,ref2vec-centroid,generative-openai,qna-openai,reranker-cohere")
+	setEnv("ENABLE_MODULES", strings.Join(db.options.EnableModules, ","))
 
-	// Add user-provided environment variables (potentially overwriting defaults)
 	for key, value := range db.options.AdditionalEnvVars {
-		// Check if we need to replace an existing var or just append
 		found := false
 		prefix := key + "="
 		for i, envVar := range cmd.Env {
 			if strings.HasPrefix(envVar, prefix) {
 				cmd.Env[i] = fmt.Sprintf("%s=%s", key, value)
 				found = true
-				// db.logger.Infof("Overriding env var: %s=%s", key, value) // uncomment for debug
+
+				db.logger.WithFields(map[string]interface{}{
+					"env_var": key,
+					"value":   value,
+				}).Debug("Overriding user env var")
+
 				break
 			}
 		}
 		if !found {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
-			// db.logger.Infof("Adding user env var: %s=%s", key, value) // uncomment for debug
+			db.logger.WithFields(map[string]interface{}{
+				"env_var": key,
+				"value":   value,
+			}).Debug("Adding user env var")
 		}
 	}
 
-	// Redirect stdout/stderr for debugging if needed
-	// cmd.Stdout = os.Stdout
-	// cmd.Stderr = os.Stderr
+	if db.options.RedirectStdout {
+		cmd.Stdout = os.Stdout
+	}
 
-	// --- Start the process ---
-	db.logger.Infof("Starting Weaviate binary: %s %v", db.binaryPath, cmdArgs)
-	// db.logger.Infof("Using Environment: %v", cmd.Env) // uncomment for extensive debugging
+	if db.options.RedirectStderr {
+		cmd.Stderr = os.Stderr
+	}
+
+	db.logger.WithFields(map[string]interface{}{
+		"binary_path": db.binaryPath,
+		"args":        cmdArgs,
+		"env_vars":    cmd.Env,
+	}).Debugf("Starting Weaviate binary")
 
 	err := cmd.Start()
 	if err != nil {
 		return fmt.Errorf("failed to start Weaviate process: %w", err)
 	}
-	db.process = cmd.Process
-	db.logger.Infof("Weaviate process started with PID %d", db.process.Pid)
+	db.logger.WithFields(map[string]interface{}{
+		"pid": cmd.Process.Pid,
+	}).Infof("Weaviate process started")
 
-	// --- Wait for process to be ready ---
+	db.process = cmd.Process
+
 	db.logger.Infof("Waiting for Weaviate to be ready on http:%d and grpc:%d...", db.options.Port, db.options.GRPCPort)
 	ready := db.waitForListening(startupTimeout)
 	if !ready {
@@ -403,20 +426,49 @@ func (db *EmbeddedDB) ensurePathsExist() error {
 	return nil
 }
 
+func getDefaultBinaryPath() string {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		usr, err := user.Current()
+		if err == nil {
+			return filepath.Join(usr.HomeDir, ".cache", "weaviate-embedded")
+		}
+
+		return filepath.Join(".", ".cache", "weaviate-embedded")
+	}
+
+	return filepath.Join(cacheDir, "weaviate-embedded")
+}
+
+func getDefaultPersistenceDataPath() string {
+	dataHome := os.Getenv("XDG_DATA_HOME")
+	if dataHome != "" {
+		filepath.Join(dataHome, "weaviate")
+	}
+
+	usr, err := user.Current()
+	if err == nil {
+		localShare := filepath.Join(usr.HomeDir, ".local", "share")
+		_ = os.MkdirAll(localShare, 0755)
+		return filepath.Join(localShare, "weaviate")
+
+	}
+
+	return filepath.Join(".", ".local", "share", "weaviate")
+}
+
 // checkSupportedPlatform returns an error if the current OS/Arch is not supported.
 func checkSupportedPlatform() error {
 	if runtime.GOOS == "windows" {
-		return errors.New("Windows is not currently supported by this embedded package. See https://github.com/weaviate/weaviate/issues/3315")
+		return errors.New("windows is not currently supported by this embedded package. See https://github.com/weaviate/weaviate/issues/3315")
 	}
-	// Add more checks if necessary (e.g., specific architectures)
+
 	return nil
 }
 
-// determineDownloadURL sets the downloadURL and parsedVersion based on the options.Version.
 func (db *EmbeddedDB) determineDownloadURL() error {
 	version := db.options.Version
 
-	// 1. Check if version is a direct URL
 	_, err := url.ParseRequestURI(version)
 	isURL := err == nil
 
@@ -425,43 +477,45 @@ func (db *EmbeddedDB) determineDownloadURL() error {
 			return fmt.Errorf("invalid version: URL must end with .tar.gz or .zip: %s", version)
 		}
 		db.downloadURL = version
-		// Try to parse version from GitHub URL structure if possible
+
 		if strings.HasPrefix(version, githubReleaseDownloadURL) {
 			parts := strings.Split(strings.TrimPrefix(version, githubReleaseDownloadURL), "/")
 			if len(parts) > 0 {
-				db.parsedVersion = parts[0] // e.g., "v1.26.6"
+				db.parsedVersion = parts[0]
 			} else {
-				db.parsedVersion = "unknown-version-from-url" // Fallback if parsing fails
+				db.logger.Warn("Failed to parse version from URL, using 'unknown-version-from-url'")
+				db.parsedVersion = "unknown-version-from-url"
 			}
 		} else {
 			db.parsedVersion = "unknown-version-from-url"
 		}
-		db.logger.Infof("Using direct download URL: %s (Parsed version: %s)", db.downloadURL, db.parsedVersion)
+
+		db.logger.WithFields(map[string]interface{}{
+			"version":      db.parsedVersion,
+			"download_url": db.downloadURL,
+		}).Debug("Using direct download URL")
+
 		return nil
 	}
 
-	// 2. Check if version is "latest"
 	if version == "latest" {
 		db.logger.Info("Fetching latest Weaviate release information from GitHub...")
 		tag, err := getLatestWeaviateVersionTag()
 		if err != nil {
 			return fmt.Errorf("failed to get latest version tag: %w", err)
 		}
-		db.logger.Infof("Latest Weaviate version tag: %s", tag)
-		db.parsedVersion = tag // tag already includes "v"
-		// Now build the URL from the tag
+		db.logger.WithFields(map[string]interface{}{"tag": tag}).Debug("Latest Weaviate version tag")
+		db.parsedVersion = tag
 		return db.buildDownloadURLFromTag(tag)
 	}
 
-	// 3. Check if version matches semantic version pattern
 	if versionPattern.MatchString(version) {
-		versionTag := "v" + version // Prepend 'v' for GitHub tags
+		versionTag := "v" + version
 		db.parsedVersion = versionTag
-		db.logger.Infof("Using specific version: %s", versionTag)
+		db.logger.WithFields(map[string]interface{}{"version_tag": versionTag}).Debug("Using specific version")
 		return db.buildDownloadURLFromTag(versionTag)
 	}
 
-	// 4. Invalid version format
 	return fmt.Errorf("invalid version format: %s. Use 'latest', 'X.Y.Z', or a direct URL ending in .tar.gz/.zip", version)
 }
 
@@ -731,15 +785,17 @@ func (db *EmbeddedDB) waitForListening(timeout time.Duration) bool {
 	for {
 		httpListening, grpcListening := db.checkListening()
 		if httpListening && grpcListening {
-			return true // Both ports are ready
+			db.logger.Infof("Ports are now listening. HTTP: %v, gRPC: %v", httpListening, grpcListening)
+			return true
 		}
+
+		db.logger.Infof("Waiting for ports. HTTP Listening: %v, gRPC Listening: %v", httpListening, grpcListening)
 
 		if time.Since(startTime) > timeout {
 			db.logger.Infof("Timeout waiting for ports. HTTP Listening: %v, gRPC Listening: %v", httpListening, grpcListening)
-			return false // Timeout reached
+			return false
 		}
 
-		// Check if the process exited prematurely
 		db.mu.Lock()
 		procStillRunning := db.process != nil
 		db.mu.Unlock()
@@ -752,13 +808,16 @@ func (db *EmbeddedDB) waitForListening(timeout time.Duration) bool {
 	}
 }
 
-// checkListening performs the actual network check for both ports.
 func (db *EmbeddedDB) checkListening() (http bool, grpc bool) {
 	// Check HTTP port
 	connHTTP, errHTTP := net.DialTimeout("tcp", net.JoinHostPort(db.options.Hostname, strconv.Itoa(db.options.Port)), checkInterval)
 	if errHTTP == nil && connHTTP != nil {
 		http = true
 		_ = connHTTP.Close()
+	} else {
+		db.logger.WithFields(map[string]interface{}{
+			"error": errHTTP,
+		}).Debug("HTTP port check failed")
 	}
 
 	// Check gRPC port
@@ -766,6 +825,10 @@ func (db *EmbeddedDB) checkListening() (http bool, grpc bool) {
 	if errGRPC == nil && connGRPC != nil {
 		grpc = true
 		_ = connGRPC.Close()
+	} else {
+		db.logger.WithFields(map[string]interface{}{
+			"error": errGRPC,
+		}).Debug("gRPC port check failed")
 	}
 
 	return http, grpc
