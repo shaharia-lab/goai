@@ -78,9 +78,9 @@ func (p *OpenAILLMProvider) createCompletionParams(messages []openai.ChatComplet
 	return openai.ChatCompletionNewParams{
 		Messages:    openai.F(messages),
 		Model:       openai.F(p.model),
-		MaxTokens:   openai.Int(config.MaxToken),
-		TopP:        openai.Float(config.TopP),
-		Temperature: openai.Float(config.Temperature),
+		MaxTokens:   openai.Int(config.maxToken),
+		TopP:        openai.Float(config.topP),
+		Temperature: openai.Float(config.temperature),
 	}
 }
 
@@ -106,7 +106,7 @@ func (p *OpenAILLMProvider) GetResponse(ctx context.Context, messages []LLMMessa
 
 	var tools []openai.ChatCompletionToolParam
 
-	toolLists, err := config.toolsProvider.ListTools(ctx, config.AllowedTools)
+	toolLists, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("failed to list tools: %w", err)
 	}

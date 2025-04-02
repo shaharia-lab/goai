@@ -13,10 +13,12 @@ func TestNewRequestConfig(t *testing.T) {
 		{
 			name: "no options - should use defaults",
 			expected: LLMRequestConfig{
-				MaxToken:    500,
-				TopP:        0.5,
-				Temperature: 0.5,
-				TopK:        40,
+				maxToken:      1000,
+				topP:          0.5,
+				temperature:   0.5,
+				topK:          40,
+				enableTracing: false,
+				toolsProvider: NewToolsProvider(),
 			},
 		},
 		{
@@ -25,10 +27,10 @@ func TestNewRequestConfig(t *testing.T) {
 				WithMaxToken(2000),
 			},
 			expected: LLMRequestConfig{
-				MaxToken:    2000,
-				TopP:        0.5,
-				Temperature: 0.5,
-				TopK:        40,
+				maxToken:    2000,
+				topP:        0.5,
+				temperature: 0.5,
+				topK:        40,
 			},
 		},
 		{
@@ -40,10 +42,10 @@ func TestNewRequestConfig(t *testing.T) {
 				WithTopK(100),
 			},
 			expected: LLMRequestConfig{
-				MaxToken:    2000,
-				TopP:        0.95,
-				Temperature: 0.8,
-				TopK:        100,
+				maxToken:    2000,
+				topP:        0.95,
+				temperature: 0.8,
+				topK:        100,
 			},
 		},
 		{
@@ -55,10 +57,10 @@ func TestNewRequestConfig(t *testing.T) {
 				WithTopK(0),
 			},
 			expected: LLMRequestConfig{
-				MaxToken:    500,
-				TopP:        0.5,
-				Temperature: 0.5,
-				TopK:        40,
+				maxToken:    1000,
+				topP:        0.5,
+				temperature: 0.5,
+				topK:        40,
 			},
 		},
 		{
@@ -70,10 +72,10 @@ func TestNewRequestConfig(t *testing.T) {
 				WithTopK(-10),
 			},
 			expected: LLMRequestConfig{
-				MaxToken:    500,
-				TopP:        0.5,
-				Temperature: 0.5,
-				TopK:        40,
+				maxToken:    1000,
+				topP:        0.5,
+				temperature: 0.5,
+				topK:        40,
 			},
 		},
 		{
@@ -85,10 +87,10 @@ func TestNewRequestConfig(t *testing.T) {
 				WithTopK(0),
 			},
 			expected: LLMRequestConfig{
-				MaxToken:    2000,
-				TopP:        0.5,
-				Temperature: 0.8,
-				TopK:        40,
+				maxToken:    2000,
+				topP:        0.5,
+				temperature: 0.8,
+				topK:        40,
 			},
 		},
 	}
@@ -97,17 +99,17 @@ func TestNewRequestConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := NewRequestConfig(tt.opts...)
 
-			if result.MaxToken != tt.expected.MaxToken {
-				t.Errorf("MaxToken: expected %d, got %d", tt.expected.MaxToken, result.MaxToken)
+			if result.maxToken != tt.expected.maxToken {
+				t.Errorf("maxToken: expected %d, got %d", tt.expected.maxToken, result.maxToken)
 			}
-			if result.TopP != tt.expected.TopP {
-				t.Errorf("TopP: expected %f, got %f", tt.expected.TopP, result.TopP)
+			if result.topP != tt.expected.topP {
+				t.Errorf("topP: expected %f, got %f", tt.expected.topP, result.topP)
 			}
-			if result.Temperature != tt.expected.Temperature {
-				t.Errorf("Temperature: expected %f, got %f", tt.expected.Temperature, result.Temperature)
+			if result.temperature != tt.expected.temperature {
+				t.Errorf("temperature: expected %f, got %f", tt.expected.temperature, result.temperature)
 			}
-			if result.TopK != tt.expected.TopK {
-				t.Errorf("TopK: expected %d, got %d", tt.expected.TopK, result.TopK)
+			if result.topK != tt.expected.topK {
+				t.Errorf("topK: expected %d, got %d", tt.expected.topK, result.topK)
 			}
 		})
 	}
@@ -131,12 +133,12 @@ func TestWithMaxToken(t *testing.T) {
 			WithMaxToken(tt.input)(&config)
 
 			if tt.shouldApply {
-				if config.MaxToken != tt.input {
-					t.Errorf("expected MaxToken to be %d, got %d", tt.input, config.MaxToken)
+				if config.maxToken != tt.input {
+					t.Errorf("expected maxToken to be %d, got %d", tt.input, config.maxToken)
 				}
 			} else {
-				if config.MaxToken != DefaultConfig.MaxToken {
-					t.Errorf("expected MaxToken to remain %d, got %d", DefaultConfig.MaxToken, config.MaxToken)
+				if config.maxToken != DefaultConfig.maxToken {
+					t.Errorf("expected maxToken to remain %d, got %d", DefaultConfig.maxToken, config.maxToken)
 				}
 			}
 		})
@@ -160,12 +162,12 @@ func TestWithTopP(t *testing.T) {
 			WithTopP(tt.input)(&config)
 
 			if tt.shouldApply {
-				if config.TopP != tt.input {
-					t.Errorf("expected TopP to be %f, got %f", tt.input, config.TopP)
+				if config.topP != tt.input {
+					t.Errorf("expected topP to be %f, got %f", tt.input, config.topP)
 				}
 			} else {
-				if config.TopP != DefaultConfig.TopP {
-					t.Errorf("expected TopP to remain %f, got %f", DefaultConfig.TopP, config.TopP)
+				if config.topP != DefaultConfig.topP {
+					t.Errorf("expected topP to remain %f, got %f", DefaultConfig.topP, config.topP)
 				}
 			}
 		})
@@ -189,12 +191,12 @@ func TestWithTemperature(t *testing.T) {
 			WithTemperature(tt.input)(&config)
 
 			if tt.shouldApply {
-				if config.Temperature != tt.input {
-					t.Errorf("expected Temperature to be %f, got %f", tt.input, config.Temperature)
+				if config.temperature != tt.input {
+					t.Errorf("expected temperature to be %f, got %f", tt.input, config.temperature)
 				}
 			} else {
-				if config.Temperature != DefaultConfig.Temperature {
-					t.Errorf("expected Temperature to remain %f, got %f", DefaultConfig.Temperature, config.Temperature)
+				if config.temperature != DefaultConfig.temperature {
+					t.Errorf("expected temperature to remain %f, got %f", DefaultConfig.temperature, config.temperature)
 				}
 			}
 		})
@@ -218,12 +220,12 @@ func TestWithTopK(t *testing.T) {
 			WithTopK(tt.input)(&config)
 
 			if tt.shouldApply {
-				if config.TopK != tt.input {
-					t.Errorf("expected TopK to be %d, got %d", tt.input, config.TopK)
+				if config.topK != tt.input {
+					t.Errorf("expected topK to be %d, got %d", tt.input, config.topK)
 				}
 			} else {
-				if config.TopK != DefaultConfig.TopK {
-					t.Errorf("expected TopK to remain %d, got %d", DefaultConfig.TopK, config.TopK)
+				if config.topK != DefaultConfig.topK {
+					t.Errorf("expected topK to remain %d, got %d", DefaultConfig.topK, config.topK)
 				}
 			}
 		})
