@@ -7,14 +7,14 @@
 package main
 
 import (
+	"github.com/shaharia-lab/goai/observability"
 	"github.com/shaharia-lab/goai/vectordb/weaviate"
-	"log"
 )
 
 func main() {
-	logger := log.New(log.Writer(), "[main] ", log.LstdFlags)
-
 	options := weaviate.Options{
+		//RedirectStderr: true,
+		//RedirectStdout: true,
 		// PersistenceDataPath: "/path/to/custom/data", // Optional: Custom data path
 		// BinaryPath:          "/path/to/custom/bin",  // Optional: Custom binary cache
 		// Version:             "1.25.3",               // Optional: Specific version
@@ -29,7 +29,9 @@ func main() {
 		},
 	}
 
-	db, err := weaviate.AsEmbedded(options)
+	logger := observability.NewDefaultLogger()
+
+	db, err := weaviate.AsEmbedded(options, logger)
 	if err != nil {
 		logger.Fatalf("Failed to initialize embedded Weaviate: %v", err)
 	}
@@ -59,13 +61,13 @@ func main() {
 	*/
 
 	// Option 2: Start and block until Ctrl+C (SIGINT/SIGTERM)
-	logger.Println("Starting embedded Weaviate and watching for signals...")
+	logger.Info("Starting embedded Weaviate and watching for signals...")
 	err = db.StartAndWatch() // This will block until signal or startup error
 	if err != nil {
 		// This error usually comes from Stop() if it fails during shutdown
-		logger.Printf("Shutdown completed with error: %v", err)
+		logger.WithErr(err).Error("Shutdown completed with error")
 	} else {
-		logger.Println("Shutdown completed successfully.")
+		logger.Info("Shutdown completed successfully.")
 	}
 }
 ```
