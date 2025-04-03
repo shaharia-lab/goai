@@ -42,6 +42,7 @@ const (
 	weaviateExecutableName    = "weaviate"
 	defaultReadTimeout        = 600 * time.Second
 	defaultWriteTimeout       = 600 * time.Second
+	startupSettleDelay        = 5 * time.Second
 )
 
 var (
@@ -154,27 +155,20 @@ func (db *EmbeddedDB) Start() error {
 		"hostname":    db.options.Hostname,
 	}).Debug("starting Weaviate process")
 
+	// Force cleanup any existing processes that might be using our ports
 	if db.process != nil {
-		listeningHTTP, listeningGRPC := db.checkListening()
-		if listeningHTTP && listeningGRPC {
-			db.logger.Infof("Weaviate already running with PID %d and listening on http:%d, grpc:%d", db.process.Pid, db.options.Port, db.options.GRPCPort)
-			return nil
-		}
-
 		db.logger.WithFields(map[string]interface{}{
 			"process_pid": db.process.Pid,
-		}).Debug("Existing process found but not listening correctly. Attempting to stop and restart")
+		}).Debug("Existing process reference found - stopping it first")
 
 		if err := db.stopInternal(); err != nil {
-			db.logger.WithErr(err).Warn("Warning: failed to stop existing process")
+			db.logger.WithFields(map[string]interface{}{
+				"error": err,
+			}).Warn("Warning: failed to stop existing process")
 		}
 	}
 
-	db.logger.WithFields(map[string]interface{}{
-		"port":      db.options.Port,
-		"grpc_port": db.options.GRPCPort,
-	}).Debug("checking if ports are free")
-
+	// Check for any process using our ports regardless of our tracking
 	errHttp := checkPortFree(db.options.Hostname, db.options.Port)
 	errGrpc := checkPortFree(db.options.Hostname, db.options.GRPCPort)
 	if errHttp != nil || errGrpc != nil {
@@ -212,6 +206,13 @@ func (db *EmbeddedDB) Start() error {
 	cmd := exec.Command(db.binaryPath, cmdArgs...)
 	cmd.Env = os.Environ()
 
+	// Set up proper process group for easier cleanup - prevents zombies
+	if runtime.GOOS != "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setpgid: true, // Use a new process group
+		}
+	}
+
 	setEnv := func(key, value string) {
 		_, existsInAdditional := db.options.AdditionalEnvVars[key]
 		alreadySet := false
@@ -226,6 +227,7 @@ func (db *EmbeddedDB) Start() error {
 		}
 	}
 
+	// Configure environment variables
 	setEnv("AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED", "true")
 	setEnv("QUERY_DEFAULTS_LIMIT", strconv.Itoa(db.options.QueryDefaultLimit))
 	setEnv("PERSISTENCE_DATA_PATH", db.options.PersistenceDataPath)
@@ -241,15 +243,14 @@ func (db *EmbeddedDB) Start() error {
 	setEnv("CLUSTER_DATA_BIND_PORT", strconv.Itoa(dataBindPort))
 	setEnv("RAFT_PORT", strconv.Itoa(raftPort))
 	setEnv("RAFT_INTERNAL_RPC_PORT", strconv.Itoa(raftInternalRPCPort))
-
 	setEnv("RAFT_BOOTSTRAP_EXPECT", "1")
 
 	clusterHostname := fmt.Sprintf("Embedded_at_%d", db.options.Port)
 	setEnv("CLUSTER_HOSTNAME", clusterHostname)
 	setEnv("RAFT_JOIN", fmt.Sprintf("%s:%d", clusterHostname, raftPort))
-
 	setEnv("ENABLE_MODULES", strings.Join(db.options.EnableModules, ","))
 
+	// Add user-specified environment variables
 	for key, value := range db.options.AdditionalEnvVars {
 		found := false
 		prefix := key + "="
@@ -257,21 +258,11 @@ func (db *EmbeddedDB) Start() error {
 			if strings.HasPrefix(envVar, prefix) {
 				cmd.Env[i] = fmt.Sprintf("%s=%s", key, value)
 				found = true
-
-				db.logger.WithFields(map[string]interface{}{
-					"env_var": key,
-					"value":   value,
-				}).Debug("Overriding user env var")
-
 				break
 			}
 		}
 		if !found {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
-			db.logger.WithFields(map[string]interface{}{
-				"env_var": key,
-				"value":   value,
-			}).Debug("Adding user env var")
 		}
 	}
 
@@ -286,35 +277,57 @@ func (db *EmbeddedDB) Start() error {
 	db.logger.WithFields(map[string]interface{}{
 		"binary_path": db.binaryPath,
 		"args":        cmdArgs,
-		"env_vars":    cmd.Env,
 	}).Debugf("Starting Weaviate binary")
 
 	err := cmd.Start()
 	if err != nil {
 		return fmt.Errorf("failed to start Weaviate process: %w", err)
 	}
-	db.logger.WithFields(map[string]interface{}{
-		"pid": cmd.Process.Pid,
-	}).Infof("Weaviate process started")
 
 	db.process = cmd.Process
+	db.logger.WithFields(map[string]interface{}{
+		"pid": cmd.Process.Pid,
+	}).Infof("Weaviate process started with PID %d", cmd.Process.Pid)
+
+	// Start a goroutine to properly wait on the process
+	// This is crucial to prevent zombie processes
+	go func() {
+		err := cmd.Wait()
+		db.mu.Lock()
+		defer db.mu.Unlock()
+
+		// Only update state if this is still the current process
+		if db.process != nil && db.process.Pid == cmd.Process.Pid {
+			if err != nil {
+				exitErr, ok := err.(*exec.ExitError)
+				if ok {
+					db.logger.Infof("Weaviate process exited with code: %d", exitErr.ExitCode())
+				} else {
+					db.logger.Infof("Weaviate process exited with error: %v", err)
+				}
+			} else {
+				db.logger.Infof("Weaviate process exited normally")
+			}
+			db.process = nil
+		}
+	}()
 
 	db.logger.Infof("Waiting for Weaviate to be ready on http:%d and grpc:%d...", db.options.Port, db.options.GRPCPort)
+	time.Sleep(startupSettleDelay)
 	ready := db.waitForListening(startupTimeout)
+
 	if !ready {
-		// Process started but didn't become ready
-		db.logger.Infof("Weaviate process (PID %d) did not become ready within %v.", db.process.Pid, startupTimeout)
-		// Try to clean up the potentially lingering process
-		_ = db.stopInternal() // Ignore error here, main error is startup failure
+		db.logger.Infof("Weaviate process (PID %d) did not become ready within %v", cmd.Process.Pid, startupTimeout)
+		if err := db.stopInternal(); err != nil {
+			db.logger.WithFields(map[string]interface{}{
+				"error": err,
+			}).Warn("Failed to stop process after timeout")
+		}
 		return fmt.Errorf("embedded Weaviate did not start listening on ports http:%d, grpc:%d within %v",
 			db.options.Port, db.options.GRPCPort, startupTimeout)
 	}
 
 	db.logger.Infof("Weaviate is ready!")
-
-	// Start a goroutine to wait for the process to exit unexpectedly
-	go db.monitorProcessExit()
-
 	return nil
 }
 
@@ -335,47 +348,65 @@ func (db *EmbeddedDB) stopInternal() error {
 	pid := db.process.Pid
 	db.logger.Infof("Attempting to stop Weaviate process with PID %d...", pid)
 
-	// Try graceful shutdown first (SIGTERM/Interrupt)
-	sig := syscall.SIGTERM
-	if runtime.GOOS == "windows" {
-		sig = syscall.SIGKILL // Windows doesn't really handle SIGTERM well for console apps
-	}
-
-	err := db.process.Signal(sig)
-	if err != nil {
-		// Check if the error is because the process already exited
-		if errors.Is(err, os.ErrProcessDone) {
-			db.logger.Infof("Process with PID %d already exited.", pid)
-			db.process = nil
-			return nil
+	// Try to kill the entire process group to prevent zombies
+	pgid, err := syscall.Getpgid(pid)
+	if err == nil {
+		// Send SIGTERM to the process group
+		err = syscall.Kill(-pgid, syscall.SIGTERM)
+		if err != nil && err != syscall.ESRCH {
+			db.logger.Infof("Failed to send SIGTERM to process group %d: %v", pgid, err)
 		}
-		db.logger.Infof("Failed to send signal %v to process PID %d: %v. Attempting forceful kill.", sig, pid, err)
-		// Fallback to SIGKILL if SIGTERM failed (or on Windows initially)
-		if killErr := db.process.Kill(); killErr != nil {
-			if errors.Is(killErr, os.ErrProcessDone) {
-				db.logger.Infof("Process with PID %d already exited before kill.", pid)
-				db.process = nil
-				return nil
-			}
-			db.logger.Infof("Failed to kill process PID %d: %v", pid, killErr)
-			// Don't clear db.process here, maybe it's just a permissions issue
-			return fmt.Errorf("failed to stop process %d: initial signal error: %w, kill error: %v", pid, err, killErr)
-		}
-	}
-
-	// Wait for the process to exit after signaling
-	state, waitErr := db.process.Wait()
-	if waitErr != nil && !errors.Is(waitErr, os.ErrProcessDone) {
-		// Waiting failed for reasons other than it being already done.
-		db.logger.Infof("Error waiting for process %d to exit: %v", pid, waitErr)
-		// We might have killed it successfully anyway, hard to tell for sure without state
-	} else if state != nil {
-		db.logger.Infof("Process %d exited with state: %s", pid, state.String())
 	} else {
-		db.logger.Infof("Process %d stopped.", pid) // State might be nil if killed forcefully or already exited
+		// Fallback to single process SIGTERM if we couldn't get process group
+		err = db.process.Signal(syscall.SIGTERM)
+		if err != nil && !errors.Is(err, os.ErrProcessDone) {
+			db.logger.WithFields(map[string]interface{}{
+				"pid":   pid,
+				"error": err,
+			}).Infof("Failed to send SIGTERM to process")
+		}
 	}
 
-	db.process = nil // Mark as stopped
+	// Wait a brief moment for graceful termination
+	time.Sleep(500 * time.Millisecond)
+
+	// Check if process is still running
+	process, err := os.FindProcess(pid)
+	if err != nil || process == nil {
+		db.process = nil
+		db.logger.Infof("Process %d terminated gracefully.", pid)
+		return nil
+	}
+
+	// Send signal 0 to check if process exists
+	err = process.Signal(syscall.Signal(0))
+	if err != nil {
+		// Process no longer exists
+		db.process = nil
+		db.logger.Infof("Process %d terminated gracefully.", pid)
+		return nil
+	}
+
+	// Process still exists, try SIGKILL
+	db.logger.Infof("Process %d didn't terminate with SIGTERM, trying SIGKILL...", pid)
+	if pgid != 0 {
+		// Kill the entire process group
+		err = syscall.Kill(-pgid, syscall.SIGKILL)
+	} else {
+		err = db.process.Kill()
+	}
+
+	// Final check
+	time.Sleep(200 * time.Millisecond)
+	process, _ = os.FindProcess(pid)
+	if process != nil {
+		err = process.Signal(syscall.Signal(0))
+		if err == nil {
+			db.logger.Warnf("Process %d possibly still running after SIGKILL.", pid)
+		}
+	}
+
+	db.process = nil // Mark as stopped even if we couldn't verify
 	return nil
 }
 
@@ -809,25 +840,35 @@ func (db *EmbeddedDB) waitForListening(timeout time.Duration) bool {
 }
 
 func (db *EmbeddedDB) checkListening() (http bool, grpc bool) {
-	// Check HTTP port
-	connHTTP, errHTTP := net.DialTimeout("tcp", net.JoinHostPort(db.options.Hostname, strconv.Itoa(db.options.Port)), checkInterval)
+	httpAddress := net.JoinHostPort(db.options.Hostname, strconv.Itoa(db.options.Port)) // Should be "127.0.0.1:8079"
+	// Use the IPv6 loopback address for the gRPC check
+	grpcAddress := net.JoinHostPort("::1", strconv.Itoa(db.options.GRPCPort)) // Should now correctly produce "[::1]:50060"
+
+	dialTimeout := 500 * time.Millisecond // Optional: Give dial a bit more time than the check interval
+
+	// Check HTTP port (using IPv4 loopback as before)
+	db.logger.Debugf("Attempting to dial HTTP: %s", httpAddress)
+	connHTTP, errHTTP := net.DialTimeout("tcp", httpAddress, dialTimeout)
 	if errHTTP == nil && connHTTP != nil {
 		http = true
 		_ = connHTTP.Close()
 	} else {
 		db.logger.WithFields(map[string]interface{}{
-			"error": errHTTP,
+			"address": httpAddress,
+			"error":   errHTTP,
 		}).Debug("HTTP port check failed")
 	}
 
-	// Check gRPC port
-	connGRPC, errGRPC := net.DialTimeout("tcp", net.JoinHostPort(db.options.Hostname, strconv.Itoa(db.options.GRPCPort)), checkInterval)
+	// Check gRPC port (using IPv6 loopback)
+	db.logger.Debugf("Attempting to dial gRPC: %s", grpcAddress)
+	connGRPC, errGRPC := net.DialTimeout("tcp", grpcAddress, dialTimeout)
 	if errGRPC == nil && connGRPC != nil {
 		grpc = true
 		_ = connGRPC.Close()
 	} else {
 		db.logger.WithFields(map[string]interface{}{
-			"error": errGRPC,
+			"address": grpcAddress,
+			"error":   errGRPC,
 		}).Debug("gRPC port check failed")
 	}
 
