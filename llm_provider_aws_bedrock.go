@@ -2,11 +2,17 @@ package goai
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+	"github.com/shaharia-lab/goai/mcp"
 )
 
 // BedrockLLMProvider implements the LLMProvider interface using AWS Bedrock's official Go SDK.
@@ -34,188 +40,228 @@ func NewBedrockLLMProvider(config BedrockProviderConfig) *BedrockLLMProvider {
 	}
 }
 
-// GetResponse generates a response using Bedrock's API for the given messages and configuration.
-// It supports different message roles (user, assistant) and handles them appropriately.
+// GetResponse generates a response using Bedrock's Converse API for the given messages and configuration.
+// It supports different message roles (user, assistant), system messages, and tool calling.
+// It handles multi-turn conversations automatically when tools are used.
 func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
 	startTime := time.Now()
 
+	var totalInputTokens, totalOutputTokens int32
+
 	var bedrockMessages []types.Message
+	var systemPrompts []types.SystemContentBlock
+
 	for _, msg := range messages {
-		role := types.ConversationRoleUser
-		if msg.Role == "assistant" {
-			role = types.ConversationRoleAssistant
+		switch msg.Role {
+		case SystemRole:
+			systemPrompts = append(systemPrompts, &types.SystemContentBlockMemberText{
+				Value: msg.Text,
+			})
+		case UserRole:
+			bedrockMessages = append(bedrockMessages, types.Message{
+				Role: types.ConversationRoleUser,
+				Content: []types.ContentBlock{
+					&types.ContentBlockMemberText{Value: msg.Text},
+				},
+			})
+		case AssistantRole:
+			bedrockMessages = append(bedrockMessages, types.Message{
+				Role: types.ConversationRoleAssistant,
+				Content: []types.ContentBlock{
+					&types.ContentBlockMemberText{Value: msg.Text},
+				},
+			})
+		default:
+			bedrockMessages = append(bedrockMessages, types.Message{
+				Role: types.ConversationRoleUser,
+				Content: []types.ContentBlock{
+					&types.ContentBlockMemberText{Value: msg.Text},
+				},
+			})
+		}
+	}
+
+	var toolConfig *types.ToolConfiguration
+	if config.toolsProvider != nil {
+		mcpTools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
+		if err != nil {
+			return LLMResponse{}, fmt.Errorf("error listing tools: %w", err)
 		}
 
-		bedrockMessages = append(bedrockMessages, types.Message{
-			Role: role,
-			Content: []types.ContentBlock{
-				&types.ContentBlockMemberText{
-					Value: msg.Text,
-				},
-			},
-		})
-	}
+		if len(mcpTools) > 0 {
+			var bedrockTools []types.Tool
+			for _, mcpTool := range mcpTools {
+				var schemaDoc map[string]interface{}
+				if err := json.Unmarshal(mcpTool.InputSchema, &schemaDoc); err != nil {
+					return LLMResponse{}, fmt.Errorf("failed to unmarshal tool input schema for '%s': %w", mcpTool.Name, err)
+				}
 
-	input := &bedrockruntime.ConverseInput{
-		ModelId:  &p.model,
-		Messages: bedrockMessages,
-		InferenceConfig: &types.InferenceConfiguration{
-			Temperature: aws.Float32(float32(config.temperature)),
-			TopP:        aws.Float32(float32(config.topP)),
-			MaxTokens:   aws.Int32(int32(config.maxToken)),
-		},
-	}
+				toolSpec := types.ToolSpecification{
+					Name:        aws.String(mcpTool.Name),
+					Description: aws.String(mcpTool.Description),
+					InputSchema: &types.ToolInputSchemaMemberJson{
+						Value: document.NewLazyDocument(schemaDoc),
+					},
+				}
 
-	output, err := p.client.Converse(ctx, input)
-	if err != nil {
-		return LLMResponse{}, err
-	}
+				bedrockTool := types.ToolMemberToolSpec{
+					Value: toolSpec,
+				}
 
-	var responseText string
-	if msgOutput, ok := output.Output.(*types.ConverseOutputMemberMessage); ok {
-		for _, block := range msgOutput.Value.Content {
-			if textBlock, ok := block.(*types.ContentBlockMemberText); ok {
-				responseText += textBlock.Value
+				bedrockTools = append(bedrockTools, &bedrockTool)
 			}
+			toolConfig = &types.ToolConfiguration{
+				Tools: bedrockTools,
+			}
+		}
+	}
+
+	var finalResponseTextBuilder strings.Builder
+
+	for {
+		input := &bedrockruntime.ConverseInput{
+			ModelId:  &p.model,
+			Messages: bedrockMessages,
+			InferenceConfig: &types.InferenceConfiguration{
+				Temperature: aws.Float32(float32(config.temperature)),
+				TopP:        aws.Float32(float32(config.topP)),
+				MaxTokens:   aws.Int32(int32(config.maxToken)),
+			},
+			System:     systemPrompts,
+			ToolConfig: toolConfig,
+		}
+
+		output, err := p.client.Converse(ctx, input)
+		if err != nil {
+			return LLMResponse{}, fmt.Errorf("bedrock Converse API call failed: %w", err)
+		}
+
+		totalInputTokens += *output.Usage.InputTokens
+		totalOutputTokens += *output.Usage.OutputTokens
+
+		msgOutput, ok := output.Output.(*types.ConverseOutputMemberMessage)
+		if !ok {
+			if output.StopReason == types.StopReasonEndTurn || output.StopReason == types.StopReasonMaxTokens {
+				break
+			}
+			if output.StopReason != types.StopReasonToolUse {
+				break
+			}
+
+			return LLMResponse{}, fmt.Errorf("unexpected Bedrock response: stop reason is %s, but output is not a message", output.StopReason)
+		}
+
+		assistantMessage := msgOutput.Value
+		bedrockMessages = append(bedrockMessages, assistantMessage)
+
+		var toolResultsContent []types.ContentBlock
+		var hasToolUse bool = false
+
+		for _, block := range assistantMessage.Content {
+			switch content := block.(type) {
+			case *types.ContentBlockMemberText:
+				finalResponseTextBuilder.WriteString(content.Value)
+
+			case *types.ContentBlockMemberToolUse:
+				hasToolUse = true
+				toolUseID := *content.Value.ToolUseId
+				toolName := *content.Value.Name
+				toolInput := content.Value.Input
+
+				if config.toolsProvider == nil {
+					return LLMResponse{}, fmt.Errorf("model requested tool '%s', but no toolsProvider is configured", toolName)
+				}
+
+				inputBytes, err := json.Marshal(toolInput)
+				if err != nil {
+					return LLMResponse{}, fmt.Errorf("failed to marshal tool input for '%s': %w", toolName, err)
+				}
+
+				toolResponse, err := config.toolsProvider.ExecuteTool(ctx, mcp.CallToolParams{
+					Name:      toolName,
+					Arguments: inputBytes,
+				})
+				if err != nil {
+					toolResultContent := &types.ContentBlockMemberToolResult{
+						Value: types.ToolResultBlock{
+							ToolUseId: aws.String(toolUseID),
+							Status:    types.ToolResultStatusError,
+							Content: []types.ToolResultContentBlock{
+								&types.ToolResultContentBlockMemberText{
+									Value: fmt.Sprintf("Error executing tool '%s': %v", toolName, err),
+								},
+							},
+						},
+					}
+					toolResultsContent = append(toolResultsContent, toolResultContent)
+					continue
+				}
+
+				if toolResponse.Content == nil || len(toolResponse.Content) == 0 {
+					toolResultContent := &types.ContentBlockMemberToolResult{
+						Value: types.ToolResultBlock{
+							ToolUseId: aws.String(toolUseID),
+							Status:    types.ToolResultStatusSuccess,
+							Content: []types.ToolResultContentBlock{
+								&types.ToolResultContentBlockMemberText{
+									Value: "",
+								},
+							},
+						},
+					}
+					toolResultsContent = append(toolResultsContent, toolResultContent)
+					continue
+				}
+
+				var bedrockResultContent []types.ToolResultContentBlock
+				for _, mcpContent := range toolResponse.Content {
+					bedrockResultContent = append(bedrockResultContent, &types.ToolResultContentBlockMemberText{
+						Value: mcpContent.Text,
+					})
+				}
+
+				toolResultStatus := types.ToolResultStatusSuccess
+				if toolResponse.IsError {
+					toolResultStatus = types.ToolResultStatusError
+				}
+
+				toolResultBlock := &types.ContentBlockMemberToolResult{
+					Value: types.ToolResultBlock{
+						ToolUseId: aws.String(toolUseID),
+						Content:   bedrockResultContent,
+						Status:    toolResultStatus,
+					},
+				}
+				toolResultsContent = append(toolResultsContent, toolResultBlock)
+
+			default:
+			}
+		}
+
+		if !hasToolUse {
+			break
+		}
+
+		if len(toolResultsContent) > 0 {
+			userToolResultMessage := types.Message{
+				Role:    types.ConversationRoleUser,
+				Content: toolResultsContent,
+			}
+			bedrockMessages = append(bedrockMessages, userToolResultMessage)
+		} else {
+			break
+		}
+
+		// Optional: Add a safety break to prevent infinite loops
+		if len(bedrockMessages) > config.maxIterations {
+			return LLMResponse{}, errors.New("max conversation turns exceeded")
 		}
 	}
 
 	return LLMResponse{
-		Text:             responseText,
-		TotalInputToken:  int(*output.Usage.InputTokens),
-		TotalOutputToken: int(*output.Usage.OutputTokens),
+		Text:             strings.TrimSpace(finalResponseTextBuilder.String()),
+		TotalInputToken:  int(totalInputTokens),
+		TotalOutputToken: int(totalOutputTokens),
 		CompletionTime:   time.Since(startTime).Seconds(),
 	}, nil
-}
-
-// GetStreamingResponse generates a streaming response using AWS Bedrock's API for the given messages and configuration.
-// It returns a channel that receives chunks of the response as they're generated.
-//
-// The method supports different message roles (user, assistant) and handles context cancellation.
-// The returned channel will be closed when the response is complete or if an error occurs.
-//
-// The returned StreamingLLMResponse contains:
-//   - Text: The text chunk from the model
-//   - Done: Boolean indicating if this is the final message
-//   - Error: Any error that occurred during streaming
-//   - TokenCount: Number of tokens in this chunk
-//
-// Example:
-//
-//	package main
-//
-//	import (
-//	    "context"
-//	    "fmt"
-//	    "github.com/aws/aws-sdk-go-v2/aws"
-//	    "github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
-//	    "github.com/shaharia-lab/goai"
-//	)
-//
-//	func main() {
-//	    // Create Bedrock LLM Provider
-//	    llmProvider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
-//	        Client: bedrockruntime.New(aws.Config{}),
-//	        Model:  "anthropic.claude-3-sonnet-20240229-v1:0",
-//	    })
-//
-//	    // Configure LLM Request
-//	    llm := goai.NewLLMRequest(goai.NewRequestConfig(
-//	        goai.WithMaxToken(100),
-//	        goai.WithTemperature(0.7),
-//	    ), llmProvider)
-//
-//	    // Generate streaming response
-//	    stream, err := llm.GenerateStream(context.Background(), []goai.LLMMessage{
-//	        {Role: goai.UserRole, Text: "Explain quantum computing"},
-//	    })
-//
-//	    if err != nil {
-//	        panic(err)
-//	    }
-//
-//	    for resp := range stream {
-//	        if resp.Error != nil {
-//	            fmt.Printf("Error: %v\n", resp.Error)
-//	            break
-//	        }
-//	        if resp.Done {
-//	            break
-//	        }
-//	        fmt.Print(resp.Text)
-//	    }
-//	}
-//
-// Note: The streaming response must be fully consumed or the context must be
-// cancelled to prevent resource leaks.
-func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
-	var bedrockMessages []types.Message
-	for _, msg := range messages {
-		role := types.ConversationRoleUser
-		if msg.Role == "assistant" {
-			role = types.ConversationRoleAssistant
-		}
-		bedrockMessages = append(bedrockMessages, types.Message{
-			Role: role,
-			Content: []types.ContentBlock{
-				&types.ContentBlockMemberText{
-					Value: msg.Text,
-				},
-			},
-		})
-	}
-
-	input := &bedrockruntime.ConverseStreamInput{
-		ModelId:  &p.model,
-		Messages: bedrockMessages,
-		InferenceConfig: &types.InferenceConfiguration{
-			Temperature: aws.Float32(float32(config.temperature)),
-			TopP:        aws.Float32(float32(config.topP)),
-			MaxTokens:   aws.Int32(int32(config.maxToken)),
-		},
-	}
-
-	output, err := p.client.ConverseStream(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-
-	responseChan := make(chan StreamingLLMResponse, 100)
-
-	go func() {
-		defer close(responseChan)
-
-		for event := range output.GetStream().Events() {
-			select {
-			case <-ctx.Done():
-				responseChan <- StreamingLLMResponse{
-					Error: ctx.Err(),
-					Done:  true,
-				}
-				return
-			default:
-				switch v := event.(type) {
-				case *types.ConverseStreamOutputMemberContentBlockDelta:
-					if delta, ok := v.Value.Delta.(*types.ContentBlockDeltaMemberText); ok {
-						responseChan <- StreamingLLMResponse{
-							Text:       delta.Value,
-							TokenCount: 1,
-						}
-					}
-				case *types.ConverseStreamOutputMemberMessageStop:
-					responseChan <- StreamingLLMResponse{Done: true}
-					return
-				}
-			}
-		}
-
-		if err := output.GetStream().Err(); err != nil {
-			responseChan <- StreamingLLMResponse{
-				Error: err,
-				Done:  true,
-			}
-		}
-	}()
-
-	return responseChan, nil
 }
