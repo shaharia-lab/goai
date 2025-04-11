@@ -200,7 +200,7 @@ config := goai.NewRequestConfig(
 
 - ✅ Streaming responses
 - ✅ Non-streaming (synchronous) responses
-- ✅ Tool calling
+- ✅ Tool calling (synchronous + streaming)
 
 For using OpenAI compatible API, please refer to the [OpenAI Compatible](#gemini-from-google) section. _(Not recommended)_
 
@@ -244,7 +244,7 @@ For more details about OpenAI API can be found [here](https://platform.openai.co
 
 - ✅ Streaming responses
 - ✅ Non-streaming (synchronous) responses
-- ✅ Tool calling
+- ✅ Tool calling (synchronous + streaming)
 
 ```go
 llmProvider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{
@@ -257,9 +257,9 @@ For more details about Anthropic API can be found [here](https://docs.anthropic.
 
 ### AWS Bedrock
 
-- ❌ Streaming responses
+- ✅ Streaming responses
 - ✅ Non-streaming (synchronous) responses
-- ❌ Tool calling
+- ✅ Tool calling (synchronous + streaming)
 
 ```go
 // Initialize AWS config
