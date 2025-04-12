@@ -1,8 +1,9 @@
-package goai
+package chat_history
 
 import (
 	"context"
 	"fmt"
+	"github.com/shaharia-lab/goai"
 	"testing"
 	"time"
 
@@ -40,7 +41,7 @@ func TestInMemoryChatHistoryStorage_AddMessage(t *testing.T) {
 	chat, _ := storage.CreateChat(ctx)
 
 	message := ChatHistoryMessage{
-		LLMMessage: LLMMessage{
+		LLMMessage: goai.LLMMessage{
 			Role: "user",
 			Text: "test message",
 		},
@@ -133,7 +134,7 @@ func TestInMemoryChatHistoryStorage_Concurrency(t *testing.T) {
 	for i := 0; i < messageCount; i++ {
 		go func(idx int) {
 			message := ChatHistoryMessage{
-				LLMMessage: LLMMessage{
+				LLMMessage: goai.LLMMessage{
 					Role: "user",
 					Text: fmt.Sprintf("message %d", idx),
 				},
