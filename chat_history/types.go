@@ -1,8 +1,9 @@
 package chat_history
 
 import (
-	"github.com/shaharia-lab/goai"
 	"time"
+
+	"github.com/shaharia-lab/goai"
 )
 
 type ChatHistoryMessage struct {

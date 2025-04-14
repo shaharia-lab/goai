@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/shaharia-lab/goai"
 	"time"
+
+	"github.com/shaharia-lab/goai"
 
 	"github.com/slack-go/slack"
 )

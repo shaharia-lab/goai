@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/shaharia-lab/goai"
 	"github.com/shaharia-lab/goai/observability"
-	"sync"
-	"time"
 )
 
 // Sqlite implementation of ChatHistoryStorage

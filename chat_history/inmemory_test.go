@@ -3,9 +3,10 @@ package chat_history
 import (
 	"context"
 	"fmt"
-	"github.com/shaharia-lab/goai"
 	"testing"
 	"time"
+
+	"github.com/shaharia-lab/goai"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

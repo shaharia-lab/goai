@@ -3,9 +3,10 @@ package chat_history
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // InMemoryChatHistoryStorage is an in-memory implementation of ChatHistoryStorage
