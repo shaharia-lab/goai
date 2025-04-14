@@ -10,14 +10,14 @@ import (
 
 // InMemoryChatHistoryStorage is an in-memory implementation of ChatHistoryStorage
 type InMemoryChatHistoryStorage struct {
-	conversations map[uuid.UUID]*ChatHistory
+	conversations map[string]*ChatHistory
 	mu            sync.RWMutex
 }
 
 // NewInMemoryChatHistoryStorage creates a new instance of InMemoryChatHistoryStorage
 func NewInMemoryChatHistoryStorage() *InMemoryChatHistoryStorage {
 	return &InMemoryChatHistoryStorage{
-		conversations: make(map[uuid.UUID]*ChatHistory),
+		conversations: make(map[string]*ChatHistory),
 	}
 }
 
@@ -27,23 +27,23 @@ func (s *InMemoryChatHistoryStorage) CreateChat(ctx context.Context) (*ChatHisto
 	defer s.mu.Unlock()
 
 	chat := &ChatHistory{
-		UUID:      uuid.New(),
+		SessionID: uuid.New().String(),
 		Messages:  []ChatHistoryMessage{},
 		CreatedAt: time.Now(),
 	}
 
-	s.conversations[chat.UUID] = chat
+	s.conversations[chat.SessionID] = chat
 	return chat, nil
 }
 
 // AddMessage adds a new message to an existing conversation
-func (s *InMemoryChatHistoryStorage) AddMessage(ctx context.Context, uuid uuid.UUID, message ChatHistoryMessage) error {
+func (s *InMemoryChatHistoryStorage) AddMessage(ctx context.Context, sessionID string, message ChatHistoryMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	chat, exists := s.conversations[uuid]
+	chat, exists := s.conversations[sessionID]
 	if !exists {
-		return fmt.Errorf("chat with ID %s not found", uuid)
+		return fmt.Errorf("chat with ID %s not found", sessionID)
 	}
 
 	chat.Messages = append(chat.Messages, message)
@@ -51,13 +51,13 @@ func (s *InMemoryChatHistoryStorage) AddMessage(ctx context.Context, uuid uuid.U
 }
 
 // GetChat retrieves a conversation by its ChatUUID
-func (s *InMemoryChatHistoryStorage) GetChat(ctx context.Context, uuid uuid.UUID) (*ChatHistory, error) {
+func (s *InMemoryChatHistoryStorage) GetChat(ctx context.Context, sessionID string) (*ChatHistory, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	chat, exists := s.conversations[uuid]
+	chat, exists := s.conversations[sessionID]
 	if !exists {
-		return nil, fmt.Errorf("chat with ID %s not found", uuid)
+		return nil, fmt.Errorf("chat with ID %s not found", sessionID)
 	}
 
 	return chat, nil
@@ -77,14 +77,14 @@ func (s *InMemoryChatHistoryStorage) ListChatHistories(ctx context.Context) ([]C
 }
 
 // DeleteChat removes a conversation by its ChatUUID
-func (s *InMemoryChatHistoryStorage) DeleteChat(ctx context.Context, uuid uuid.UUID) error {
+func (s *InMemoryChatHistoryStorage) DeleteChat(ctx context.Context, sessionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.conversations[uuid]; !exists {
-		return fmt.Errorf("chat with ID %s not found", uuid)
+	if _, exists := s.conversations[sessionID]; !exists {
+		return fmt.Errorf("chat with ID %s not found", sessionID)
 	}
 
-	delete(s.conversations, uuid)
+	delete(s.conversations, sessionID)
 	return nil
 }

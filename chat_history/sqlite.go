@@ -110,7 +110,7 @@ func (s *SQLiteChatHistoryStorage) CreateChat(ctx context.Context) (*ChatHistory
 	createdAt := time.Now().UTC()
 
 	chat := &ChatHistory{
-		UUID:      newUUID,
+		SessionID: newUUID.String(),
 		Messages:  []ChatHistoryMessage{},
 		CreatedAt: createdAt,
 	}
@@ -126,7 +126,7 @@ func (s *SQLiteChatHistoryStorage) CreateChat(ctx context.Context) (*ChatHistory
 }
 
 // AddMessage adds a new message to an existing conversation in SQLite
-func (s *SQLiteChatHistoryStorage) AddMessage(ctx context.Context, chatUUID uuid.UUID, message ChatHistoryMessage) error {
+func (s *SQLiteChatHistoryStorage) AddMessage(ctx context.Context, sessionID string, message ChatHistoryMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -138,12 +138,12 @@ func (s *SQLiteChatHistoryStorage) AddMessage(ctx context.Context, chatUUID uuid
 
 	var exists int
 	checkSQL := `SELECT 1 FROM chats WHERE uuid = ? LIMIT 1`
-	err = tx.QueryRowContext(ctx, checkSQL, chatUUID.String()).Scan(&exists)
+	err = tx.QueryRowContext(ctx, checkSQL, sessionID).Scan(&exists)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("chat with ID %s not found", chatUUID)
+			return fmt.Errorf("chat with ID %s not found", sessionID)
 		}
-		return fmt.Errorf("failed to check chat existence (uuid: %s): %w", chatUUID, err)
+		return fmt.Errorf("failed to check chat existence (uuid: %s): %w", sessionID, err)
 	}
 
 	insertSQL := `INSERT INTO messages (chat_uuid, role, text, generated_at) VALUES (?, ?, ?, ?)`
@@ -151,9 +151,9 @@ func (s *SQLiteChatHistoryStorage) AddMessage(ctx context.Context, chatUUID uuid
 		message.GeneratedAt = time.Now().UTC() // Ensure timestamp is set, use UTC
 	}
 
-	_, err = tx.ExecContext(ctx, insertSQL, chatUUID.String(), string(message.Role), message.Text, message.GeneratedAt)
+	_, err = tx.ExecContext(ctx, insertSQL, sessionID, string(message.Role), message.Text, message.GeneratedAt)
 	if err != nil {
-		return fmt.Errorf("failed to insert message for chat %s: %w", chatUUID, err)
+		return fmt.Errorf("failed to insert message for chat %s: %w", sessionID, err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -164,13 +164,13 @@ func (s *SQLiteChatHistoryStorage) AddMessage(ctx context.Context, chatUUID uuid
 }
 
 // GetChat retrieves a conversation by its ChatUUID from SQLite
-func (s *SQLiteChatHistoryStorage) GetChat(ctx context.Context, chatUUID uuid.UUID) (*ChatHistory, error) {
+func (s *SQLiteChatHistoryStorage) GetChat(ctx context.Context, sessionID string) (*ChatHistory, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	chat := &ChatHistory{
-		UUID:     chatUUID,
-		Messages: []ChatHistoryMessage{},
+		SessionID: sessionID,
+		Messages:  []ChatHistoryMessage{},
 	}
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -181,18 +181,18 @@ func (s *SQLiteChatHistoryStorage) GetChat(ctx context.Context, chatUUID uuid.UU
 
 	// 1. Get chat metadata
 	chatSQL := `SELECT created_at FROM chats WHERE uuid = ?`
-	err = tx.QueryRowContext(ctx, chatSQL, chatUUID.String()).Scan(&chat.CreatedAt)
+	err = tx.QueryRowContext(ctx, chatSQL, sessionID).Scan(&chat.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("chat with ID %s not found", chatUUID)
+			return nil, fmt.Errorf("chat with ID %s not found", sessionID)
 		}
-		return nil, fmt.Errorf("failed to query chat metadata (uuid: %s): %w", chatUUID, err)
+		return nil, fmt.Errorf("failed to query chat metadata (uuid: %s): %w", sessionID, err)
 	}
 
 	messagesSQL := `SELECT role, text, generated_at FROM messages WHERE chat_uuid = ? ORDER BY generated_at ASC`
-	rows, err := tx.QueryContext(ctx, messagesSQL, chatUUID.String())
+	rows, err := tx.QueryContext(ctx, messagesSQL, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query messages for chat %s: %w", chatUUID, err)
+		return nil, fmt.Errorf("failed to query messages for chat %s: %w", sessionID, err)
 	}
 	defer rows.Close()
 
@@ -200,14 +200,14 @@ func (s *SQLiteChatHistoryStorage) GetChat(ctx context.Context, chatUUID uuid.UU
 		var msg ChatHistoryMessage
 		var roleStr string
 		if err := rows.Scan(&roleStr, &msg.Text, &msg.GeneratedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan message row for chat %s: %w", chatUUID, err)
+			return nil, fmt.Errorf("failed to scan message row for chat %s: %w", sessionID, err)
 		}
 		msg.Role = goai.LLMMessageRole(roleStr)
 		chat.Messages = append(chat.Messages, msg)
 	}
 
 	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating message rows for chat %s: %w", chatUUID, err)
+		return nil, fmt.Errorf("error iterating message rows for chat %s: %w", sessionID, err)
 	}
 
 	return chat, nil
@@ -236,18 +236,18 @@ func (s *SQLiteChatHistoryStorage) ListChatHistories(ctx context.Context) ([]Cha
 
 	chatUUIDs := []string{}
 	for chatRows.Next() {
-		var uuidStr string
+		var sessionID string
 		var createdAt time.Time
-		if err := chatRows.Scan(&uuidStr, &createdAt); err != nil {
+		if err := chatRows.Scan(&sessionID, &createdAt); err != nil {
 			return nil, fmt.Errorf("failed to scan chat row: %w", err)
 		}
-		parsedUUID, _ := uuid.Parse(uuidStr)
-		histories[uuidStr] = &ChatHistory{
-			UUID:      parsedUUID,
+
+		histories[sessionID] = &ChatHistory{
+			SessionID: sessionID,
 			CreatedAt: createdAt.UTC(),
 			Messages:  []ChatHistoryMessage{},
 		}
-		chatUUIDs = append(chatUUIDs, uuidStr)
+		chatUUIDs = append(chatUUIDs, sessionID)
 	}
 	if err = chatRows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating chat rows: %w", err)
@@ -293,7 +293,7 @@ func (s *SQLiteChatHistoryStorage) ListChatHistories(ctx context.Context) ([]Cha
 }
 
 // DeleteChat removes a conversation by its ChatUUID from SQLite
-func (s *SQLiteChatHistoryStorage) DeleteChat(ctx context.Context, chatUUID uuid.UUID) error {
+func (s *SQLiteChatHistoryStorage) DeleteChat(ctx context.Context, sessionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -304,9 +304,9 @@ func (s *SQLiteChatHistoryStorage) DeleteChat(ctx context.Context, chatUUID uuid
 	defer tx.Rollback()
 
 	deleteSQL := `DELETE FROM chats WHERE uuid = ?`
-	result, err := tx.ExecContext(ctx, deleteSQL, chatUUID.String())
+	result, err := tx.ExecContext(ctx, deleteSQL, sessionID)
 	if err != nil {
-		return fmt.Errorf("failed to delete chat (uuid: %s): %w", chatUUID, err)
+		return fmt.Errorf("failed to delete chat (uuid: %s): %w", sessionID, err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
@@ -315,7 +315,7 @@ func (s *SQLiteChatHistoryStorage) DeleteChat(ctx context.Context, chatUUID uuid
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("chat with ID %s not found", chatUUID)
+		return fmt.Errorf("chat with ID %s not found", sessionID)
 	}
 
 	if err := tx.Commit(); err != nil {
