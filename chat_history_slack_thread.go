@@ -1,12 +1,10 @@
-package chat_history
+package goai
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/shaharia-lab/goai"
 
 	"github.com/slack-go/slack"
 )
@@ -182,13 +180,13 @@ func (s *SlackChatHistoryStorage) GetChat(ctx context.Context, sessionID string)
 			return nil, fmt.Errorf("failed to parse timestamp: %w", err)
 		}
 
-		role := goai.UserRole
+		role := UserRole
 		if msg.User == s.botUserID {
-			role = goai.AssistantRole
+			role = AssistantRole
 		}
 
 		chatMessages = append(chatMessages, ChatHistoryMessage{
-			LLMMessage: goai.LLMMessage{
+			LLMMessage: LLMMessage{
 				Role: role,
 				Text: msg.Text,
 			},

@@ -1,4 +1,4 @@
-package chat_history
+package goai
 
 import (
 	"context"
