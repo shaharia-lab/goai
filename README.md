@@ -46,6 +46,9 @@ go get github.com/shaharia-lab/goai
 
 ### Example
 
+You can find more examples in the [_examples](_examples) directory which
+you can run simply by `go run _examples/simple_chat.go`
+
 ```go
 package main
 
