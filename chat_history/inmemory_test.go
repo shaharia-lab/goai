@@ -1,10 +1,12 @@
-package goai
+package chat_history
 
 import (
 	"context"
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/shaharia-lab/goai"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -24,12 +26,12 @@ func TestInMemoryChatHistoryStorage_CreateChat(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotNil(t, chat)
-	assert.NotEqual(t, uuid.Nil, chat.UUID)
+	assert.NotEqual(t, uuid.Nil, chat.SessionID)
 	assert.Empty(t, chat.Messages)
 	assert.NotZero(t, chat.CreatedAt)
 
 	// Verify the chat was stored
-	storedChat, exists := storage.conversations[chat.UUID]
+	storedChat, exists := storage.conversations[chat.SessionID]
 	assert.True(t, exists)
 	assert.Equal(t, chat, storedChat)
 }
@@ -40,23 +42,23 @@ func TestInMemoryChatHistoryStorage_AddMessage(t *testing.T) {
 	chat, _ := storage.CreateChat(ctx)
 
 	message := ChatHistoryMessage{
-		LLMMessage: LLMMessage{
+		LLMMessage: goai.LLMMessage{
 			Role: "user",
 			Text: "test message",
 		},
 		GeneratedAt: time.Now(),
 	}
 
-	err := storage.AddMessage(ctx, chat.UUID, message)
+	err := storage.AddMessage(ctx, chat.SessionID, message)
 	assert.NoError(t, err)
 
 	// Verify message was added
-	storedChat, _ := storage.GetChat(ctx, chat.UUID)
+	storedChat, _ := storage.GetChat(ctx, chat.SessionID)
 	assert.Len(t, storedChat.Messages, 1)
 	assert.Equal(t, message, storedChat.Messages[0])
 
 	// Test adding message to non-existent chat
-	err = storage.AddMessage(ctx, uuid.New(), message)
+	err = storage.AddMessage(ctx, uuid.New().String(), message)
 	assert.Error(t, err)
 }
 
@@ -67,12 +69,12 @@ func TestInMemoryChatHistoryStorage_GetChat(t *testing.T) {
 	chat, _ := storage.CreateChat(ctx)
 
 	// Test getting existing chat
-	storedChat, err := storage.GetChat(ctx, chat.UUID)
+	storedChat, err := storage.GetChat(ctx, chat.SessionID)
 	assert.NoError(t, err)
 	assert.Equal(t, chat, storedChat)
 
 	// Test getting non-existent chat
-	nonExistentChat, err := storage.GetChat(ctx, uuid.New())
+	nonExistentChat, err := storage.GetChat(ctx, uuid.New().String())
 	assert.Error(t, err)
 	assert.Nil(t, nonExistentChat)
 }
@@ -95,12 +97,12 @@ func TestInMemoryChatHistoryStorage_ListChatHistories(t *testing.T) {
 	assert.Len(t, chats, 2)
 
 	// Verify both chats are in the list
-	chatMap := make(map[uuid.UUID]bool)
+	chatMap := make(map[string]bool)
 	for _, chat := range chats {
-		chatMap[chat.UUID] = true
+		chatMap[chat.SessionID] = true
 	}
-	assert.True(t, chatMap[chat1.UUID])
-	assert.True(t, chatMap[chat2.UUID])
+	assert.True(t, chatMap[chat1.SessionID])
+	assert.True(t, chatMap[chat2.SessionID])
 }
 
 func TestInMemoryChatHistoryStorage_DeleteChat(t *testing.T) {
@@ -109,15 +111,15 @@ func TestInMemoryChatHistoryStorage_DeleteChat(t *testing.T) {
 	chat, _ := storage.CreateChat(ctx)
 
 	// Test deleting existing chat
-	err := storage.DeleteChat(ctx, chat.UUID)
+	err := storage.DeleteChat(ctx, chat.SessionID)
 	assert.NoError(t, err)
 
 	// Verify chat was deleted
-	_, exists := storage.conversations[chat.UUID]
+	_, exists := storage.conversations[chat.SessionID]
 	assert.False(t, exists)
 
 	// Test deleting non-existent chat
-	err = storage.DeleteChat(ctx, uuid.New())
+	err = storage.DeleteChat(ctx, uuid.New().String())
 	assert.Error(t, err)
 }
 
@@ -133,13 +135,13 @@ func TestInMemoryChatHistoryStorage_Concurrency(t *testing.T) {
 	for i := 0; i < messageCount; i++ {
 		go func(idx int) {
 			message := ChatHistoryMessage{
-				LLMMessage: LLMMessage{
+				LLMMessage: goai.LLMMessage{
 					Role: "user",
 					Text: fmt.Sprintf("message %d", idx),
 				},
 				GeneratedAt: time.Now(),
 			}
-			err := storage.AddMessage(ctx, chat.UUID, message)
+			err := storage.AddMessage(ctx, chat.SessionID, message)
 			assert.NoError(t, err)
 			done <- true
 		}(i)
@@ -151,7 +153,7 @@ func TestInMemoryChatHistoryStorage_Concurrency(t *testing.T) {
 	}
 
 	// Verify all messages were added
-	storedChat, err := storage.GetChat(ctx, chat.UUID)
+	storedChat, err := storage.GetChat(ctx, chat.SessionID)
 	assert.NoError(t, err)
 	assert.Len(t, storedChat.Messages, messageCount)
 }
