@@ -10,8 +10,6 @@ import (
 
 	"github.com/openai/openai-go"
 	"github.com/shaharia-lab/goai"
-
-	"github.com/shaharia-lab/goai/chat_history"
 )
 
 // This example demonstrates how to use the InMemoryChatHistoryStorage
@@ -32,7 +30,7 @@ func main() {
 		goai.WithMaxIterations(10),
 	), llmProvider)
 
-	storage := chat_history.NewInMemoryChatHistoryStorage()
+	storage := goai.NewInMemoryChatHistoryStorage()
 
 	ctx := context.Background()
 	chatHistory, err := storage.CreateChat(ctx)
@@ -56,7 +54,7 @@ func main() {
 			break
 		}
 
-		userMessage := chat_history.ChatHistoryMessage{
+		userMessage := goai.ChatHistoryMessage{
 			LLMMessage: goai.LLMMessage{
 				Role: goai.UserRole,
 				Text: userInput,
@@ -90,7 +88,7 @@ func main() {
 
 		fmt.Printf("AI: %s\n\n", response.Text)
 
-		assistantMessage := chat_history.ChatHistoryMessage{
+		assistantMessage := goai.ChatHistoryMessage{
 			LLMMessage: goai.LLMMessage{
 				Role: goai.AssistantRole,
 				Text: response.Text,

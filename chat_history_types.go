@@ -1,13 +1,11 @@
-package chat_history
+package goai
 
 import (
 	"time"
-
-	"github.com/shaharia-lab/goai"
 )
 
 type ChatHistoryMessage struct {
-	goai.LLMMessage
+	LLMMessage
 	GeneratedAt time.Time `json:"generated_at"`
 }
 

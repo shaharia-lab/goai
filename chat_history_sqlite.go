@@ -1,4 +1,4 @@
-package chat_history
+package goai
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shaharia-lab/goai"
 	"github.com/shaharia-lab/goai/observability"
 )
 
@@ -203,7 +202,7 @@ func (s *SQLiteChatHistoryStorage) GetChat(ctx context.Context, sessionID string
 		if err := rows.Scan(&roleStr, &msg.Text, &msg.GeneratedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan message row for chat %s: %w", sessionID, err)
 		}
-		msg.Role = goai.LLMMessageRole(roleStr)
+		msg.Role = LLMMessageRole(roleStr)
 		chat.Messages = append(chat.Messages, msg)
 	}
 
@@ -275,7 +274,7 @@ func (s *SQLiteChatHistoryStorage) ListChatHistories(ctx context.Context) ([]Cha
 		}
 
 		if chat, ok := histories[chatUUIDStr]; ok {
-			msg.Role = goai.LLMMessageRole(roleStr)
+			msg.Role = LLMMessageRole(roleStr)
 			chat.Messages = append(chat.Messages, msg)
 		}
 	}
