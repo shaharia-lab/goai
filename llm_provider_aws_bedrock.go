@@ -172,7 +172,7 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 					return LLMResponse{}, fmt.Errorf("model requested tool '%s', but no toolsProvider is configured", toolName)
 				}
 
-				inputBytes, err := json.Marshal(toolInput)
+				inputBytes, err := toolInput.MarshalSmithyDocument()
 				if err != nil {
 					return LLMResponse{}, fmt.Errorf("failed to marshal tool input for '%s': %w", toolName, err)
 				}
