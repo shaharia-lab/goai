@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/shaharia-lab/goai"
+	"log"
 	"time"
 )
 
@@ -12,18 +14,13 @@ var ErrTaskIncomplete = errors.New("task execution is not complete")
 
 // LLMStepExecutor executes steps using an LLM
 type LLMStepExecutor struct {
-	Provider LLMProvider
-	Options  *RequestOptions
+	llm *goai.LLMRequest
 }
 
 // NewLLMStepExecutor creates a new LLM-based step executor
-func NewLLMStepExecutor(provider LLMProvider, options *RequestOptions) *LLMStepExecutor {
-	if options == nil {
-		options = DefaultOptions()
-	}
+func NewLLMStepExecutor(llm *goai.LLMRequest) *LLMStepExecutor {
 	return &LLMStepExecutor{
-		Provider: provider,
-		Options:  options,
+		llm: llm,
 	}
 }
 
@@ -38,8 +35,15 @@ func (e *LLMStepExecutor) ExecuteStep(ctx context.Context, t *Task, step *Step, 
 
 	// Execute the step
 	startTime := time.Now()
-	output, err := e.Provider.GenerateResponse(stepCtx, prompt, e.Options)
+	output, err := e.llm.Generate(stepCtx, []goai.LLMMessage{
+		{
+			Role: goai.UserRole,
+			Text: prompt,
+		},
+	})
 	endTime := time.Now()
+
+	log.Printf("%s: %s", step.ID, output.Text)
 
 	if err != nil {
 		return &StepResult{
@@ -55,7 +59,7 @@ func (e *LLMStepExecutor) ExecuteStep(ctx context.Context, t *Task, step *Step, 
 	// Return successful result
 	return &StepResult{
 		StepID:    step.ID,
-		Output:    output,
+		Output:    output.Text,
 		StartTime: startTime,
 		EndTime:   endTime,
 		Success:   true,
@@ -85,13 +89,15 @@ func buildPrompt(t *Task, step *Step, state *TaskState) string {
 type TaskRunner struct {
 	Executor   StepExecutor
 	StateStore StateStore
+	TaskStore  TaskStore
 }
 
 // NewTaskRunner creates a new task runner
-func NewTaskRunner(executor StepExecutor, stateStore StateStore) *TaskRunner {
+func NewTaskRunner(executor StepExecutor, stateStore StateStore, taskStore TaskStore) *TaskRunner {
 	return &TaskRunner{
 		Executor:   executor,
 		StateStore: stateStore,
+		TaskStore:  taskStore,
 	}
 }
 
@@ -104,9 +110,9 @@ func (r *TaskRunner) RunNextStep(ctx context.Context, taskID string) (bool, erro
 	}
 
 	// Load the t definition
-	t, err := loadTask(taskID) // You'd need to implement this based on your t storage
+	t, err := r.TaskStore.LoadTask(taskID) // Replace loadTask with this
 	if err != nil {
-		return false, fmt.Errorf("failed to load t: %w", err)
+		return false, fmt.Errorf("failed to load task: %w", err)
 	}
 
 	// Check if the t is already complete

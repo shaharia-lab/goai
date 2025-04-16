@@ -4,6 +4,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"github.com/shaharia-lab/goai"
 	"time"
 )
 
@@ -14,7 +15,7 @@ type Agent struct {
 }
 
 // NewAgent creates a new AI agent
-func NewAgent(llmProvider LLMProvider, stateDir string) (*Agent, error) {
+func NewAgent(llm *goai.LLMRequest, stateDir string) (*Agent, error) {
 	// Set up the state store
 	stateStore, err := NewFileStateStore(stateDir)
 	if err != nil {
@@ -22,10 +23,11 @@ func NewAgent(llmProvider LLMProvider, stateDir string) (*Agent, error) {
 	}
 
 	// Set up the step executor
-	executor := NewLLMStepExecutor(llmProvider, nil)
+	executor := NewLLMStepExecutor(llm)
+	taskStore, err := NewFileTaskStore("/home/shaharia/Projects/goai/data_store")
 
 	// Set up the task runner
-	taskRunner := NewTaskRunner(executor, stateStore)
+	taskRunner := NewTaskRunner(executor, stateStore, taskStore)
 
 	return &Agent{
 		Runner:     taskRunner,
@@ -35,6 +37,11 @@ func NewAgent(llmProvider LLMProvider, stateDir string) (*Agent, error) {
 
 // StartTask creates a new task and sets up its initial state
 func (a *Agent) StartTask(ctx context.Context, t *Task) (string, error) {
+	// Save the task to the task store
+	if err := a.Runner.TaskStore.SaveTask(t); err != nil {
+		return "", fmt.Errorf("failed to save task: %w", err)
+	}
+
 	// Initialize task state
 	taskState := &TaskState{
 		TaskID:         t.ID,

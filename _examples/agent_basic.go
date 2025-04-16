@@ -4,6 +4,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/openai/openai-go"
+	"github.com/shaharia-lab/goai"
 	"os"
 	"time"
 
@@ -11,17 +13,20 @@ import (
 )
 
 func main() {
-	// Initialize the LLM provider
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("Please set the OPENAI_API_KEY environment variable")
-		os.Exit(1)
-	}
+	// Create OpenAI LLM Provider
+	llmProvider := goai.NewOpenAILLMProvider(goai.OpenAIProviderConfig{
+		Client: goai.NewOpenAIClient(os.Getenv("OPENAI_API_KEY")),
+		Model:  openai.ChatModelGPT3_5Turbo,
+	})
 
-	llmProvider := agent.NewOpenAIProvider(apiKey)
+	// Configure LLM Request
+	llm := goai.NewLLMRequest(goai.NewRequestConfig(
+		goai.WithMaxToken(100),
+		goai.WithTemperature(0.7),
+	), llmProvider)
 
 	// Initialize the agent
-	ai, err := agent.NewAgent(llmProvider, "./data/agent_state")
+	ai, err := agent.NewAgent(llm, "./data/agent_state")
 	if err != nil {
 		fmt.Printf("Failed to initialize agent: %v\n", err)
 		os.Exit(1)
@@ -29,27 +34,27 @@ func main() {
 
 	// Define a task with multiple steps
 	dataAnalysisTask := &agent.Task{
-		ID:          "data-analysis-123",
-		Name:        "Data Analysis Report",
-		Description: "Analyze the given dataset and create a comprehensive report",
+		ID:          "test-task-001",
+		Name:        "Bangladesh",
+		Description: "Write a story",
 		Steps: map[string]*agent.Step{
 			"step1": {
 				ID:              "step1",
-				Description:     "Data Exploration",
-				Instructions:    "Explore the dataset and identify key patterns and statistics.",
+				Description:     "Country exploration",
+				Instructions:    "What's the capital of Bangladesh?",
 				TimeoutDuration: 2 * time.Minute,
 			},
 			"step2": {
 				ID:              "step2",
-				Description:     "Data Visualization Planning",
-				Instructions:    "Based on the exploration, recommend visualizations that would effectively communicate the findings.",
+				Description:     "Capital of Russia",
+				Instructions:    "What is the capital of Russia?",
 				TimeoutDuration: 2 * time.Minute,
 				DependsOn:       []string{"step1"},
 			},
 			"step3": {
 				ID:              "step3",
-				Description:     "Final Report Compilation",
-				Instructions:    "Compile a final report with key insights and visualization recommendations.",
+				Description:     "tell me a story",
+				Instructions:    "tell me a story about Bangladesh",
 				TimeoutDuration: 3 * time.Minute,
 				DependsOn:       []string{"step2"},
 			},
@@ -82,7 +87,6 @@ func main() {
 
 		if complete {
 			fmt.Println("Task completed!")
-			// Print final output
 			fmt.Println(state.FinalOutput)
 			break
 		}
