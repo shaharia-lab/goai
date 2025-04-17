@@ -145,7 +145,7 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 		Tools:     anthropic.F(toolUnionParams),
 	}
 
-	if config.enableThinking {
+	if config.enableThinking && config.thinkingBudgetToken > 0 {
 		msgParams.Thinking = anthropic.F(anthropic.ThinkingConfigParamUnion(anthropic.ThinkingConfigParam{
 			Type:         anthropic.F(anthropic.ThinkingConfigParamTypeEnabled),
 			BudgetTokens: anthropic.Int(config.thinkingBudgetToken),
