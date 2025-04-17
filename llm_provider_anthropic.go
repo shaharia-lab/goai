@@ -138,14 +138,23 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 
 	var finalResponse string
 
+	msgParams := anthropic.MessageNewParams{
+		Model:     anthropic.F(p.model),
+		MaxTokens: anthropic.F(config.maxToken),
+		Messages:  anthropic.F(anthropicMessages),
+		Tools:     anthropic.F(toolUnionParams),
+	}
+
+	if config.enableThinking {
+		msgParams.Thinking = anthropic.F(anthropic.ThinkingConfigParamUnion(anthropic.ThinkingConfigParam{
+			Type:         anthropic.F(anthropic.ThinkingConfigParamTypeEnabled),
+			BudgetTokens: anthropic.Int(config.thinkingBudgetToken),
+		}))
+	}
+
 	// Start conversation loop
 	for {
-		message, err := p.client.CreateMessage(ctx, anthropic.MessageNewParams{
-			Model:     anthropic.F(p.model),
-			MaxTokens: anthropic.F(config.maxToken),
-			Messages:  anthropic.F(anthropicMessages),
-			Tools:     anthropic.F(toolUnionParams),
-		})
+		message, err := p.client.CreateMessage(ctx, msgParams)
 		if err != nil {
 			return LLMResponse{}, err
 		}
