@@ -49,14 +49,30 @@ var DefaultConfig = LLMRequestConfig{
 
 // LLMRequestConfig defines configuration parameters for LLM requests.
 type LLMRequestConfig struct {
-	toolsProvider *ToolsProvider
-	maxToken      int64
-	topP          float64
-	temperature   float64
-	topK          int64
-	enableTracing bool
-	allowedTools  []string
-	maxIterations int
+	toolsProvider       *ToolsProvider
+	maxToken            int64
+	topP                float64
+	temperature         float64
+	topK                int64
+	enableTracing       bool
+	allowedTools        []string
+	maxIterations       int
+	enableThinking      bool
+	thinkingBudgetToken int64
+}
+
+// WithThinkingBudget sets the thinking budget for the LLM request configuration.
+func WithThinkingBudget(budget int64) RequestOption {
+	return func(c *LLMRequestConfig) {
+		c.thinkingBudgetToken = budget
+	}
+}
+
+// WithThinkingEnabled sets the thinking option for the LLM request configuration.
+func WithThinkingEnabled() RequestOption {
+	return func(c *LLMRequestConfig) {
+		c.enableThinking = true
+	}
 }
 
 // WithTracingEnabled sets the tracing option for the LLM request configuration.
