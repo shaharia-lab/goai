@@ -59,15 +59,16 @@ func (s *SQLiteChatHistoryStorage) initSchema(ctx context.Context) error {
     );`
 
 	createMessagesTableSQL := `
-    CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_uuid TEXT NOT NULL,
-        role TEXT NOT NULL, -- Stores LLMMessageRole as TEXT
-        text TEXT NOT NULL, -- Stores LLMMessage.Text
-        generated_at DATETIME NOT NULL, -- Stores ChatHistoryMessage.GeneratedAt
-        FOREIGN KEY (chat_uuid) REFERENCES chats(uuid) ON DELETE CASCADE
-    );`
-
+		CREATE TABLE IF NOT EXISTS messages (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		chat_uuid TEXT NOT NULL,
+		role TEXT NOT NULL,
+		text TEXT NOT NULL,
+		generated_at DATETIME NOT NULL,
+		input_token INTEGER DEFAULT 0,
+		output_token INTEGER DEFAULT 0,
+		FOREIGN KEY (chat_uuid) REFERENCES chats(uuid) ON DELETE CASCADE
+	);`
 	createMessagesIndexSQL := `
 	CREATE INDEX IF NOT EXISTS idx_messages_chat_uuid ON messages (chat_uuid);
 	`
@@ -146,12 +147,14 @@ func (s *SQLiteChatHistoryStorage) AddMessage(ctx context.Context, sessionID str
 		return fmt.Errorf("failed to check chat existence (uuid: %s): %w", sessionID, err)
 	}
 
-	insertSQL := `INSERT INTO messages (chat_uuid, role, text, generated_at) VALUES (?, ?, ?, ?)`
+	insertSQL := `INSERT INTO messages (chat_uuid, role, text, generated_at, total_input_token, total_output_token) 
+                  VALUES (?, ?, ?, ?, ?, ?)`
 	if message.GeneratedAt.IsZero() {
 		message.GeneratedAt = time.Now().UTC() // Ensure timestamp is set, use UTC
 	}
 
-	_, err = tx.ExecContext(ctx, insertSQL, sessionID, string(message.Role), message.Text, message.GeneratedAt)
+	_, err = tx.ExecContext(ctx, insertSQL, sessionID, string(message.Role), message.Text,
+		message.GeneratedAt, message.InputToken, message.OutputToken)
 	if err != nil {
 		return fmt.Errorf("failed to insert message for chat %s: %w", sessionID, err)
 	}
@@ -189,7 +192,7 @@ func (s *SQLiteChatHistoryStorage) GetChat(ctx context.Context, sessionID string
 		return nil, fmt.Errorf("failed to query chat metadata (uuid: %s): %w", sessionID, err)
 	}
 
-	messagesSQL := `SELECT role, text, generated_at FROM messages WHERE chat_uuid = ? ORDER BY generated_at ASC`
+	messagesSQL := `SELECT role, text, generated_at, input_tokens, output_tokens FROM messages WHERE chat_uuid = ? ORDER BY generated_at ASC`
 	rows, err := tx.QueryContext(ctx, messagesSQL, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query messages for chat %s: %w", sessionID, err)
@@ -199,7 +202,7 @@ func (s *SQLiteChatHistoryStorage) GetChat(ctx context.Context, sessionID string
 	for rows.Next() {
 		var msg ChatHistoryMessage
 		var roleStr string
-		if err := rows.Scan(&roleStr, &msg.Text, &msg.GeneratedAt); err != nil {
+		if err := rows.Scan(&roleStr, &msg.Text, &msg.GeneratedAt, &msg.InputToken, &msg.OutputToken); err != nil {
 			return nil, fmt.Errorf("failed to scan message row for chat %s: %w", sessionID, err)
 		}
 		msg.Role = LLMMessageRole(roleStr)
@@ -258,7 +261,7 @@ func (s *SQLiteChatHistoryStorage) ListChatHistories(ctx context.Context) ([]Cha
 		return result, nil
 	}
 
-	messagesSQL := `SELECT chat_uuid, role, text, generated_at FROM messages ORDER BY chat_uuid, generated_at ASC`
+	messagesSQL := `SELECT chat_uuid, role, text, generated_at, input_tokens, output_tokens FROM messages ORDER BY chat_uuid, generated_at ASC`
 	msgRows, err := tx.QueryContext(ctx, messagesSQL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query all messages: %w", err)
@@ -269,7 +272,7 @@ func (s *SQLiteChatHistoryStorage) ListChatHistories(ctx context.Context) ([]Cha
 		var chatUUIDStr string
 		var roleStr string
 		var msg ChatHistoryMessage
-		if err := msgRows.Scan(&chatUUIDStr, &roleStr, &msg.Text, &msg.GeneratedAt); err != nil {
+		if err := msgRows.Scan(&chatUUIDStr, &roleStr, &msg.Text, &msg.GeneratedAt, &msg.InputToken, &msg.OutputToken); err != nil {
 			return nil, fmt.Errorf("failed to scan message row during list: %w", err)
 		}
 
