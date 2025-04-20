@@ -155,19 +155,40 @@ func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages 
 			currentToolName = nil
 			currentToolInputBuffer = nil
 
-			input := &bedrockruntime.ConverseStreamInput{
-				ModelId:  &p.model,
-				Messages: goroutineHistory,
-				System:   systemPrompts,
-				InferenceConfig: &types.InferenceConfiguration{
-					Temperature: aws.Float32(float32(config.temperature)),
-					TopP:        aws.Float32(float32(config.topP)),
-					MaxTokens:   aws.Int32(int32(config.maxToken)),
-				},
-				ToolConfig: toolConfig,
+			inferenceCfg := &types.InferenceConfiguration{
+				MaxTokens: aws.Int32(int32(config.maxToken)),
 			}
 
-			output, err := p.client.ConverseStream(ctx, input)
+			if config.temperature > 0 {
+				inferenceCfg.Temperature = aws.Float32(float32(config.temperature))
+			}
+
+			if config.topP > 0 {
+				inferenceCfg.TopP = aws.Float32(float32(config.topP))
+			}
+
+			converseInput := &bedrockruntime.ConverseStreamInput{
+				ModelId:         &p.model,
+				InferenceConfig: inferenceCfg,
+				System:          systemPrompts,
+				ToolConfig:      toolConfig,
+			}
+
+			if config.enableThinking && config.thinkingBudgetToken > 0 {
+				thinkingConfig := map[string]interface{}{
+					"thinking": map[string]interface{}{
+						"type":          "enabled",
+						"budget_tokens": config.thinkingBudgetToken,
+					},
+				}
+
+				thinkingDoc := document.NewLazyDocument(thinkingConfig)
+				converseInput.AdditionalModelRequestFields = thinkingDoc
+			}
+
+			converseInput.Messages = goroutineHistory
+
+			output, err := p.client.ConverseStream(ctx, converseInput)
 			if err != nil {
 				responseChan <- StreamingLLMResponse{Error: fmt.Errorf("ConverseStream API call failed (turn %d): %w", turn, err), Done: true}
 				return

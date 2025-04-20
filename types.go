@@ -61,17 +61,11 @@ type LLMRequestConfig struct {
 	thinkingBudgetToken int64
 }
 
-// WithThinkingBudget sets the thinking budget for the LLM request configuration.
-func WithThinkingBudget(budget int64) RequestOption {
-	return func(c *LLMRequestConfig) {
-		c.thinkingBudgetToken = budget
-	}
-}
-
 // WithThinkingEnabled sets the thinking option for the LLM request configuration.
-func WithThinkingEnabled() RequestOption {
+func WithThinkingEnabled(thinkingBudget int64) RequestOption {
 	return func(c *LLMRequestConfig) {
 		c.enableThinking = true
+		c.thinkingBudgetToken = thinkingBudget
 	}
 }
 
@@ -108,36 +102,28 @@ type RequestOption func(*LLMRequestConfig)
 // WithMaxToken sets the max token value
 func WithMaxToken(maxToken int64) RequestOption {
 	return func(c *LLMRequestConfig) {
-		if maxToken > 0 {
-			c.maxToken = maxToken
-		}
+		c.maxToken = maxToken
 	}
 }
 
 // WithTopP sets the top-p value
 func WithTopP(topP float64) RequestOption {
 	return func(c *LLMRequestConfig) {
-		if topP > 0 {
-			c.topP = topP
-		}
+		c.topP = topP
 	}
 }
 
 // WithTemperature sets the temperature value
 func WithTemperature(temp float64) RequestOption {
 	return func(c *LLMRequestConfig) {
-		if temp > 0 {
-			c.temperature = temp
-		}
+		c.temperature = temp
 	}
 }
 
 // WithTopK sets the top-k value
 func WithTopK(topK int64) RequestOption {
 	return func(c *LLMRequestConfig) {
-		if topK > 0 {
-			c.topK = topK
-		}
+		c.topK = topK
 	}
 }
 
