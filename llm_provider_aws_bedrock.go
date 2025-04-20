@@ -117,21 +117,40 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 	}
 
 	var finalResponseTextBuilder strings.Builder
+	inferenceCfg := &types.InferenceConfiguration{
+		MaxTokens: aws.Int32(int32(config.maxToken)),
+	}
 
-	for {
-		input := &bedrockruntime.ConverseInput{
-			ModelId:  &p.model,
-			Messages: bedrockMessages,
-			InferenceConfig: &types.InferenceConfiguration{
-				Temperature: aws.Float32(float32(config.temperature)),
-				TopP:        aws.Float32(float32(config.topP)),
-				MaxTokens:   aws.Int32(int32(config.maxToken)),
+	if config.temperature > 0 {
+		inferenceCfg.Temperature = aws.Float32(float32(config.temperature))
+	}
+
+	if config.topP > 0 {
+		inferenceCfg.TopP = aws.Float32(float32(config.topP))
+	}
+
+	converseInput := &bedrockruntime.ConverseInput{
+		ModelId:         &p.model,
+		InferenceConfig: inferenceCfg,
+		System:          systemPrompts,
+		ToolConfig:      toolConfig,
+	}
+
+	if config.enableThinking && config.thinkingBudgetToken > 0 {
+		thinkingConfig := map[string]interface{}{
+			"thinking": map[string]interface{}{
+				"type":          "enabled",
+				"budget_tokens": config.thinkingBudgetToken,
 			},
-			System:     systemPrompts,
-			ToolConfig: toolConfig,
 		}
 
-		output, err := p.client.Converse(ctx, input)
+		thinkingDoc := document.NewLazyDocument(thinkingConfig)
+		converseInput.AdditionalModelRequestFields = thinkingDoc
+	}
+
+	for {
+		converseInput.Messages = bedrockMessages
+		output, err := p.client.Converse(ctx, converseInput)
 		if err != nil {
 			return LLMResponse{}, fmt.Errorf("bedrock Converse API call failed: %w", err)
 		}

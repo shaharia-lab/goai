@@ -154,6 +154,13 @@ func (p *AnthropicLLMProvider) streamAndProcessMessage(
 		Tools:     anthropic.F(toolUnionParams),
 	}
 
+	if config.enableThinking && config.thinkingBudgetToken > 0 {
+		msgParam.Thinking = anthropic.F(anthropic.ThinkingConfigParamUnion(anthropic.ThinkingConfigParam{
+			Type:         anthropic.F(anthropic.ThinkingConfigParamTypeEnabled),
+			BudgetTokens: anthropic.Int(config.thinkingBudgetToken),
+		}))
+	}
+
 	if systemMessage != "" {
 		msgParam.System = anthropic.F([]anthropic.TextBlockParam{
 			anthropic.NewTextBlock(systemMessage),

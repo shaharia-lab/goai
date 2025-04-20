@@ -49,7 +49,7 @@ func TestNewRequestConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "with zero values - should not override defaults",
+			name: "with zero values - should override defaults",
 			opts: []RequestOption{
 				WithMaxToken(0),
 				WithTopP(0),
@@ -57,10 +57,10 @@ func TestNewRequestConfig(t *testing.T) {
 				WithTopK(0),
 			},
 			expected: LLMRequestConfig{
-				maxToken:    1000,
-				topP:        0.5,
-				temperature: 0.5,
-				topK:        40,
+				maxToken:    0,
+				topP:        0,
+				temperature: 0,
+				topK:        0,
 			},
 		},
 		{
@@ -72,10 +72,10 @@ func TestNewRequestConfig(t *testing.T) {
 				WithTopK(-10),
 			},
 			expected: LLMRequestConfig{
-				maxToken:    1000,
-				topP:        0.5,
-				temperature: 0.5,
-				topK:        40,
+				maxToken:    -100,
+				topP:        -0.5,
+				temperature: -0.3,
+				topK:        -10,
 			},
 		},
 		{
@@ -88,9 +88,9 @@ func TestNewRequestConfig(t *testing.T) {
 			},
 			expected: LLMRequestConfig{
 				maxToken:    2000,
-				topP:        0.5,
+				topP:        -0.5,
 				temperature: 0.8,
-				topK:        40,
+				topK:        0,
 			},
 		},
 	}
@@ -123,8 +123,8 @@ func TestWithMaxToken(t *testing.T) {
 		shouldApply bool
 	}{
 		{"positive value", 2000, true},
-		{"zero value", 0, false},
-		{"negative value", -100, false},
+		{"zero value", 0, true},
+		{"negative value", -100, true},
 	}
 
 	for _, tt := range tests {
@@ -152,8 +152,8 @@ func TestWithTopP(t *testing.T) {
 		shouldApply bool
 	}{
 		{"valid value", 0.95, true},
-		{"zero value", 0.0, false},
-		{"negative value", -0.5, false},
+		{"zero value", 0.0, true},
+		{"negative value", -0.5, true},
 	}
 
 	for _, tt := range tests {
@@ -181,8 +181,8 @@ func TestWithTemperature(t *testing.T) {
 		shouldApply bool
 	}{
 		{"valid value", 0.8, true},
-		{"zero value", 0.0, false},
-		{"negative value", -0.3, false},
+		{"zero value", 0.0, true},
+		{"negative value", -0.3, true},
 	}
 
 	for _, tt := range tests {
@@ -210,8 +210,8 @@ func TestWithTopK(t *testing.T) {
 		shouldApply bool
 	}{
 		{"valid value", 100, true},
-		{"zero value", 0, false},
-		{"negative value", -10, false},
+		{"zero value", 0, true},
+		{"negative value", -10, true},
 	}
 
 	for _, tt := range tests {
