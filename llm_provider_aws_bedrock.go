@@ -148,6 +148,7 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 		converseInput.AdditionalModelRequestFields = thinkingDoc
 	}
 
+	iterations := 0
 	for {
 		converseInput.Messages = bedrockMessages
 		output, err := p.client.Converse(ctx, converseInput)
@@ -272,9 +273,11 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 		}
 
 		// Optional: Add a safety break to prevent infinite loops
-		if len(bedrockMessages) > config.maxIterations {
+		if iterations > config.maxIterations {
 			return LLMResponse{}, errors.New("max conversation turns exceeded")
 		}
+
+		iterations++
 	}
 
 	return LLMResponse{
