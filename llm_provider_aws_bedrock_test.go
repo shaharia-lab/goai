@@ -1,4 +1,4 @@
-package goai_test
+package goai
 
 import (
 	"context"
@@ -11,25 +11,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
-	"github.com/shaharia-lab/goai"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
-
-// MockBedrockClient is a mock implementation of the BedrockClient interface
-type MockBedrockClient struct {
-	mock.Mock
-}
-
-func (m *MockBedrockClient) Converse(ctx context.Context, params *bedrockruntime.ConverseInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error) {
-	args := m.Called(ctx, params, optFns)
-	return args.Get(0).(*bedrockruntime.ConverseOutput), args.Error(1)
-}
-
-func (m *MockBedrockClient) ConverseStream(ctx context.Context, params *bedrockruntime.ConverseStreamInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseStreamOutput, error) {
-	args := m.Called(ctx, params, optFns)
-	return args.Get(0).(*bedrockruntime.ConverseStreamOutput), args.Error(1)
-}
 
 func TestBedrockLLMProvider_GetResponse_BasicConversation(t *testing.T) {
 	// Setup mock
@@ -61,28 +45,28 @@ func TestBedrockLLMProvider_GetResponse_BasicConversation(t *testing.T) {
 	}), mock.Anything).Return(mockResponse, nil)
 
 	// Create the provider with our mock
-	provider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
+	provider := NewBedrockLLMProvider(BedrockProviderConfig{
 		Client: mockClient,
 		Model:  "test-model",
 	})
 
 	// Test messages
-	messages := []goai.LLMMessage{
+	messages := []LLMMessage{
 		{
-			Role: goai.SystemRole,
+			Role: SystemRole,
 			Text: "You are a helpful assistant.",
 		},
 		{
-			Role: goai.UserRole,
+			Role: UserRole,
 			Text: "Hello, can you help me?",
 		},
 	}
 
 	// Create LLM request with configuration
-	llm := goai.NewLLMRequest(goai.NewRequestConfig(
-		goai.WithMaxToken(1000),
-		goai.WithTemperature(0.7),
-		goai.WithTopP(0.9),
+	llm := NewLLMRequest(NewRequestConfig(
+		WithMaxToken(1000),
+		WithTemperature(0.7),
+		WithTopP(0.9),
 	), provider)
 
 	// Execute the request
@@ -186,30 +170,30 @@ func TestBedrockLLMProvider_GetResponse_WithTools(t *testing.T) {
 		},
 	}
 
-	toolsProvider := goai.NewToolsProvider()
+	toolsProvider := NewToolsProvider()
 	_ = toolsProvider.AddTools(tools)
 
 	// Create the provider with our mock
-	provider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
+	provider := NewBedrockLLMProvider(BedrockProviderConfig{
 		Client: mockClient,
 		Model:  "test-model",
 	})
 
 	// Test messages
-	messages := []goai.LLMMessage{
+	messages := []LLMMessage{
 		{
-			Role: goai.UserRole,
+			Role: UserRole,
 			Text: "Can you use the test_tool for 'test location'?",
 		},
 	}
 
 	// Create LLM request with configuration including tools
-	llm := goai.NewLLMRequest(goai.NewRequestConfig(
-		goai.WithMaxToken(1000),
-		goai.WithTemperature(0.7),
-		goai.WithTopP(0.9),
-		goai.UseToolsProvider(toolsProvider),
-		goai.WithAllowedTools([]string{"test_tool"}),
+	llm := NewLLMRequest(NewRequestConfig(
+		WithMaxToken(1000),
+		WithTemperature(0.7),
+		WithTopP(0.9),
+		UseToolsProvider(toolsProvider),
+		WithAllowedTools([]string{"test_tool"}),
 	), provider)
 
 	// Execute the request
@@ -373,30 +357,30 @@ func TestBedrockLLMProvider_GetResponse_WithMultipleTools(t *testing.T) {
 		},
 	}
 
-	toolsProvider := goai.NewToolsProvider()
+	toolsProvider := NewToolsProvider()
 	_ = toolsProvider.AddTools(tools)
 
 	// Create the provider with our mock
-	provider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
+	provider := NewBedrockLLMProvider(BedrockProviderConfig{
 		Client: mockClient,
 		Model:  "test-model",
 	})
 
 	// Test messages
-	messages := []goai.LLMMessage{
+	messages := []LLMMessage{
 		{
-			Role: goai.UserRole,
+			Role: UserRole,
 			Text: "What's the weather and time in New York?",
 		},
 	}
 
 	// Create LLM request with configuration including tools
-	llm := goai.NewLLMRequest(goai.NewRequestConfig(
-		goai.WithMaxToken(1000),
-		goai.WithTemperature(0.7),
-		goai.WithTopP(0.9),
-		goai.UseToolsProvider(toolsProvider),
-		goai.WithAllowedTools([]string{"weather_tool", "time_tool"}),
+	llm := NewLLMRequest(NewRequestConfig(
+		WithMaxToken(1000),
+		WithTemperature(0.7),
+		WithTopP(0.9),
+		UseToolsProvider(toolsProvider),
+		WithAllowedTools([]string{"weather_tool", "time_tool"}),
 	), provider)
 
 	// Execute the request
@@ -421,21 +405,21 @@ func TestBedrockLLMProvider_GetResponse_Error(t *testing.T) {
 	mockClient.On("Converse", mock.Anything, mock.Anything, mock.Anything).Return((*bedrockruntime.ConverseOutput)(nil), expectedError)
 
 	// Create the provider with our mock
-	provider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
+	provider := NewBedrockLLMProvider(BedrockProviderConfig{
 		Client: mockClient,
 		Model:  "test-model",
 	})
 
 	// Test messages
-	messages := []goai.LLMMessage{
+	messages := []LLMMessage{
 		{
-			Role: goai.UserRole,
+			Role: UserRole,
 			Text: "Hello",
 		},
 	}
 
 	// Create LLM request with minimal configuration
-	llm := goai.NewLLMRequest(goai.NewRequestConfig(), provider)
+	llm := NewLLMRequest(NewRequestConfig(), provider)
 
 	// Execute the request
 	_, err := llm.Generate(context.Background(), messages)
@@ -476,20 +460,20 @@ func TestBedrockLLMProvider_DefaultModel(t *testing.T) {
 	}), mock.Anything).Return(mockResponse, nil)
 
 	// Create the provider with our mock but no specified model
-	provider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
+	provider := NewBedrockLLMProvider(BedrockProviderConfig{
 		Client: mockClient,
 	})
 
 	// Test messages
-	messages := []goai.LLMMessage{
+	messages := []LLMMessage{
 		{
-			Role: goai.UserRole,
+			Role: UserRole,
 			Text: "Hello",
 		},
 	}
 
 	// Create LLM request with minimal configuration
-	llm := goai.NewLLMRequest(goai.NewRequestConfig(), provider)
+	llm := NewLLMRequest(NewRequestConfig(), provider)
 
 	// Execute the request
 	_, err := llm.Generate(context.Background(), messages)
