@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.21 or later
+- Go 1.22 or later
 - PostgreSQL 11+ with [pgvector](https://github.com/pgvector/pgvector) extension (for embedding vector storage only)
 
 ## Installation

@@ -2,8 +2,6 @@ module github.com/shaharia-lab/goai
 
 go 1.22
 
-toolchain go1.24.1
-
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/anthropics/anthropic-sdk-go v0.2.0-alpha.13
