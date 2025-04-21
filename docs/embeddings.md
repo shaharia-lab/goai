@@ -113,6 +113,19 @@ Text 3:
 Total tokens used: 37
 ```
 
+## AWS Bedrock
+
+Simply create a new `BedrockEmbeddingProvider` with your AWS region and use it with the `EmbeddingService`.
+
+```go
+provider, err := goai.NewBedrockEmbeddingProvider(ctx, "us-east-1")
+if err != nil {
+    log.Fatalf("Failed to create Bedrock embedding provider: %v", err)
+}
+
+embeddingService := goai.NewEmbeddingService(provider)
+```
+
 ## Creating Custom Embedding Providers
 
 You can create your own embedding provider by implementing the `EmbeddingProvider` interface.

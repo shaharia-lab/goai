@@ -8,7 +8,6 @@ import (
 	"strings" // Added for model checking
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 )
 
@@ -18,17 +17,9 @@ type BedrockEmbeddingProvider struct {
 }
 
 // NewBedrockEmbeddingProvider creates a new BedrockEmbeddingProvider.
-func NewBedrockEmbeddingProvider(ctx context.Context, awsRegion string) (*BedrockEmbeddingProvider, error) {
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(awsRegion))
-	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS configuration: %w", err)
-	}
-
-	// Create the Bedrock Runtime client
-	brClient := bedrockruntime.NewFromConfig(cfg)
-
+func NewBedrockEmbeddingProvider(bedrockClient BedrockClient) (*BedrockEmbeddingProvider, error) {
 	return &BedrockEmbeddingProvider{
-		client: brClient,
+		client: bedrockClient,
 	}, nil
 }
 

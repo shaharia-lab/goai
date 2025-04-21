@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/shaharia-lab/goai"
 	"log"
 )
@@ -10,11 +12,19 @@ import (
 func main() {
 	ctx := context.Background()
 
+	awsRegion := "us-east-1" // Replace with your desired AWS region
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(awsRegion))
+	if err != nil {
+		log.Fatalf("Failed to load AWS configuration: %v", err)
+	}
+
+	// Create the Bedrock Runtime client
+	bedrockClient := bedrockruntime.NewFromConfig(cfg)
+
 	// Create a new Bedrock embedding provider
-	// Replace "us-east-1" with your desired AWS region
 	// Ensure you have the AWS credentials configured in your environment
 	// or use any other provider that implements the goai.EmbeddingProvider interface
-	provider, err := goai.NewBedrockEmbeddingProvider(ctx, "us-east-1")
+	provider, err := goai.NewBedrockEmbeddingProvider(bedrockClient)
 	if err != nil {
 		log.Fatalf("Failed to create Bedrock embedding provider: %v", err)
 	}
