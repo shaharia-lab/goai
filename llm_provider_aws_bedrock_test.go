@@ -2,7 +2,10 @@ package goai_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
+	"github.com/shaharia-lab/goai/mcp"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -95,18 +98,34 @@ func TestBedrockLLMProvider_GetResponse_BasicConversation(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-/*func TestBedrockLLMProvider_GetResponse_WithTools(t *testing.T) {
+func TestBedrockLLMProvider_GetResponse_WithTools(t *testing.T) {
 	// Setup mock
 	mockClient := new(MockBedrockClient)
 
-	// Create a response that includes tool calls
-	mockResponse := &bedrockruntime.ConverseOutput{
+	// First response with tool use
+	var schemaDoc = map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"location": map[string]interface{}{
+				"type": "string",
+			},
+		},
+		"required": []interface{}{"location"},
+	}
+	toolUseResponse := &bedrockruntime.ConverseOutput{
 		Output: &types.ConverseOutputMemberMessage{
 			Value: types.Message{
 				Role: types.ConversationRoleAssistant,
 				Content: []types.ContentBlock{
 					&types.ContentBlockMemberText{
 						Value: "I'll check that for you.",
+					},
+					&types.ContentBlockMemberToolUse{
+						Value: types.ToolUseBlock{
+							ToolUseId: aws.String("tool-call-1"),
+							Name:      aws.String("test_tool"),
+							Input:     document.NewLazyDocument(schemaDoc),
+						},
 					},
 				},
 			},
@@ -118,30 +137,29 @@ func TestBedrockLLMProvider_GetResponse_BasicConversation(t *testing.T) {
 		},
 	}
 
-	// Add tool use to the response
-	toolUseContent := map[string]interface{}{
-		"id":   "tool-call-1",
-		"type": "function",
-		"function": map[string]interface{}{
-			"name":      "test_tool",
-			"arguments": "{\"location\":\"test location\"}",
-		},
-	}
-
-	toolUseContentJSON, _ := json.Marshal(toolUseContent)
-	docInterface, _ := document.NewFromBytes(toolUseContentJSON)
-
-	mockResponse.Output = &types.ConverseOutputMemberToolUse{
-		Value: types.ToolUse{
-			Input: &types.ToolUseInputMemberText{
-				Value: string(toolUseContentJSON),
-			},
-			ToolType: types.ToolTypeFunction,
-		},
-	}
-
 	// Setup expectations for the tool call
-	mockClient.On("Converse", mock.Anything, mock.Anything, mock.Anything).Return(mockResponse, nil)
+	mockClient.On("Converse", mock.Anything, mock.Anything, mock.Anything).Return(toolUseResponse, nil).Once()
+
+	// Second response after tool execution
+	finalResponse := &bedrockruntime.ConverseOutput{
+		Output: &types.ConverseOutputMemberMessage{
+			Value: types.Message{
+				Role: types.ConversationRoleAssistant,
+				Content: []types.ContentBlock{
+					&types.ContentBlockMemberText{
+						Value: "I've processed your request for test location.",
+					},
+				},
+			},
+		},
+		StopReason: types.StopReasonEndTurn,
+		Usage: &types.TokenUsage{
+			InputTokens:  aws.Int32(20),
+			OutputTokens: aws.Int32(10),
+		},
+	}
+
+	mockClient.On("Converse", mock.Anything, mock.Anything, mock.Anything).Return(finalResponse, nil).Once()
 
 	// Create tools provider with a test tool
 	tools := []mcp.Tool{
@@ -199,13 +217,13 @@ func TestBedrockLLMProvider_GetResponse_BasicConversation(t *testing.T) {
 
 	// Assertions
 	assert.NoError(t, err)
-	// The assertions will depend on how your actual implementation handles tool calls
-	// This is a simplified version
-	assert.NotEmpty(t, response.Text)
+	assert.Contains(t, response.Text, "I've processed your request")
+	assert.Equal(t, 35, response.TotalInputToken)  // 15 + 20
+	assert.Equal(t, 20, response.TotalOutputToken) // 10 + 10
 
 	// Verify all expectations were met
 	mockClient.AssertExpectations(t)
-}*/
+}
 
 func TestBedrockLLMProvider_GetResponse_Error(t *testing.T) {
 	// Setup mock
