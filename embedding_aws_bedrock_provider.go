@@ -126,7 +126,6 @@ func (b *BedrockEmbeddingProvider) generateWithTitan(ctx context.Context, texts 
 // Cohere models typically support batching multiple texts in one call.
 // inputType examples: "search_document", "search_query", "classification", "clustering"
 func (b *BedrockEmbeddingProvider) generateWithCohere(ctx context.Context, texts []string, model EmbeddingModel, inputType string) (*EmbeddingResponse, error) {
-	// Request Body for Cohere
 	requestBody := map[string]interface{}{
 		"texts":      texts,
 		"input_type": inputType,

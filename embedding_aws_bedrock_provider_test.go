@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// Helper to create bedrockruntime.InvokeModelOutput with marshalled body
 func createMockInvokeOutput(t *testing.T, body interface{}) *bedrockruntime.InvokeModelOutput {
 	t.Helper()
 	jsonBody, err := json.Marshal(body)
@@ -26,17 +25,15 @@ func createMockInvokeOutput(t *testing.T, body interface{}) *bedrockruntime.Invo
 func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 	ctx := context.Background()
 
-	// --- Test Cases Definition ---
 	testCases := []struct {
 		name                 string
 		input                interface{}
 		model                EmbeddingModel
 		mockSetup            func(m *MockBedrockClient, model EmbeddingModel, input interface{}) // Function to setup mock expectations
 		expectedResponse     *EmbeddingResponse
-		expectedErrSubstring string // Substring expected in error message, empty for no error
-		expectedInvokeCalls  int    // Expected number of InvokeModel calls
+		expectedErrSubstring string
+		expectedInvokeCalls  int
 	}{
-		// --- Success Cases ---
 		{
 			name:  "Success - Single Input - Titan",
 			input: "Hello Titan",
@@ -48,7 +45,6 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 				}
 				mockOutput := createMockInvokeOutput(t, respBody)
 
-				// Expect one call for Titan single input
 				m.On("InvokeModel", mock.Anything, mock.MatchedBy(func(params *bedrockruntime.InvokeModelInput) bool {
 					return *params.ModelId == string(model) && string(params.Body) == `{"inputText":"Hello Titan"}` // Check body precisely
 				}), mock.Anything).Return(mockOutput, nil).Once()
@@ -79,7 +75,6 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 				mockOutput := createMockInvokeOutput(t, respBody)
 
 				m.On("InvokeModel", mock.Anything, mock.MatchedBy(func(params *bedrockruntime.InvokeModelInput) bool {
-					// Check important fields for Cohere batch request
 					var bodyMap map[string]interface{}
 					err := json.Unmarshal(params.Body, &bodyMap)
 					assert.NoError(t, err)
@@ -104,8 +99,6 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 			input: []string{"Text 1", "Text 2"},
 			model: EmbeddingModel("amazon.titan-embed-text-v1"),
 			mockSetup: func(m *MockBedrockClient, model EmbeddingModel, input interface{}) {
-				// Titan needs multiple calls for multiple inputs
-				// Call 1
 				respBody1 := map[string]interface{}{"embedding": []float32{1.1, 1.2}, "inputTextTokenCount": 2}
 				mockOutput1 := createMockInvokeOutput(t, respBody1)
 				m.On("InvokeModel", mock.Anything, mock.MatchedBy(func(params *bedrockruntime.InvokeModelInput) bool {
@@ -126,7 +119,7 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 					{Object: "embedding", Embedding: []float32{2.1, 2.2}, Index: 1},
 				},
 				Model: EmbeddingModel("amazon.titan-embed-text-v1"),
-				Usage: Usage{PromptTokens: 5, TotalTokens: 5}, // 2 + 3
+				Usage: Usage{PromptTokens: 5, TotalTokens: 5},
 			},
 			expectedInvokeCalls: 2,
 		},
@@ -141,7 +134,6 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 				}
 				mockOutput := createMockInvokeOutput(t, respBody)
 
-				// Cohere takes batch in one call
 				m.On("InvokeModel", mock.Anything, mock.MatchedBy(func(params *bedrockruntime.InvokeModelInput) bool {
 					var bodyMap map[string]interface{}
 					err := json.Unmarshal(params.Body, &bodyMap)
@@ -164,11 +156,10 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 			expectedInvokeCalls: 1,
 		},
 		{
-			name:  "Success - Cohere - No Meta/Usage Info", // Test fallback for usage
+			name:  "Success - Cohere - No Meta/Usage Info",
 			input: []string{"Batch 1", "Batch 2"},
 			model: EmbeddingModel("cohere.embed-english-v3"),
 			mockSetup: func(m *MockBedrockClient, model EmbeddingModel, input interface{}) {
-				// Simulate response *without* meta/billed_units
 				respBody := map[string]interface{}{
 					"embeddings": [][]float32{{1.1, 1.2}, {2.1, 2.2}},
 					"id":         "some_id",
@@ -184,17 +175,15 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 					{Object: "embedding", Embedding: []float32{2.1, 2.2}, Index: 1},
 				},
 				Model: EmbeddingModel("cohere.embed-english-v3"),
-				Usage: Usage{PromptTokens: 0, TotalTokens: 0}, // Expect 0 tokens when not provided
+				Usage: Usage{PromptTokens: 0, TotalTokens: 0},
 			},
 			expectedInvokeCalls: 1,
 		},
-
-		// --- Error Cases ---
 		{
 			name:                 "Error - Invalid Input Type",
-			input:                12345, // Not string or []string
+			input:                12345,
 			model:                EmbeddingModel("amazon.titan-embed-text-v1"),
-			mockSetup:            func(m *MockBedrockClient, model EmbeddingModel, input interface{}) { /* No calls expected */ },
+			mockSetup:            func(m *MockBedrockClient, model EmbeddingModel, input interface{}) {},
 			expectedErrSubstring: "unsupported input type: int",
 			expectedInvokeCalls:  0,
 		},
@@ -202,7 +191,7 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 			name:                 "Error - Empty String Input",
 			input:                "",
 			model:                EmbeddingModel("amazon.titan-embed-text-v1"),
-			mockSetup:            func(m *MockBedrockClient, model EmbeddingModel, input interface{}) { /* No calls expected */ },
+			mockSetup:            func(m *MockBedrockClient, model EmbeddingModel, input interface{}) {},
 			expectedErrSubstring: "input string cannot be empty",
 			expectedInvokeCalls:  0,
 		},
@@ -210,7 +199,7 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 			name:                 "Error - Empty Slice Input",
 			input:                []string{},
 			model:                EmbeddingModel("amazon.titan-embed-text-v1"),
-			mockSetup:            func(m *MockBedrockClient, model EmbeddingModel, input interface{}) { /* No calls expected */ },
+			mockSetup:            func(m *MockBedrockClient, model EmbeddingModel, input interface{}) {},
 			expectedErrSubstring: "input string slice cannot be empty",
 			expectedInvokeCalls:  0,
 		},
@@ -218,7 +207,7 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 			name:                 "Error - Slice Contains Empty String",
 			input:                []string{"hello", ""},
 			model:                EmbeddingModel("amazon.titan-embed-text-v1"),
-			mockSetup:            func(m *MockBedrockClient, model EmbeddingModel, input interface{}) { /* No calls expected */ },
+			mockSetup:            func(m *MockBedrockClient, model EmbeddingModel, input interface{}) {},
 			expectedErrSubstring: "input slice contains an empty string",
 			expectedInvokeCalls:  0,
 		},
@@ -238,7 +227,6 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 			input: "Test text",
 			model: EmbeddingModel("amazon.titan-embed-text-v1"),
 			mockSetup: func(m *MockBedrockClient, model EmbeddingModel, input interface{}) {
-				// Return invalid JSON for the Titan response structure
 				invalidOutput := &bedrockruntime.InvokeModelOutput{
 					Body:        []byte(`{"embedding": "not-a-slice", "inputTextTokenCount": 5}`),
 					ContentType: aws.String("application/json"),
@@ -253,7 +241,6 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 			input: []string{"Batch 1"},
 			model: EmbeddingModel("cohere.embed-english-v3"),
 			mockSetup: func(m *MockBedrockClient, model EmbeddingModel, input interface{}) {
-				// Return invalid JSON for the Cohere response structure
 				invalidOutput := &bedrockruntime.InvokeModelOutput{
 					Body:        []byte(`{"embeddings": ["not-a-slice-of-slices"]}`),
 					ContentType: aws.String("application/json"),
@@ -265,12 +252,11 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 		},
 		{
 			name:  "Error - Cohere Response Mismatched Counts",
-			input: []string{"Text 1", "Text 2"}, // Expect 2 embeddings
+			input: []string{"Text 1", "Text 2"},
 			model: EmbeddingModel("cohere.embed-english-v3"),
 			mockSetup: func(m *MockBedrockClient, model EmbeddingModel, input interface{}) {
-				// Return only one embedding in the response
 				respBody := map[string]interface{}{
-					"embeddings": [][]float32{{1.1, 1.2}}, // Only one embedding
+					"embeddings": [][]float32{{1.1, 1.2}},
 					"meta":       map[string]interface{}{"billed_units": map[string]interface{}{"input_tokens": 6}},
 				}
 				mockOutput := createMockInvokeOutput(t, respBody)
@@ -281,25 +267,20 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 		},
 	}
 
-	// --- Run Test Cases ---
 	for _, tc := range testCases {
-		tc := tc // Capture range variable
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel() // Run tests in parallel
+			t.Parallel()
 
-			// Setup mock
-			mockClient := new(MockBedrockClient) // Use the generated mock
+			mockClient := new(MockBedrockClient)
 			if tc.mockSetup != nil {
 				tc.mockSetup(mockClient, tc.model, tc.input)
 			}
 
-			// Create provider with mock client
-			provider := NewBedrockEmbeddingProviderWithClient(mockClient) // Use constructor that accepts client
+			provider := NewBedrockEmbeddingProviderWithClient(mockClient)
 
-			// Execute
 			resp, err := provider.Generate(ctx, tc.input, tc.model)
 
-			// Assert
 			if tc.expectedErrSubstring != "" {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tc.expectedErrSubstring)
@@ -311,7 +292,6 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 				assert.Equal(t, tc.expectedResponse.Model, resp.Model)
 				assert.Equal(t, tc.expectedResponse.Usage, resp.Usage)
 				assert.Equal(t, len(tc.expectedResponse.Data), len(resp.Data))
-				// Deep compare embeddings if necessary, or just check length/indices
 				for i := range tc.expectedResponse.Data {
 					assert.Equal(t, tc.expectedResponse.Data[i].Object, resp.Data[i].Object)
 					assert.Equal(t, tc.expectedResponse.Data[i].Index, resp.Data[i].Index)
@@ -319,9 +299,7 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 				}
 			}
 
-			// Verify mock calls were made as expected
 			mockClient.AssertExpectations(t)
-			// Optionally verify exact number of calls if important
 			mockClient.AssertNumberOfCalls(t, "InvokeModel", tc.expectedInvokeCalls)
 		})
 	}
@@ -329,7 +307,7 @@ func TestBedrockEmbeddingProvider_Generate(t *testing.T) {
 
 // Test case for uninitialized client
 func TestBedrockEmbeddingProvider_Generate_NilClient(t *testing.T) {
-	provider := &BedrockEmbeddingProvider{client: nil} // Explicitly nil client
+	provider := &BedrockEmbeddingProvider{client: nil}
 	_, err := provider.Generate(context.Background(), "test", "amazon.titan-embed-text-v1")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "bedrock client is not initialized")
