@@ -15,15 +15,41 @@ import (
 	"github.com/shaharia-lab/goai/mcp"
 )
 
+// BedrockClient interface for AWS Bedrock operations
+type BedrockClient interface {
+	Converse(ctx context.Context, params *bedrockruntime.ConverseInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error)
+	ConverseStream(ctx context.Context, params *bedrockruntime.ConverseStreamInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseStreamOutput, error)
+}
+
+// BedrockClientWrapper wraps the bedrockruntime.Client to implement the BedrockClient interface
+type BedrockClientWrapper struct {
+	client *bedrockruntime.Client
+}
+
+// Converse implements the BedrockClient interface
+func (w *BedrockClientWrapper) Converse(ctx context.Context, params *bedrockruntime.ConverseInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error) {
+	return w.client.Converse(ctx, params, optFns...)
+}
+
+// ConverseStream implements the BedrockClient interface
+func (w *BedrockClientWrapper) ConverseStream(ctx context.Context, params *bedrockruntime.ConverseStreamInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseStreamOutput, error) {
+	return w.client.ConverseStream(ctx, params, optFns...)
+}
+
+// NewBedrockClientWrapper creates a new wrapper for bedrockruntime.Client
+func NewBedrockClientWrapper(client *bedrockruntime.Client) BedrockClient {
+	return &BedrockClientWrapper{client: client}
+}
+
 // BedrockLLMProvider implements the LLMProvider interface using AWS Bedrock's official Go SDK.
 type BedrockLLMProvider struct {
-	client *bedrockruntime.Client
+	client BedrockClient
 	model  string
 }
 
-// BedrockProviderConfig holds the configuration options for creating a Bedrock provider.
+// BedrockProviderConfig holds the configuration options for creating a Bedrock provider
 type BedrockProviderConfig struct {
-	Client *bedrockruntime.Client
+	Client BedrockClient
 	Model  string
 }
 
