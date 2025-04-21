@@ -225,6 +225,193 @@ func TestBedrockLLMProvider_GetResponse_WithTools(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
+func TestBedrockLLMProvider_GetResponse_WithMultipleTools(t *testing.T) {
+	// Setup mock
+	mockClient := new(MockBedrockClient)
+
+	// First response with first tool use
+	var weatherSchemaDoc = map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"location": map[string]interface{}{
+				"type": "string",
+			},
+		},
+		"required": []interface{}{"location"},
+	}
+	firstToolUseResponse := &bedrockruntime.ConverseOutput{
+		Output: &types.ConverseOutputMemberMessage{
+			Value: types.Message{
+				Role: types.ConversationRoleAssistant,
+				Content: []types.ContentBlock{
+					&types.ContentBlockMemberText{
+						Value: "I'll check the weather and time for you.",
+					},
+					&types.ContentBlockMemberToolUse{
+						Value: types.ToolUseBlock{
+							ToolUseId: aws.String("tool-call-1"),
+							Name:      aws.String("weather_tool"),
+							Input:     document.NewLazyDocument(weatherSchemaDoc),
+						},
+					},
+				},
+			},
+		},
+		StopReason: types.StopReasonToolUse,
+		Usage: &types.TokenUsage{
+			InputTokens:  aws.Int32(15),
+			OutputTokens: aws.Int32(10),
+		},
+	}
+
+	// Setup expectations for the first tool call
+	mockClient.On("Converse", mock.Anything, mock.Anything, mock.Anything).Return(firstToolUseResponse, nil).Once()
+
+	// Second response with second tool use
+	var timeSchemaDoc = map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"timezone": map[string]interface{}{
+				"type": "string",
+			},
+		},
+		"required": []interface{}{"timezone"},
+	}
+	secondToolUseResponse := &bedrockruntime.ConverseOutput{
+		Output: &types.ConverseOutputMemberMessage{
+			Value: types.Message{
+				Role: types.ConversationRoleAssistant,
+				Content: []types.ContentBlock{
+					&types.ContentBlockMemberText{
+						Value: "Now I'll check the time.",
+					},
+					&types.ContentBlockMemberToolUse{
+						Value: types.ToolUseBlock{
+							ToolUseId: aws.String("tool-call-2"),
+							Name:      aws.String("time_tool"),
+							Input:     document.NewLazyDocument(timeSchemaDoc),
+						},
+					},
+				},
+			},
+		},
+		StopReason: types.StopReasonToolUse,
+		Usage: &types.TokenUsage{
+			InputTokens:  aws.Int32(25),
+			OutputTokens: aws.Int32(12),
+		},
+	}
+
+	// Setup expectations for the second tool call
+	mockClient.On("Converse", mock.Anything, mock.Anything, mock.Anything).Return(secondToolUseResponse, nil).Once()
+
+	// Final response after both tool executions
+	finalResponse := &bedrockruntime.ConverseOutput{
+		Output: &types.ConverseOutputMemberMessage{
+			Value: types.Message{
+				Role: types.ConversationRoleAssistant,
+				Content: []types.ContentBlock{
+					&types.ContentBlockMemberText{
+						Value: "In New York, the weather is sunny and the current time is 10:00 AM EDT.",
+					},
+				},
+			},
+		},
+		StopReason: types.StopReasonEndTurn,
+		Usage: &types.TokenUsage{
+			InputTokens:  aws.Int32(35),
+			OutputTokens: aws.Int32(15),
+		},
+	}
+
+	// Setup expectations for the final response
+	mockClient.On("Converse", mock.Anything, mock.Anything, mock.Anything).Return(finalResponse, nil).Once()
+
+	// Create tools provider with multiple tools
+	tools := []mcp.Tool{
+		{
+			Name:        "weather_tool",
+			Description: "Provides weather information for a location",
+			InputSchema: json.RawMessage(`{
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"}
+                },
+                "required": ["location"]
+            }`),
+			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+				return mcp.CallToolResult{
+					Content: []mcp.ToolResultContent{
+						{
+							Type: "text",
+							Text: "Weather in New York: Sunny, 75°F",
+						},
+					},
+				}, nil
+			},
+		},
+		{
+			Name:        "time_tool",
+			Description: "Provides current time for a timezone",
+			InputSchema: json.RawMessage(`{
+                "type": "object",
+                "properties": {
+                    "timezone": {"type": "string"}
+                },
+                "required": ["timezone"]
+            }`),
+			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+				return mcp.CallToolResult{
+					Content: []mcp.ToolResultContent{
+						{
+							Type: "text",
+							Text: "Current time in EDT: 10:00 AM",
+						},
+					},
+				}, nil
+			},
+		},
+	}
+
+	toolsProvider := goai.NewToolsProvider()
+	_ = toolsProvider.AddTools(tools)
+
+	// Create the provider with our mock
+	provider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
+		Client: mockClient,
+		Model:  "test-model",
+	})
+
+	// Test messages
+	messages := []goai.LLMMessage{
+		{
+			Role: goai.UserRole,
+			Text: "What's the weather and time in New York?",
+		},
+	}
+
+	// Create LLM request with configuration including tools
+	llm := goai.NewLLMRequest(goai.NewRequestConfig(
+		goai.WithMaxToken(1000),
+		goai.WithTemperature(0.7),
+		goai.WithTopP(0.9),
+		goai.UseToolsProvider(toolsProvider),
+		goai.WithAllowedTools([]string{"weather_tool", "time_tool"}),
+	), provider)
+
+	// Execute the request
+	response, err := llm.Generate(context.Background(), messages)
+
+	// Assertions
+	assert.NoError(t, err)
+	assert.Contains(t, response.Text, "the weather is sunny and the current time is 10:00 AM")
+	assert.Equal(t, 75, response.TotalInputToken)  // 15 + 25 + 35
+	assert.Equal(t, 37, response.TotalOutputToken) // 10 + 12 + 15
+
+	// Verify all expectations were met
+	mockClient.AssertExpectations(t)
+}
+
 func TestBedrockLLMProvider_GetResponse_Error(t *testing.T) {
 	// Setup mock
 	mockClient := new(MockBedrockClient)
