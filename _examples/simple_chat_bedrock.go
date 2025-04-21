@@ -3,14 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/shaharia-lab/goai/mcp"
 	"log"
+
+	"github.com/shaharia-lab/goai/mcp"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 
 	"github.com/shaharia-lab/goai"
-	"github.com/shaharia-lab/mcp-tools"
+	mcptools "github.com/shaharia-lab/mcp-tools"
 )
 
 // This example demonstrates how to use the AWS Bedrock LLM provider with the GoAI library.

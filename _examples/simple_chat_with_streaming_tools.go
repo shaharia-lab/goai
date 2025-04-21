@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/shaharia-lab/goai/mcp"
-	"os"
+	mcptools "github.com/shaharia-lab/mcp-tools"
 
 	"github.com/shaharia-lab/goai"
 	"github.com/shaharia-lab/mcp-tools"
