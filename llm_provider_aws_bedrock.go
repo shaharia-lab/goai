@@ -21,26 +21,6 @@ type BedrockClient interface {
 	ConverseStream(ctx context.Context, params *bedrockruntime.ConverseStreamInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseStreamOutput, error)
 }
 
-// BedrockClientWrapper wraps the bedrockruntime.Client to implement the BedrockClient interface
-type BedrockClientWrapper struct {
-	client *bedrockruntime.Client
-}
-
-// Converse implements the BedrockClient interface
-func (w *BedrockClientWrapper) Converse(ctx context.Context, params *bedrockruntime.ConverseInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error) {
-	return w.client.Converse(ctx, params, optFns...)
-}
-
-// ConverseStream implements the BedrockClient interface
-func (w *BedrockClientWrapper) ConverseStream(ctx context.Context, params *bedrockruntime.ConverseStreamInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseStreamOutput, error) {
-	return w.client.ConverseStream(ctx, params, optFns...)
-}
-
-// NewBedrockClientWrapper creates a new wrapper for bedrockruntime.Client
-func NewBedrockClientWrapper(client *bedrockruntime.Client) BedrockClient {
-	return &BedrockClientWrapper{client: client}
-}
-
 // BedrockLLMProvider implements the LLMProvider interface using AWS Bedrock's official Go SDK.
 type BedrockLLMProvider struct {
 	client BedrockClient
