@@ -10,6 +10,7 @@ require (
 	github.com/google/generative-ai-go v0.19.0
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
+	github.com/mattn/go-sqlite3 v1.14.28
 	github.com/openai/openai-go v0.1.0-alpha.61
 	github.com/pgvector/pgvector-go v0.2.2
 	github.com/slack-go/slack v0.16.0
