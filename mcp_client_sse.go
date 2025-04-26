@@ -1,4 +1,4 @@
-package mcp
+package goai
 
 import (
 	"bufio"
@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shaharia-lab/goai/observability"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
@@ -25,7 +24,7 @@ const (
 type SSETransport struct {
 	client          *http.Client
 	config          SSEConfig
-	logger          observability.Logger
+	logger          Logger
 	stopChan        chan struct{}
 	reconnectChan   chan struct{}
 	mu              sync.RWMutex
@@ -46,7 +45,7 @@ type SSETransport struct {
 	clientDoneMutex sync.RWMutex
 }
 
-func NewSSETransport(logger observability.Logger) *SSETransport {
+func NewSSETransport(logger Logger) *SSETransport {
 	return &SSETransport{
 		client:          &http.Client{},
 		stopChan:        make(chan struct{}),
@@ -62,7 +61,7 @@ func (t *SSETransport) SetReceiveMessageCallback(callback func(message []byte)) 
 }
 
 func (t *SSETransport) Connect(ctx context.Context, config ClientConfig) error {
-	ctx, span := observability.StartSpan(ctx, "SSETransport.Connect")
+	ctx, span := StartSpan(ctx, "SSETransport.Connect")
 	span.SetAttributes(
 		attribute.String("url", config.SSE.URL),
 		attribute.String("client_name", config.ClientName),
@@ -434,7 +433,7 @@ func (t *SSETransport) processEvent(
 }
 
 func (t *SSETransport) SendMessage(ctx context.Context, message interface{}) error {
-	ctx, span := observability.StartSpan(ctx, "SSETransport.SendMessage")
+	ctx, span := StartSpan(ctx, "SSETransport.SendMessage")
 	defer span.End()
 
 	var err error
@@ -499,7 +498,7 @@ func (t *SSETransport) SendMessage(ctx context.Context, message interface{}) err
 }
 
 func (t *SSETransport) Close(ctx context.Context) error {
-	ctx, span := observability.StartSpan(ctx, "SSETransport.Close")
+	ctx, span := StartSpan(ctx, "SSETransport.Close")
 	defer span.End()
 
 	var err error

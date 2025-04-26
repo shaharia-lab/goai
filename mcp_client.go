@@ -1,4 +1,4 @@
-package mcp
+package goai
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shaharia-lab/goai/observability"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
@@ -21,7 +20,7 @@ const (
 	defaultMaxRetryDelay   = 30 * time.Second
 	defaultMaxRetries      = 5
 	defaultMaxMissedPings  = 2
-	defaultClientName      = "mcp-client"
+	defaultClientName      = "client"
 	defaultClientVersion   = "1.0.0"
 	defaultMessageEndpoint = ""
 	defaultRequestTimeout  = 30 * time.Second
@@ -58,7 +57,7 @@ type ClientConfig struct {
 	MaxRetries      int
 	ClientName      string
 	ClientVersion   string
-	Logger          observability.Logger
+	Logger          Logger
 	SSE             SSEConfig
 	StdIO           StdIOConfig
 	MessageEndpoint string
@@ -86,7 +85,7 @@ type Transport interface {
 type Client struct {
 	transport        Transport
 	config           ClientConfig
-	logger           observability.Logger
+	logger           Logger
 	state            ConnectionState
 	initialized      bool
 	capabilities     Capabilities
@@ -98,7 +97,7 @@ type Client struct {
 
 func NewClient(transport Transport, config ClientConfig) *Client {
 	if config.Logger == nil {
-		config.Logger = observability.NewDefaultLogger()
+		config.Logger = NewDefaultLogger()
 	}
 
 	if config.ClientName == "" {
@@ -167,7 +166,7 @@ func (t *SSETransport) handleConnectionError(err error) *ConnectionError {
 }
 
 func (c *Client) Connect(ctx context.Context) error {
-	ctx, span := observability.StartSpan(ctx, "Client.Connect")
+	ctx, span := StartSpan(ctx, "Client.Connect")
 	span.SetAttributes(
 		attribute.String("client.name", c.config.ClientName),
 		attribute.String("client.version", c.config.ClientVersion),
@@ -355,7 +354,7 @@ func (c *Client) sendInitializedNotification(ctx context.Context) error {
 }
 
 func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
-	ctx, span := observability.StartSpan(ctx, "Client.ListTools")
+	ctx, span := StartSpan(ctx, "Client.ListTools")
 	span.SetAttributes(
 		attribute.String("client.name", c.config.ClientName),
 		attribute.String("client.version", c.config.ClientVersion),
@@ -441,7 +440,7 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 }
 
 func (c *Client) CallTool(ctx context.Context, params CallToolParams) (CallToolResult, error) {
-	ctx, span := observability.StartSpan(ctx, "Client.CallTool")
+	ctx, span := StartSpan(ctx, "Client.CallTool")
 	span.SetAttributes(
 		attribute.String("client.name", c.config.ClientName),
 		attribute.String("client.version", c.config.ClientVersion),
@@ -550,7 +549,7 @@ func (c *Client) CallTool(ctx context.Context, params CallToolParams) (CallToolR
 }
 
 func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
-	ctx, span := observability.StartSpan(ctx, "Client.ListPrompts")
+	ctx, span := StartSpan(ctx, "Client.ListPrompts")
 	span.SetAttributes(
 		attribute.String("client.name", c.config.ClientName),
 		attribute.String("client.version", c.config.ClientVersion),
@@ -635,7 +634,7 @@ func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
 }
 
 func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) ([]PromptMessage, error) {
-	ctx, span := observability.StartSpan(ctx, "Client.GetPrompt")
+	ctx, span := StartSpan(ctx, "Client.GetPrompt")
 	span.SetAttributes(
 		attribute.String("client.name", c.config.ClientName),
 		attribute.String("client.version", c.config.ClientVersion),
@@ -742,7 +741,7 @@ func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) ([]Promp
 }
 
 func (c *Client) Close(ctx context.Context) error {
-	ctx, span := observability.StartSpan(ctx, "Client.Close")
+	ctx, span := StartSpan(ctx, "Client.Close")
 	span.SetAttributes(
 		attribute.String("client.name", c.config.ClientName),
 		attribute.String("client.version", c.config.ClientVersion),

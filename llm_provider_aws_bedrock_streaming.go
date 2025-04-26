@@ -12,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
-	"github.com/shaharia-lab/goai/mcp"
 )
 
 // GetStreamingResponse generates a streaming response using AWS Bedrock's API for the given messages and configuration.
@@ -41,20 +40,20 @@ import (
 //
 //	func main() {
 //	    // Create Bedrock LLM Provider
-//	    llmProvider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
+//	    llmProvider := NewBedrockLLMProvider(BedrockProviderConfig{
 //	        Client: bedrockruntime.New(aws.Config{}),
 //	        Model:  "anthropic.claude-3-sonnet-20240229-v1:0",
 //	    })
 //
 //	    // Configure LLM Request
-//	    llm := goai.NewLLMRequest(goai.NewRequestConfig(
-//	        goai.WithMaxToken(100),
-//	        goai.WithTemperature(0.7),
+//	    llm := NewLLMRequest(NewRequestConfig(
+//	        WithMaxToken(100),
+//	        WithTemperature(0.7),
 //	    ), llmProvider)
 //
 //	    // Generate streaming response
-//	    stream, err := llm.GenerateStream(context.Background(), []goai.LLMMessage{
-//	        {Role: goai.UserRole, Text: "Explain quantum computing"},
+//	    stream, err := llm.GenerateStream(context.Background(), []LLMMessage{
+//	        {Role: UserRole, Text: "Explain quantum computing"},
 //	    })
 //
 //	    if err != nil {
@@ -106,23 +105,23 @@ func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages 
 	var toolProvider *ToolsProvider
 	if config.toolsProvider != nil {
 		toolProvider = config.toolsProvider
-		mcpTools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
+		ools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
 		if err != nil {
 			return nil, fmt.Errorf("streaming: error listing tools: %w", err)
 		}
-		if len(mcpTools) > 0 {
+		if len(ools) > 0 {
 			var bedrockTools []types.Tool
-			for _, mcpTool := range mcpTools {
+			for _, ool := range ools {
 				var schemaDoc map[string]interface{}
-				inputSchemaBytes := []byte(mcpTool.InputSchema)
+				inputSchemaBytes := []byte(ool.InputSchema)
 				if len(inputSchemaBytes) == 0 || string(inputSchemaBytes) == "null" {
 					schemaDoc = make(map[string]interface{})
 				} else if err := json.Unmarshal(inputSchemaBytes, &schemaDoc); err != nil {
-					return nil, fmt.Errorf("streaming: failed to unmarshal tool input schema for '%s': %w", mcpTool.Name, err)
+					return nil, fmt.Errorf("streaming: failed to unmarshal tool input schema for '%s': %w", ool.Name, err)
 				}
 				toolSpec := types.ToolSpecification{
-					Name:        aws.String(mcpTool.Name),
-					Description: aws.String(mcpTool.Description),
+					Name:        aws.String(ool.Name),
+					Description: aws.String(ool.Description),
 					InputSchema: &types.ToolInputSchemaMemberJson{Value: document.NewLazyDocument(schemaDoc)},
 				}
 				bedrockTools = append(bedrockTools, &types.ToolMemberToolSpec{Value: toolSpec})
@@ -320,7 +319,7 @@ func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages 
 
 				toolUseIDString := aws.ToString(currentToolUseID)
 				toolNameString := aws.ToString(currentToolName)
-				toolResponse, execErr := toolProvider.ExecuteTool(ctx, mcp.CallToolParams{
+				toolResponse, execErr := toolProvider.ExecuteTool(ctx, CallToolParams{
 					Name:      toolNameString,
 					Arguments: inputBytesForExec,
 				})
@@ -344,8 +343,8 @@ func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages 
 					if toolResponse.IsError {
 						toolResultStatus = types.ToolResultStatusError
 						if len(toolResponse.Content) > 0 {
-							for _, mcpContent := range toolResponse.Content {
-								bedrockResultContent = append(bedrockResultContent, &types.ToolResultContentBlockMemberText{Value: mcpContent.Text})
+							for _, ontent := range toolResponse.Content {
+								bedrockResultContent = append(bedrockResultContent, &types.ToolResultContentBlockMemberText{Value: ontent.Text})
 							}
 						} else {
 							bedrockResultContent = append(bedrockResultContent, &types.ToolResultContentBlockMemberText{Value: fmt.Sprintf("Tool '%s' reported an error but returned no content.", toolNameString)})
@@ -353,8 +352,8 @@ func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages 
 					} else if toolResponse.Content == nil || len(toolResponse.Content) == 0 {
 						bedrockResultContent = append(bedrockResultContent, &types.ToolResultContentBlockMemberText{Value: ""})
 					} else {
-						for _, mcpContent := range toolResponse.Content {
-							bedrockResultContent = append(bedrockResultContent, &types.ToolResultContentBlockMemberText{Value: mcpContent.Text})
+						for _, ontent := range toolResponse.Content {
+							bedrockResultContent = append(bedrockResultContent, &types.ToolResultContentBlockMemberText{Value: ontent.Text})
 						}
 					}
 					toolResultBlock = types.ContentBlockMemberToolResult{

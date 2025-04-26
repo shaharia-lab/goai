@@ -6,27 +6,26 @@ import (
 	"os"
 
 	"github.com/openai/openai-go"
-	"github.com/shaharia-lab/goai"
 )
 
 func main() {
 	// Create OpenAI LLM Provider
-	llmProvider := goai.NewOpenAILLMProvider(goai.OpenAIProviderConfig{
-		Client: goai.NewOpenAIClient(os.Getenv("OPENAI_API_KEY")),
+	llmProvider := NewOpenAILLMProvider(OpenAIProviderConfig{
+		Client: NewOpenAIClient(os.Getenv("OPENAI_API_KEY")),
 		Model:  openai.ChatModelGPT3_5Turbo,
 	})
 
 	// Configure LLM Request
-	llm := goai.NewLLMRequest(goai.NewRequestConfig(
-		goai.WithMaxToken(100),
-		goai.WithTemperature(0.7),
+	llm := NewLLMRequest(NewRequestConfig(
+		WithMaxToken(100),
+		WithTemperature(0.7),
 	), llmProvider)
 
 	ctx := context.Background()
 
 	// Generate response
-	response, err := llm.Generate(ctx, []goai.LLMMessage{
-		{Role: goai.UserRole, Text: "Explain quantum computing"},
+	response, err := llm.Generate(ctx, []LLMMessage{
+		{Role: UserRole, Text: "Explain quantum computing"},
 	})
 
 	if err != nil {

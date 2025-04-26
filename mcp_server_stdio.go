@@ -1,4 +1,4 @@
-package mcp
+package goai
 
 import (
 	"bufio"
@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/shaharia-lab/goai/observability"
 	"go.opentelemetry.io/otel/codes"
 )
 
@@ -109,7 +108,7 @@ func (s *StdIOServer) sendNotification(clientID string, method string, params in
 
 // Run starts the StdIOServer, reading and processing messages from stdin.
 func (s *StdIOServer) Run(ctx context.Context) error {
-	ctx, span := observability.StartSpan(ctx, "StdIOServer.Run")
+	ctx, span := StartSpan(ctx, "StdIOServer.Run")
 	defer span.End()
 
 	var err error

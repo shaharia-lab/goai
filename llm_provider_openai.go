@@ -7,8 +7,6 @@ import (
 	"log"
 	"time"
 
-	"github.com/shaharia-lab/goai/mcp"
-
 	"github.com/openai/openai-go"
 )
 
@@ -89,7 +87,7 @@ func (p *OpenAILLMProvider) createCompletionParams(messages []openai.ChatComplet
 //
 // Example usage:
 //
-//	messages := []goai.LLMMessage{
+//	messages := []LLMMessage{
 //	    {Role: "system", Text: "You are a helpful assistant"},
 //	    {Role: "user", Text: "What is the capital of France?"},
 //	}
@@ -142,7 +140,7 @@ func (p *OpenAILLMProvider) GetResponse(ctx context.Context, messages []LLMMessa
 		// Process each tool call
 		for _, toolCall := range completion.Choices[0].Message.ToolCalls {
 			log.Printf("Executing tool: %s %s", toolCall.Function.Name, json.RawMessage(toolCall.Function.Arguments))
-			toolResults, _ := config.toolsProvider.ExecuteTool(ctx, mcp.CallToolParams{
+			toolResults, _ := config.toolsProvider.ExecuteTool(ctx, CallToolParams{
 				Name:      toolCall.Function.Name,
 				Arguments: json.RawMessage(toolCall.Function.Arguments),
 			})

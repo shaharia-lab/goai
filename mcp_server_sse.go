@@ -1,4 +1,4 @@
-package mcp
+package goai
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shaharia-lab/goai/observability"
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/google/uuid"
@@ -174,7 +173,7 @@ func (s *SSEServer) sendMessageToClient(clientID string, message []byte) {
 }
 
 func (s *SSEServer) handleHTTPRequest(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	ctx, span := observability.StartSpan(ctx, "SSEServer.handleHTTPRequest")
+	ctx, span := StartSpan(ctx, "SSEServer.handleHTTPRequest")
 	defer span.End()
 
 	var err error
@@ -211,7 +210,7 @@ func (s *SSEServer) handleHTTPRequest(ctx context.Context, w http.ResponseWriter
 
 // handleSSEConnection establishes a new SSE connection.
 func (s *SSEServer) handleSSEConnection(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	ctx, span := observability.StartSpan(ctx, "SSEServer.handleSSEConnection")
+	ctx, span := StartSpan(ctx, "SSEServer.handleSSEConnection")
 	defer span.End()
 
 	var err error
@@ -340,7 +339,7 @@ func (s *SSEServer) handleSSEConnection(ctx context.Context, w http.ResponseWrit
 
 // handleClientMessage processes incoming messages from clients (POST to /message).
 func (s *SSEServer) handleClientMessage(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	ctx, span := observability.StartSpan(ctx, "SSEServer.handleClientMessage")
+	ctx, span := StartSpan(ctx, "SSEServer.handleClientMessage")
 	defer span.End()
 
 	var err error
@@ -432,7 +431,7 @@ func (s *SSEServer) handleClientMessage(ctx context.Context, w http.ResponseWrit
 
 // Run starts the MCP SSEServer, listening for incoming HTTP connections.
 func (s *SSEServer) Run(ctx context.Context) error {
-	ctx, span := observability.StartSpan(ctx, "SSEServer.Run")
+	ctx, span := StartSpan(ctx, "SSEServer.Run")
 	defer span.End()
 
 	var err error
@@ -529,7 +528,7 @@ func (s *SSEServer) removeClient(clientID string) {
 }
 
 func (s *SSEServer) handleClientDisconnect(ctx context.Context, clientID string) {
-	ctx, span := observability.StartSpan(ctx, "handle_client_disconnect")
+	ctx, span := StartSpan(ctx, "handle_client_disconnect")
 	defer span.End()
 
 	// Make this a more prominent log message

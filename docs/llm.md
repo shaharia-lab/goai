@@ -63,8 +63,8 @@ To create a tool, define your tool according to the following definition:
 
 <!-- markdownlint-disable -->
 ```go
-// import "github.com/shaharia-lab/goai/mcp"
-// mcp.Tool
+// import 
+// Tool
 type Tool struct {
 	Name        string
 	Description string
@@ -74,9 +74,9 @@ type Tool struct {
 ```
 
 ```go
-import "github.com/shaharia-lab/goai/mcp"
+import 
 
-tools := []mcp.Tool{
+tools := []Tool{
 		{
 			Name:        "get_weather",
 			Description: "Get weather for location",
@@ -87,13 +87,13 @@ tools := []mcp.Tool{
                 },
                 "required": ["location"]
             }`),
-			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+			Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
 				var input struct {
 					Location string `json:"location"`
 				}
 				json.Unmarshal(params.Arguments, &input)
-				return mcp.CallToolResult{
-					Content: []mcp.ToolResultContent{{
+				return CallToolResult{
+					Content: []ToolResultContent{{
 						Type: "text",
 						Text: fmt.Sprintf("Weather in %s: Sunny", input.Location),
 					}},
@@ -108,11 +108,11 @@ err := toolsProvider.AddTools(tools)
 <!-- markdownlint-enable -->
 
 If you want to integrate MCP (Model Context Protocol) server with your tool, you can use the MCP Client.
-Details about how to use MCP Client can be found [here](mcp.md#client)
+Details about how to use MCP Client can be found [here](md#client)
 
 ```go
-//mcpClient := 
-err := toolsProvider.AddMCPClient(mcpClient)
+//lient := 
+err := toolsProvider.AddMCPClient(lient)
 ```
 
 **Note: If you provide both tools and MCP client, the attached tools will be used for tool calling.**

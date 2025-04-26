@@ -1,4 +1,4 @@
-package mcp
+package goai
 
 import (
 	"bytes"
@@ -12,13 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shaharia-lab/goai/observability"
-
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewSSEServer(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewSSEServer(baseServer)
 
 	if server == nil {
@@ -33,7 +31,7 @@ func TestNewSSEServer(t *testing.T) {
 }
 
 func TestSetAddress(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewSSEServer(baseServer)
 	newAddress := ":9090"
 	server.SetAddress(newAddress)
@@ -44,7 +42,7 @@ func TestSetAddress(t *testing.T) {
 }
 
 func TestHandleSSEConnection(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewSSEServer(baseServer)
 
 	req := httptest.NewRequest("GET", "/events", nil)
@@ -84,7 +82,7 @@ func TestHandleSSEConnection(t *testing.T) {
 }
 
 func TestHandleClientMessage(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewSSEServer(baseServer)
 	clientID := "test-client"
 
@@ -129,7 +127,7 @@ func TestHandleClientMessage(t *testing.T) {
 }
 
 func TestBroadcastNotification(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewSSEServer(baseServer)
 
 	client1Chan := make(chan []byte, 10)
@@ -170,7 +168,7 @@ func TestBroadcastNotification(t *testing.T) {
 }
 
 func TestSendMessageToClient(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewSSEServer(baseServer)
 	clientID := "test-client"
 	messageChan := make(chan []byte, 1)
@@ -195,7 +193,7 @@ func TestSendMessageToClient(t *testing.T) {
 }
 
 func TestCORSHandling(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewSSEServer(baseServer)
 
 	req := httptest.NewRequest("OPTIONS", "/events", nil)
@@ -220,7 +218,7 @@ func TestCORSHandling(t *testing.T) {
 }
 
 func TestServerShutdown(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewSSEServer(baseServer)
 	server.SetAddress(":0")
 
@@ -356,7 +354,7 @@ func TestHandlePromptGetSSE(t *testing.T) {
 			}
 
 			baseServer, _ := NewBaseServer(
-				UseLogger(observability.NewNullLogger()),
+				UseLogger(NewNullLogger()),
 			)
 			baseServer.AddPrompts(codeReviewPrompt)
 			server := NewSSEServer(baseServer)
@@ -423,7 +421,7 @@ func TestHandlePromptGetSSE(t *testing.T) {
 
 func TestSSEConnectionFlow(t *testing.T) {
 	baseServer, err := NewBaseServer(
-		UseLogger(observability.NewNullLogger()),
+		UseLogger(NewNullLogger()),
 		UseSSEServerPort(":0"),
 	)
 	require.NoError(t, err)
