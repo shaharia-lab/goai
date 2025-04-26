@@ -1,4 +1,4 @@
-package observability
+package goai
 
 import (
 	"context"
@@ -14,7 +14,6 @@ const (
 )
 
 // Logger interface - defines the common logging methods
-// Deprecated: Use goai.Logger instead. This will be removed in next release
 type Logger interface {
 	Debugf(format string, args ...interface{})
 	Infof(format string, args ...interface{})
@@ -36,7 +35,6 @@ type Logger interface {
 }
 
 // DefaultLogger - a basic implementation using Go's standard log package
-// Deprecated: Use goai.DefaultLogger instead. This will be removed in next release
 type DefaultLogger struct {
 	*log.Logger
 	fields map[string]interface{}
@@ -44,7 +42,6 @@ type DefaultLogger struct {
 }
 
 // NewDefaultLogger creates a new DefaultLogger that logs to standard output
-// Deprecated: Use goai.NewDefaultLogger() instead. This will be removed in next release
 func NewDefaultLogger() Logger {
 	return &DefaultLogger{
 		Logger: log.New(os.Stdout, "", log.LstdFlags),
