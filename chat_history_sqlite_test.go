@@ -4,10 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/shaharia-lab/goai/observability"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/shaharia-lab/goai/observability"
 
 	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
