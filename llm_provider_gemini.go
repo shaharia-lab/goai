@@ -407,7 +407,7 @@ func (p *GeminiProvider) GetStreamingResponse(ctx context.Context, messages []LL
 		if finalSyncResponse != nil && finalSyncResponse.UsageMetadata != nil {
 			outputTokens = int(finalSyncResponse.UsageMetadata.CandidatesTokenCount)
 		} else {
-			p.log.Info(fmt.Sprintf("Warning: UsageMetadata missing on final synchronous response object."))
+			p.log.Info("Warning: UsageMetadata missing on final synchronous response object.")
 		}
 		p.log.Info("Simulating stream: Sending final pre-flight response text.")
 		streamChan <- StreamingLLMResponse{Text: finalText, Done: true, Error: nil, TokenCount: outputTokens}

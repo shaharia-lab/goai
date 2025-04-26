@@ -25,7 +25,7 @@ func NewToolsProvider() *ToolsProvider {
 
 // AddTools injects tools into the provider. If tools are added, MCP client usage is restricted.
 func (p *ToolsProvider) AddTools(tools []Tool) error {
-	if p.lient.IsInitialized() == true {
+	if p.lient.IsInitialized() {
 		return fmt.Errorf("cannot add tools as MCP client is already set")
 	}
 	p.toolsList = tools
@@ -93,7 +93,7 @@ func (p *ToolsProvider) ExecuteTool(ctx context.Context, params CallToolParams) 
 	startTime := time.Now()
 
 	// Record initial state
-	if p.lient.IsInitialized() == false && len(p.toolsList) == 0 {
+	if !p.lient.IsInitialized() && len(p.toolsList) == 0 {
 		err = fmt.Errorf("no tools available")
 		return CallToolResult{}, err
 	}
