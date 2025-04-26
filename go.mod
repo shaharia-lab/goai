@@ -13,7 +13,6 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.28
 	github.com/openai/openai-go v0.1.0-alpha.61
 	github.com/pgvector/pgvector-go v0.2.2
-	github.com/slack-go/slack v0.16.0
 	github.com/stretchr/testify v1.10.0
 	github.com/xeipuuv/gojsonschema v1.2.0
 	go.opentelemetry.io/otel v1.26.0
@@ -43,7 +42,6 @@ require (
 	github.com/google/s2a-go v0.1.7 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.2 // indirect
 	github.com/googleapis/gax-go/v2 v2.12.5 // indirect
-	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/tidwall/gjson v1.14.4 // indirect
