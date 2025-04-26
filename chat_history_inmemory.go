@@ -31,6 +31,7 @@ func (s *InMemoryChatHistoryStorage) CreateChat(ctx context.Context) (*ChatHisto
 		SessionID: uuid.New().String(),
 		Messages:  []ChatHistoryMessage{},
 		CreatedAt: time.Now(),
+		Metadata:  make(map[string]interface{}), // Initialize empty metadata map
 	}
 
 	s.conversations[chat.SessionID] = chat
@@ -47,7 +48,27 @@ func (s *InMemoryChatHistoryStorage) AddMessage(ctx context.Context, sessionID s
 		return fmt.Errorf("chat with ID %s not found", sessionID)
 	}
 
+	// Initialize message metadata if it's nil
+	if message.Metadata == nil {
+		message.Metadata = make(map[string]interface{})
+	}
+
 	chat.Messages = append(chat.Messages, message)
+	return nil
+}
+
+// UpdateChatMetadata updates the metadata for a chat session
+func (s *InMemoryChatHistoryStorage) UpdateChatMetadata(ctx context.Context, sessionID string, metadata map[string]interface{}) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	chat, exists := s.conversations[sessionID]
+	if !exists {
+		return fmt.Errorf("chat with ID %s not found", sessionID)
+	}
+
+	// Replace the entire metadata or merge, depending on your requirements
+	chat.Metadata = metadata
 	return nil
 }
 
