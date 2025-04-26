@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shaharia-lab/goai/mcp"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/openai/openai-go"
@@ -187,7 +186,7 @@ func TestOpenAILLMProvider_GetResponse_WithTools(t *testing.T) {
 				temperature: 0.7,
 				toolsProvider: func() *ToolsProvider {
 					provider := NewToolsProvider()
-					_ = provider.AddTools([]mcp.Tool{
+					_ = provider.AddTools([]Tool{
 						{
 							Name:        "get_weather",
 							Description: "Get weather information",
@@ -198,13 +197,13 @@ func TestOpenAILLMProvider_GetResponse_WithTools(t *testing.T) {
 								},
 								"required": ["location"]
 							}`),
-							Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+							Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
 								var input struct {
 									Location string `json:"location"`
 								}
 								json.Unmarshal(params.Arguments, &input)
-								return mcp.CallToolResult{
-									Content: []mcp.ToolResultContent{{
+								return CallToolResult{
+									Content: []ToolResultContent{{
 										Type: "text",
 										Text: fmt.Sprintf("The weather in %s is sunny and 25°C", input.Location),
 									}},

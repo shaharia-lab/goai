@@ -17,19 +17,19 @@ type LLMRequest struct {
 // Example usage:
 //
 //	// Create provider
-//	provider := goai.NewOpenAILLMProvider(ai.OpenAIProviderConfig{
+//	provider := NewOpenAILLMProvider(ai.OpenAIProviderConfig{
 //	    APIKey: "your-api-key",
 //	    Model:  "gpt-3.5-turbo",
 //	})
 //
 //	// Configure request options
-//	config := goai.NewRequestConfig(
-//	    goai.WithMaxToken(2000),
-//	    goai.WithTemperature(0.7),
+//	config := NewRequestConfig(
+//	    WithMaxToken(2000),
+//	    WithTemperature(0.7),
 //	)
 //
 //	// Create LLM request client
-//	llm := goai.NewLLMRequest(config, provider)
+//	llm := NewLLMRequest(config, provider)
 func NewLLMRequest(config LLMRequestConfig, provider LLMProvider) *LLMRequest {
 	if !config.enableTracing {
 		if _, isAlreadyTraced := provider.(*TracingLLMProvider); !isAlreadyTraced {
@@ -48,9 +48,9 @@ func NewLLMRequest(config LLMRequestConfig, provider LLMProvider) *LLMRequest {
 //
 // Example usage:
 //
-//	messages := []goai.LLMMessage{
-//	    {Role: goai.SystemRole, Text: "You are a helpful assistant"},
-//	    {Role: goai.UserRole, Text: "What is the capital of France?"},
+//	messages := []LLMMessage{
+//	    {Role: SystemRole, Text: "You are a helpful assistant"},
+//	    {Role: UserRole, Text: "What is the capital of France?"},
 //	}
 //
 //	response, err := llm.Generate(messages)

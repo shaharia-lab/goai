@@ -603,14 +603,14 @@ func (p *PostgresProvider) getCollectionConfig(ctx context.Context, name string)
 
 func (p *PostgresProvider) buildSearchQuery(tableName string, opts *VectorSearchOptions) string {
 	var query strings.Builder
-	query.WriteString(fmt.Sprintf(`
+	query.WriteString(`
 		SELECT 
 			id, 
 			content, 
 			metadata,
 			created_at,
 			updated_at,
-	`))
+	`)
 
 	if opts.IncludeVectors {
 		query.WriteString("vector,")

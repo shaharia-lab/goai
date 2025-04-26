@@ -8,8 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/generative-ai-go/genai"
-	"github.com/shaharia-lab/goai/mcp"
-	"github.com/shaharia-lab/goai/observability"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -73,42 +72,42 @@ func (m *MockChatSessionService) GetHistory() []*genai.Content {
 	return history
 }
 
-func getCapitalHandler(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func getCapitalHandler(ctx context.Context, params CallToolParams) (CallToolResult, error) {
 	var input struct {
 		Country string `json:"country"`
 	}
 	if err := json.Unmarshal(params.Arguments, &input); err != nil || input.Country == "" {
-		return mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: "Invalid country"}}}, nil
+		return CallToolResult{IsError: true, Content: []ToolResultContent{{Type: "text", Text: "Invalid country"}}}, nil
 	}
 	capitals := map[string]string{"Germany": "Berlin", "France": "Paris"}
 	capital, ok := capitals[input.Country]
 	if !ok {
-		return mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: "Country not found"}}}, nil
+		return CallToolResult{IsError: true, Content: []ToolResultContent{{Type: "text", Text: "Country not found"}}}, nil
 	}
-	return mcp.CallToolResult{Content: []mcp.ToolResultContent{{Type: "text", Text: capital}}}, nil
+	return CallToolResult{Content: []ToolResultContent{{Type: "text", Text: capital}}}, nil
 }
 
-func getWeatherHandler(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func getWeatherHandler(ctx context.Context, params CallToolParams) (CallToolResult, error) {
 	var input struct {
 		Location string `json:"location"`
 	}
 	if err := json.Unmarshal(params.Arguments, &input); err != nil || input.Location == "" {
-		return mcp.CallToolResult{IsError: true, Content: []mcp.ToolResultContent{{Type: "text", Text: "Invalid location"}}}, nil
+		return CallToolResult{IsError: true, Content: []ToolResultContent{{Type: "text", Text: "Invalid location"}}}, nil
 	}
 
 	weather := "Cloudy, 10C"
 	if input.Location == "Berlin" {
 		weather = "Sunny, 15C"
 	}
-	return mcp.CallToolResult{Content: []mcp.ToolResultContent{{Type: "text", Text: weather}}}, nil
+	return CallToolResult{Content: []ToolResultContent{{Type: "text", Text: weather}}}, nil
 }
 
-func setupTest() (*MockGeminiModelService, observability.Logger, *ToolsProvider) {
+func setupTest() (*MockGeminiModelService, Logger, *ToolsProvider) {
 	mockService := new(MockGeminiModelService)
-	mockLogger := observability.NewNullLogger()
+	mockLogger := NewNullLogger()
 	toolsProvider := NewToolsProvider()
 
-	tools := []mcp.Tool{
+	tools := []Tool{
 		{
 			Name:        "get_weather",
 			Description: "Fetches the current weather conditions for a specific location.",

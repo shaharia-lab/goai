@@ -12,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
-	"github.com/shaharia-lab/goai/mcp"
 )
 
 // NewBedrockClientWrapper creates a new wrapper for bedrockruntime.Client
@@ -88,22 +87,22 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 
 	var toolConfig *types.ToolConfiguration
 	if config.toolsProvider != nil {
-		mcpTools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
+		ools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
 		if err != nil {
 			return LLMResponse{}, fmt.Errorf("error listing tools: %w", err)
 		}
 
-		if len(mcpTools) > 0 {
+		if len(ools) > 0 {
 			var bedrockTools []types.Tool
-			for _, mcpTool := range mcpTools {
+			for _, ool := range ools {
 				var schemaDoc map[string]interface{}
-				if err := json.Unmarshal(mcpTool.InputSchema, &schemaDoc); err != nil {
-					return LLMResponse{}, fmt.Errorf("failed to unmarshal tool input schema for '%s': %w", mcpTool.Name, err)
+				if err := json.Unmarshal(ool.InputSchema, &schemaDoc); err != nil {
+					return LLMResponse{}, fmt.Errorf("failed to unmarshal tool input schema for '%s': %w", ool.Name, err)
 				}
 
 				toolSpec := types.ToolSpecification{
-					Name:        aws.String(mcpTool.Name),
-					Description: aws.String(mcpTool.Description),
+					Name:        aws.String(ool.Name),
+					Description: aws.String(ool.Description),
 					InputSchema: &types.ToolInputSchemaMemberJson{
 						Value: document.NewLazyDocument(schemaDoc),
 					},
@@ -202,7 +201,7 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 					return LLMResponse{}, fmt.Errorf("failed to marshal tool input for '%s': %w", toolName, err)
 				}
 
-				toolResponse, err := config.toolsProvider.ExecuteTool(ctx, mcp.CallToolParams{
+				toolResponse, err := config.toolsProvider.ExecuteTool(ctx, CallToolParams{
 					Name:      toolName,
 					Arguments: inputBytes,
 				})
@@ -239,9 +238,9 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 				}
 
 				var bedrockResultContent []types.ToolResultContentBlock
-				for _, mcpContent := range toolResponse.Content {
+				for _, ontent := range toolResponse.Content {
 					bedrockResultContent = append(bedrockResultContent, &types.ToolResultContentBlockMemberText{
-						Value: mcpContent.Text,
+						Value: ontent.Text,
 					})
 				}
 

@@ -77,14 +77,14 @@ binary content. Resources can be listed and read through the protocol.
 ### SSE (Server-Sent Events) Server
 
 ```go
-baseServer, err := mcp.NewBaseServer(
-    mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
+baseServer, err := NewBaseServer(
+    UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
 )
 if err != nil {
     panic(err)
 }
 
-server := mcp.NewSSEServer(baseServer)
+server := NewSSEServer(baseServer)
 server.SetAddress(":8080")
 ctx := context.Background()
 server.Run(ctx)
@@ -93,14 +93,14 @@ server.Run(ctx)
 ### StdIO Server
 
 ```go
-baseServer, err := mcp.NewBaseServer(
-    mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
+baseServer, err := NewBaseServer(
+    UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
 )
 if err != nil {
     panic(err)
 }
 
-server := mcp.NewStdIOServer(baseServer, os.Stdin, os.Stdout)
+server := NewStdIOServer(baseServer, os.Stdin, os.Stdout)
 ctx := context.Background()
 server.Run(ctx)
 ```
@@ -108,7 +108,7 @@ server.Run(ctx)
 ### Integrate Custom Tool
 
 ```go
-tool := mcp.Tool{
+tool := Tool{
     Name:        "get_weather",
     Description: "Get weather for location",
     InputSchema: json.RawMessage(`{
@@ -118,13 +118,13 @@ tool := mcp.Tool{
         },
         "required": ["location"]
     }`),
-    Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+    Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
         var input struct {
             Location string `json:"location"`
         }
         json.Unmarshal(params.Arguments, &input)
-        return mcp.CallToolResult{
-            Content: []mcp.ToolResultContent{{
+        return CallToolResult{
+            Content: []ToolResultContent{{
                 Type: "text",
                 Text: fmt.Sprintf("Weather in %s: Sunny", input.Location),
             }},
@@ -137,16 +137,16 @@ baseServer.AddTools(tool)
 ### Prompt
 
 ```go
-prompt := mcp.Prompt{
+prompt := Prompt{
     Name:        "greet",
     Description: "Greeting prompt",
-    Arguments: []mcp.PromptArgument{{
+    Arguments: []PromptArgument{{
         Name:     "name",
         Required: true,
     }},
-    Messages: []mcp.PromptMessage{{
+    Messages: []PromptMessage{{
         Role: "user",
-        Content: mcp.PromptContent{
+        Content: PromptContent{
             Type: "text",
             Text: "Hello {{name}}!",
         },
@@ -158,7 +158,7 @@ baseServer.AddPrompts(prompt)
 ### Resource
 
 ```go
-resource := mcp.Resource{
+resource := Resource{
     URI: "file:///example.txt",
     Name: "Example",
     MimeType: "text/plain",
@@ -178,20 +178,20 @@ import (
     "fmt"
     "log"
     "os"
-    "github.com/shaharia-lab/goai/mcp"
+    
 )
 
 func main() {
     // Create base server
-    baseServer, err := mcp.NewBaseServer(
-        mcp.UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
+    baseServer, err := NewBaseServer(
+        UseLogger(log.New(os.Stderr, "[MCP] ", log.LstdFlags)),
     )
     if err != nil {
         panic(err)
     }
 
     // Add tool
-    tool := mcp.Tool{
+    tool := Tool{
         Name: "greet",
         Description: "Greet user",
         InputSchema: json.RawMessage(`{
@@ -201,13 +201,13 @@ func main() {
             },
             "required": ["name"]
         }`),
-        Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+        Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
             var input struct {
                 Name string `json:"name"`
             }
             json.Unmarshal(params.Arguments, &input)
-            return mcp.CallToolResult{
-                Content: []mcp.ToolResultContent{{
+            return CallToolResult{
+                Content: []ToolResultContent{{
                     Type: "text",
                     Text: fmt.Sprintf("Hello, %s!", input.Name),
                 }},
@@ -217,7 +217,7 @@ func main() {
     baseServer.AddTools(tool)
 
     // Create and run SSE server
-    server := mcp.NewSSEServer(baseServer)
+    server := NewSSEServer(baseServer)
     server.SetAddress(":8080")
 
     ctx := context.Background()
@@ -241,23 +241,23 @@ import (
 	"os"
 	"time"
 
-	"github.com/shaharia-lab/goai/mcp"
+	
 )
 
 func main() {
-	sseConfig := mcp.ClientConfig{
+	sseConfig := ClientConfig{
 		ClientName:    "MySSEClient",
 		ClientVersion: "1.0.0",
 		Logger:        log.New(os.Stdout, "[SSE] ", log.LstdFlags),
 		RetryDelay:    5 * time.Second,
 		MaxRetries:    3,
-		SSE: mcp.SSEConfig{
+		SSE: SSEConfig{
 			URL: "http://localhost:8080/events", // Replace with your SSE endpoint
 		},
 	}
 	ctx := context.Background()
-	sseTransport := mcp.NewSSETransport()
-	sseClient := mcp.NewClient(sseTransport, sseConfig)
+	sseTransport := NewSSETransport()
+	sseClient := NewClient(sseTransport, sseConfig)
 
 	if err := sseClient.Connect(ctx); err != nil {
 		log.Fatalf("SSE Client failed to connect: %v", err)
@@ -284,7 +284,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/shaharia-lab/goai/mcp"
+	
 )
 
 func main() {
@@ -311,18 +311,18 @@ func main() {
 		_ = serverCmd.Wait()
 	}()
 
-	stdIOConfig := mcp.ClientConfig{
+	stdIOConfig := ClientConfig{
 		ClientName:    "MyStdIOClient",
 		ClientVersion: "1.0.0",
 		Logger:        log.New(os.Stdout, "[StdIO] ", log.LstdFlags),
-		StdIO: mcp.StdIOConfig{
+		StdIO: StdIOConfig{
 			Reader: serverOut,
 			Writer: serverIn,
 		},
 	}
 
-	stdIOTransport := mcp.NewStdIOTransport()
-	stdIOClient := mcp.NewClient(stdIOTransport, stdIOConfig)
+	stdIOTransport := NewStdIOTransport()
+	stdIOClient := NewClient(stdIOTransport, stdIOConfig)
 
 	if err := stdIOClient.Connect(); err != nil {
 		log.Fatalf("StdIO Client failed to connect: %v", err)

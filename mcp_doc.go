@@ -1,10 +1,6 @@
-// Package mcp demonstrates the usage of the mcp library, including tools, prompts,
-// resources, and server setup. It includes an example implementation of a "WeatherTool"
-// to fetch weather data, and integrates the tool with a JSON-based API server.
-//
 // Example:
 //
-// This example demonstrates how to set up a basic JSON-based server using mcp,
+// This example demonstrates how to set up a basic JSON-based server using
 // add a custom tool for weather information retrieval, display a resource, and add a prompt.
 //
 // The "WeatherTool" fetches the weather based on location input.
@@ -15,14 +11,14 @@
 //		"context"
 //		"encoding/json"
 //		"fmt"
-//		"github.com/shaharia-lab/goai/mcp"
+//
 //		"log"
 //		"os"
 //	)
 //
 //	func main() {
 //		// Define a custom tool for fetching weather.
-//		weatherTool := mcp.Tool{
+//		weatherTool := Tool{
 //			Name:		"get_weather",
 //			Description: "Get the current weather for a given location.",
 //			InputSchema: json.RawMessage(`{
@@ -35,16 +31,16 @@
 //						},
 //						"required": ["location"]
 //					}`),
-//			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+//			Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
 //				var input struct {
 //					Location string `json:"location"`
 //				}
 //				if err := json.Unmarshal(params.Arguments, &input); err != nil {
-//					return mcp.CallToolResult{}, err
+//					return CallToolResult{}, err
 //				}
 //
-//				return mcp.CallToolResult{
-//					Content: []mcp.ToolResultContent{
+//				return CallToolResult{
+//					Content: []ToolResultContent{
 //						{
 //							Type: "text",
 //							Text: fmt.Sprintf("Weather in %s: Sunny, 72°F", input.Location),
@@ -55,7 +51,7 @@
 //		}
 //
 //		// Define resources, prompts, and configure the base server.
-//		resources := []mcp.Resource{
+//		resources := []Resource{
 //			{
 //				URI:		 "file:///tmp/hello_world.txt",
 //				Name:		"Hello World",
@@ -65,20 +61,20 @@
 //			},
 //		}
 //
-//		prompt := mcp.Prompt{
+//		prompt := Prompt{
 //			Name:		"code_review",
 //			Description: "Performs a detailed code review and suggesting improvements",
-//			Arguments: []mcp.PromptArgument{
+//			Arguments: []PromptArgument{
 //				{
 //					Name:		"code",
 //					Description: "Source code to be reviewed",
 //					Required:	true,
 //				},
 //			},
-//			Messages: []mcp.PromptMessage{
+//			Messages: []PromptMessage{
 //				{
 //					Role: "user",
-//					Content: mcp.PromptContent{
+//					Content: PromptContent{
 //						Type: "text",
 //						Text: "Please review this code: {{code}}",
 //					},
@@ -86,8 +82,8 @@
 //			},
 //		}
 //
-//		baseServer, err := mcp.NewBaseServer(
-//			mcp.UseLogger(observability.NewNullLogger()),
+//		baseServer, err := NewBaseServer(
+//			UseLogger(NewNullLogger()),
 //		)
 //		if err != nil {
 //			panic(err)
@@ -108,7 +104,7 @@
 //			panic(err)
 //		}
 //
-//		server := mcp.NewStdIOServer(
+//		server := NewStdIOServer(
 //			baseServer,
 //			os.Stdin,
 //			os.Stdout,
@@ -118,4 +114,4 @@
 //			panic(err)
 //		}
 //	}
-package mcp
+package goai

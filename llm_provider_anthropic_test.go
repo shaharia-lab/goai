@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/shaharia-lab/goai/mcp"
-
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"github.com/stretchr/testify/assert"
@@ -210,7 +208,7 @@ func TestAnthropicLLMProvider_GetResponse(t *testing.T) {
 }
 
 func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
-	tools := []mcp.Tool{
+	tools := []Tool{
 		{
 			Name:        "test_tool",
 			Description: "Test tool for unit testing",
@@ -221,16 +219,16 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
         },
         "required": ["location"]
     }`),
-			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+			Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
 				var input struct {
 					Input string `json:"input"`
 				}
 				if err := json.Unmarshal(params.Arguments, &input); err != nil {
-					return mcp.CallToolResult{}, err
+					return CallToolResult{}, err
 				}
 
-				return mcp.CallToolResult{
-					Content: []mcp.ToolResultContent{
+				return CallToolResult{
+					Content: []ToolResultContent{
 						{
 							Type: "text",
 							Text: "Tool execution completed successfully",
@@ -591,15 +589,15 @@ func TestAnthropicLLMProvider_GetStreamingResponse_SingleTool(t *testing.T) {
 
 	// Setup mock tools provider
 	mockToolsProvider := NewToolsProvider()
-	_ = mockToolsProvider.AddTools([]mcp.Tool{
+	_ = mockToolsProvider.AddTools([]Tool{
 		{
 			Name:        "get_weather",
 			Description: "Get the weather",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}`),
-			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+			Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
 				t.Logf("Tool handler called with input: %s", params.Arguments)
-				return mcp.CallToolResult{
-					Content: []mcp.ToolResultContent{
+				return CallToolResult{
+					Content: []ToolResultContent{
 						{
 							Type: "text",
 							Text: "The weather is Sunny",
@@ -763,14 +761,14 @@ func TestAnthropicLLMProvider_GetStreamingResponse_MultiTool(t *testing.T) {
 
 	// Setup mock tools provider with two tools
 	mockToolsProvider := NewToolsProvider()
-	_ = mockToolsProvider.AddTools([]mcp.Tool{
+	_ = mockToolsProvider.AddTools([]Tool{
 		{
 			Name:        "get_weather",
 			Description: "Get weather information",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}`),
-			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
-				return mcp.CallToolResult{
-					Content: []mcp.ToolResultContent{
+			Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
+				return CallToolResult{
+					Content: []ToolResultContent{
 						{Type: "text", Text: "The weather is Sunny"},
 					},
 				}, nil
@@ -780,9 +778,9 @@ func TestAnthropicLLMProvider_GetStreamingResponse_MultiTool(t *testing.T) {
 			Name:        "get_stock_price",
 			Description: "Get stock price information",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"symbol":{"type":"string"}},"required":["symbol"]}`),
-			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
-				return mcp.CallToolResult{
-					Content: []mcp.ToolResultContent{
+			Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
+				return CallToolResult{
+					Content: []ToolResultContent{
 						{Type: "text", Text: "GOOGL is at $150"},
 					},
 				}, nil

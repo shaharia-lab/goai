@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shaharia-lab/goai/observability"
-
 	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
@@ -22,7 +20,7 @@ func setupTestDB(t *testing.T) (*SQLiteChatHistoryStorage, func()) {
 	tempFilePath := tempFile.Name()
 	tempFile.Close()
 
-	logger := &observability.NullLogger{}
+	logger := &NullLogger{}
 
 	db, err := sql.Open("sqlite3", tempFilePath+"?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL")
 	require.NoError(t, err)
@@ -56,7 +54,7 @@ func TestNewSQLiteChatHistoryStorage(t *testing.T) {
 		},
 	}
 
-	logger := &observability.NullLogger{}
+	logger := &NullLogger{}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, err := sql.Open("sqlite3", tt.databasePath+"?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL")

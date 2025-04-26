@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/shaharia-lab/goai/observability"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -22,7 +21,7 @@ func NewTracingLLMProvider(provider LLMProvider) *TracingLLMProvider {
 
 // GetResponse implements LLMProvider interface with added tracing
 func (t *TracingLLMProvider) GetResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
-	ctx, span := observability.StartSpan(ctx, "LLMProvider.GetResponse")
+	ctx, span := StartSpan(ctx, "LLMProvider.GetResponse")
 	defer span.End()
 
 	startTime := time.Now()
@@ -51,7 +50,7 @@ func (t *TracingLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 
 // GetStreamingResponse implements LLMProvider interface with added tracing
 func (t *TracingLLMProvider) GetStreamingResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (<-chan StreamingLLMResponse, error) {
-	ctx, span := observability.StartSpan(ctx, "LLMProvider.GetStreamingResponse")
+	ctx, span := StartSpan(ctx, "LLMProvider.GetStreamingResponse")
 
 	startTime := time.Now()
 

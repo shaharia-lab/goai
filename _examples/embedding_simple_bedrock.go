@@ -7,7 +7,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
-	"github.com/shaharia-lab/goai"
 )
 
 func main() {
@@ -24,13 +23,13 @@ func main() {
 
 	// Create a new Bedrock embedding provider
 	// Ensure you have the AWS credentials configured in your environment
-	// or use any other provider that implements the goai.EmbeddingProvider interface
-	provider, err := goai.NewBedrockEmbeddingProvider(bedrockClient)
+	// or use any other provider that implements the EmbeddingProvider interface
+	provider, err := NewBedrockEmbeddingProvider(bedrockClient)
 	if err != nil {
 		log.Fatalf("Failed to create Bedrock embedding provider: %v", err)
 	}
 
-	embeddingService := goai.NewEmbeddingService(provider)
+	embeddingService := NewEmbeddingService(provider)
 
 	input := "Hello, world! This is a test sentence for embedding generation."
 

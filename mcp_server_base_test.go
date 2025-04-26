@@ -1,11 +1,9 @@
-package mcp
+package goai
 
 import (
 	"context"
 	"encoding/json"
 	"testing"
-
-	"github.com/shaharia-lab/goai/observability"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -83,7 +81,7 @@ func TestListTools(t *testing.T) {
 	}
 
 	baseServer, _ := NewBaseServer(
-		UseLogger(observability.NewNullLogger()),
+		UseLogger(NewNullLogger()),
 	)
 	err := baseServer.AddTools(tools...)
 	assert.NoError(t, err)
@@ -190,7 +188,7 @@ func TestToolManager_AddTool(t *testing.T) {
 	}
 
 	baseServer, _ := NewBaseServer(
-		UseLogger(observability.NewNullLogger()),
+		UseLogger(NewNullLogger()),
 	)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -372,7 +370,7 @@ func TestValidatePrompt(t *testing.T) {
 
 func TestListResources(t *testing.T) {
 	baseServer, _ := NewBaseServer(
-		UseLogger(observability.NewNullLogger()),
+		UseLogger(NewNullLogger()),
 	)
 
 	// Add resources in non-sequential order
@@ -421,7 +419,7 @@ func TestReadResource(t *testing.T) {
 	}
 
 	baseServer, _ := NewBaseServer(
-		UseLogger(observability.NewNullLogger()),
+		UseLogger(NewNullLogger()),
 	)
 	err := baseServer.AddResources(textResource, binaryResource)
 	assert.NoError(t, err)

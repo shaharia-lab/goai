@@ -10,19 +10,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shaharia-lab/goai/observability"
 )
 
 // SQLiteChatHistoryStorage is an SQLite implementation of ChatHistoryStorage
 type SQLiteChatHistoryStorage struct {
 	db     *sql.DB
 	mu     sync.RWMutex // Protects against concurrent access issues if needed, though transactions help
-	logger observability.Logger
+	logger Logger
 }
 
 // NewSQLiteChatHistoryStorage creates a new instance of SQLiteChatHistoryStorage
 // It takes the path to the SQLite database file.
-func NewSQLiteChatHistoryStorage(db *sql.DB, logger observability.Logger) (*SQLiteChatHistoryStorage, error) {
+func NewSQLiteChatHistoryStorage(db *sql.DB, logger Logger) (*SQLiteChatHistoryStorage, error) {
 	storage := &SQLiteChatHistoryStorage{
 		db:     db,
 		logger: logger,

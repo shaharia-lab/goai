@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
-	"github.com/shaharia-lab/goai/mcp"
+
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -146,7 +147,7 @@ func TestBedrockLLMProvider_GetResponse_WithTools(t *testing.T) {
 	mockClient.On("Converse", mock.Anything, mock.Anything, mock.Anything).Return(finalResponse, nil).Once()
 
 	// Create tools provider with a test tool
-	tools := []mcp.Tool{
+	tools := []Tool{
 		{
 			Name:        "test_tool",
 			Description: "Test tool for unit testing",
@@ -157,9 +158,9 @@ func TestBedrockLLMProvider_GetResponse_WithTools(t *testing.T) {
                 },
                 "required": ["location"]
             }`),
-			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
-				return mcp.CallToolResult{
-					Content: []mcp.ToolResultContent{
+			Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
+				return CallToolResult{
+					Content: []ToolResultContent{
 						{
 							Type: "text",
 							Text: "Tool execution completed successfully",
@@ -312,7 +313,7 @@ func TestBedrockLLMProvider_GetResponse_WithMultipleTools(t *testing.T) {
 	mockClient.On("Converse", mock.Anything, mock.Anything, mock.Anything).Return(finalResponse, nil).Once()
 
 	// Create tools provider with multiple tools
-	tools := []mcp.Tool{
+	tools := []Tool{
 		{
 			Name:        "weather_tool",
 			Description: "Provides weather information for a location",
@@ -323,9 +324,9 @@ func TestBedrockLLMProvider_GetResponse_WithMultipleTools(t *testing.T) {
                 },
                 "required": ["location"]
             }`),
-			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
-				return mcp.CallToolResult{
-					Content: []mcp.ToolResultContent{
+			Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
+				return CallToolResult{
+					Content: []ToolResultContent{
 						{
 							Type: "text",
 							Text: "Weather in New York: Sunny, 75°F",
@@ -344,9 +345,9 @@ func TestBedrockLLMProvider_GetResponse_WithMultipleTools(t *testing.T) {
                 },
                 "required": ["timezone"]
             }`),
-			Handler: func(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
-				return mcp.CallToolResult{
-					Content: []mcp.ToolResultContent{
+			Handler: func(ctx context.Context, params CallToolParams) (CallToolResult, error) {
+				return CallToolResult{
+					Content: []ToolResultContent{
 						{
 							Type: "text",
 							Text: "Current time in EDT: 10:00 AM",

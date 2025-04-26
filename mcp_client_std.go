@@ -1,4 +1,4 @@
-package mcp
+package goai
 
 import (
 	"bufio"
@@ -10,13 +10,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/shaharia-lab/goai/observability"
 	"go.opentelemetry.io/otel/codes"
 )
 
 type StdIOTransport struct {
 	config          StdIOConfig
-	logger          observability.Logger
+	logger          Logger
 	stopChan        chan struct{}
 	mu              sync.RWMutex
 	reader          *bufio.Reader
@@ -25,7 +24,7 @@ type StdIOTransport struct {
 	state           ConnectionState
 }
 
-func NewStdIOTransport(logger observability.Logger) *StdIOTransport {
+func NewStdIOTransport(logger Logger) *StdIOTransport {
 	return &StdIOTransport{
 		stopChan: make(chan struct{}),
 		logger:   logger,
@@ -38,7 +37,7 @@ func (t *StdIOTransport) SetReceiveMessageCallback(callback func(message []byte)
 }
 
 func (t *StdIOTransport) Connect(ctx context.Context, config ClientConfig) error {
-	ctx, span := observability.StartSpan(ctx, "StdIOTransport.Connect")
+	ctx, span := StartSpan(ctx, "StdIOTransport.Connect")
 	defer span.End()
 
 	var err error
@@ -76,18 +75,18 @@ func (t *StdIOTransport) processIncomingMessages(ctx context.Context) {
 			return
 		default:
 			line := scanner.Text()
-			t.logger.Debugf("Received raw input")
+			t.logger.Debug("Received raw input")
 			t.receiveCallback([]byte(line))
 		}
 	}
 
 	if err := scanner.Err(); err != nil && !strings.Contains(err.Error(), "file already closed") {
-		t.logger.WithErr(err).Errorf("StdIOTransport Scanner error")
+		t.logger.WithErr(err).Error("StdIOTransport Scanner error")
 	}
 }
 
 func (t *StdIOTransport) SendMessage(ctx context.Context, message interface{}) error {
-	ctx, span := observability.StartSpan(ctx, "StdIOTransport.SendMessage")
+	ctx, span := StartSpan(ctx, "StdIOTransport.SendMessage")
 	defer span.End()
 
 	var err error
@@ -116,7 +115,7 @@ func (t *StdIOTransport) SendMessage(ctx context.Context, message interface{}) e
 }
 
 func (t *StdIOTransport) Close(ctx context.Context) error {
-	ctx, span := observability.StartSpan(ctx, "StdIOTransport.Close")
+	ctx, span := StartSpan(ctx, "StdIOTransport.Close")
 	defer span.End()
 
 	var err error

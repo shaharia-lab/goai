@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/shaharia-lab/goai/mcp"
 )
 
 // GetStreamingResponse handles streaming LLM responses with tool usage capabilities
@@ -54,21 +53,21 @@ func (p *AnthropicLLMProvider) convertToAnthropicMessages(messages []LLMMessage)
 
 // prepareTools prepares the tool definitions for the Anthropic API
 func (p *AnthropicLLMProvider) prepareTools(ctx context.Context, config LLMRequestConfig) ([]anthropic.ToolUnionUnionParam, error) {
-	mcpTools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
+	ools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
 	if err != nil {
 		return nil, fmt.Errorf("error listing tools: %w", err)
 	}
 
 	var toolUnionParams []anthropic.ToolUnionUnionParam
-	for _, mcpTool := range mcpTools {
+	for _, ool := range ools {
 		var schema interface{}
-		if err := json.Unmarshal(mcpTool.InputSchema, &schema); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal tool parameters for %s: %w", mcpTool.Name, err)
+		if err := json.Unmarshal(ool.InputSchema, &schema); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal tool parameters for %s: %w", ool.Name, err)
 		}
 
 		toolUnionParam := anthropic.ToolParam{
-			Name:        anthropic.F(mcpTool.Name),
-			Description: anthropic.F(mcpTool.Description),
+			Name:        anthropic.F(ool.Name),
+			Description: anthropic.F(ool.Description),
 			InputSchema: anthropic.F(schema),
 		}
 		toolUnionParams = append(toolUnionParams, toolUnionParam)
@@ -231,7 +230,7 @@ func (p *AnthropicLLMProvider) executeToolAndGetResult(
 	block anthropic.ToolUseBlock,
 	config LLMRequestConfig,
 ) anthropic.ContentBlockParamUnion {
-	toolResponse, err := config.toolsProvider.ExecuteTool(ctx, mcp.CallToolParams{
+	toolResponse, err := config.toolsProvider.ExecuteTool(ctx, CallToolParams{
 		Name:      block.Name,
 		Arguments: block.Input,
 	})

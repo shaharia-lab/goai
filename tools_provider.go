@@ -5,30 +5,27 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/shaharia-lab/goai/observability"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/shaharia-lab/goai/mcp"
 )
 
 type ToolsProvider struct {
-	mcpClient *mcp.Client
-	toolsList []mcp.Tool
+	lient     *Client
+	toolsList []Tool
 }
 
 // NewToolsProvider creates a new ToolsProvider with no initial MCP client or tools.
 func NewToolsProvider() *ToolsProvider {
 	return &ToolsProvider{
-		mcpClient: &mcp.Client{},
-		toolsList: make([]mcp.Tool, 0),
+		lient:     &Client{},
+		toolsList: make([]Tool, 0),
 	}
 }
 
 // AddTools injects tools into the provider. If tools are added, MCP client usage is restricted.
-func (p *ToolsProvider) AddTools(tools []mcp.Tool) error {
-	if p.mcpClient.IsInitialized() == true {
+func (p *ToolsProvider) AddTools(tools []Tool) error {
+	if p.lient.IsInitialized() {
 		return fmt.Errorf("cannot add tools as MCP client is already set")
 	}
 	p.toolsList = tools
@@ -36,21 +33,21 @@ func (p *ToolsProvider) AddTools(tools []mcp.Tool) error {
 }
 
 // AddMCPClient injects the MCP client into the provider. If tools are added, MCP client usage is restricted.
-func (p *ToolsProvider) AddMCPClient(client *mcp.Client) error {
+func (p *ToolsProvider) AddMCPClient(client *Client) error {
 	if len(p.toolsList) > 0 {
 		return fmt.Errorf("cannot set MCP client as tools are already added")
 	}
-	p.mcpClient = client
+	p.lient = client
 	return nil
 }
 
 // ListTools returns the list of tools available in the provider.
-func (p *ToolsProvider) ListTools(ctx context.Context, allowedTools []string) ([]mcp.Tool, error) {
-	var tools []mcp.Tool
+func (p *ToolsProvider) ListTools(ctx context.Context, allowedTools []string) ([]Tool, error) {
+	var tools []Tool
 	var err error
 
-	if p.mcpClient.IsInitialized() {
-		tools, err = p.mcpClient.ListTools(ctx)
+	if p.lient.IsInitialized() {
+		tools, err = p.lient.ListTools(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -64,7 +61,7 @@ func (p *ToolsProvider) ListTools(ctx context.Context, allowedTools []string) ([
 			allowedToolsMap[tool] = true
 		}
 
-		filteredTools := make([]mcp.Tool, 0)
+		filteredTools := make([]Tool, 0)
 		for _, tool := range tools {
 			if allowedToolsMap[tool.Name] {
 				filteredTools = append(filteredTools, tool)
@@ -77,8 +74,8 @@ func (p *ToolsProvider) ListTools(ctx context.Context, allowedTools []string) ([
 }
 
 // ExecuteTool executes a tool with the specified ID, name, and parameters.
-func (p *ToolsProvider) ExecuteTool(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
-	ctx, span := observability.StartSpan(ctx, "ToolsProvider.ExecuteTool")
+func (p *ToolsProvider) ExecuteTool(ctx context.Context, params CallToolParams) (CallToolResult, error) {
+	ctx, span := StartSpan(ctx, "ToolsProvider.ExecuteTool")
 	span.SetAttributes(
 		attribute.String("tool_name", params.Name),
 		attribute.String("arguments", string(params.Arguments)),
@@ -96,9 +93,9 @@ func (p *ToolsProvider) ExecuteTool(ctx context.Context, params mcp.CallToolPara
 	startTime := time.Now()
 
 	// Record initial state
-	if p.mcpClient.IsInitialized() == false && len(p.toolsList) == 0 {
+	if !p.lient.IsInitialized() && len(p.toolsList) == 0 {
 		err = fmt.Errorf("no tools available")
-		return mcp.CallToolResult{}, err
+		return CallToolResult{}, err
 	}
 
 	// Try local tools first
@@ -110,7 +107,7 @@ func (p *ToolsProvider) ExecuteTool(ctx context.Context, params mcp.CallToolPara
 			span.AddEvent("FoundLocalTool",
 				trace.WithAttributes(attribute.Int("tool_index", i)))
 
-			execCtx, execSpan := observability.StartSpan(ctx, "ExecuteTool.Handler")
+			execCtx, execSpan := StartSpan(ctx, "ExecuteTool.Handler")
 			execSpan.SetAttributes(
 				attribute.String("tool_name", tool.Name),
 			)
@@ -139,35 +136,35 @@ func (p *ToolsProvider) ExecuteTool(ctx context.Context, params mcp.CallToolPara
 	}
 
 	// Try remote MCP client if no local tool found
-	if p.mcpClient.IsInitialized() {
+	if p.lient.IsInitialized() {
 		span.AddEvent("FallingBackToMCPClient")
 
 		// Create child span for MCP client call
-		mcpCtx, mcpSpan := observability.StartSpan(ctx, "ToolsProvider.ExecuteTool_MCPClient")
-		mcpSpan.SetAttributes(
+		tx, pan := StartSpan(ctx, "ToolsProvider.ExecuteTool_MCPClient")
+		pan.SetAttributes(
 			attribute.String("tool_name", params.Name),
 		)
 
-		result, mcpErr := p.mcpClient.CallTool(mcpCtx, params)
+		result, rr := p.lient.CallTool(tx, params)
 
-		if mcpErr != nil {
-			mcpSpan.RecordError(mcpErr)
-			mcpSpan.SetStatus(codes.Error, mcpErr.Error())
+		if rr != nil {
+			pan.RecordError(rr)
+			pan.SetStatus(codes.Error, rr.Error())
 		} else {
-			mcpSpan.SetAttributes(
+			pan.SetAttributes(
 				attribute.Bool("is_error", result.IsError),
 				attribute.Int("content_length", len(result.Content)),
 			)
 		}
-		mcpSpan.End()
+		pan.End()
 
 		// Capture execution time in parent span
 		span.SetAttributes(
 			attribute.Float64("execution_time_ms", float64(time.Since(startTime).Milliseconds())),
-			attribute.Bool("is_mcp_tool", true),
+			attribute.Bool("is_tool", true),
 		)
 
-		return result, mcpErr
+		return result, rr
 	}
 
 	// No tool found
@@ -177,5 +174,5 @@ func (p *ToolsProvider) ExecuteTool(ctx context.Context, params mcp.CallToolPara
 		attribute.Bool("tool_found", false),
 	)
 
-	return mcp.CallToolResult{}, err
+	return CallToolResult{}, err
 }

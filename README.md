@@ -92,7 +92,7 @@ Visit our [documentation](docs/index.md) for detailed guides on:
 - [LLM Integration](docs/llm.md)
 - [Embedding Generation](docs/embeddings.md)
 - [Vector Operations](docs/vector-store/index.md)
-- [MCP (Model Context Protocol) Server in Go](docs/mcp.md)
+- [MCP (Model Context Protocol) Server in Go](docs/md)
 - [API Reference](https://pkg.go.dev/github.com/shaharia-lab/goai)
 
 ## 🤝 Contributing

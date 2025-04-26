@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shaharia-lab/goai/mcp"
-
 	"github.com/anthropics/anthropic-sdk-go"
 )
 
@@ -115,22 +113,22 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 	}
 
 	// Prepare tools if registry exists
-	mcpTools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
+	ools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("error listing tools: %w", err)
 	}
 
 	var toolUnionParams []anthropic.ToolUnionUnionParam
-	for _, mcpTool := range mcpTools {
+	for _, ool := range ools {
 		// Unmarshal the JSON schema into a map[string]interface{}
 		var schema interface{}
-		if err := json.Unmarshal(mcpTool.InputSchema, &schema); err != nil {
+		if err := json.Unmarshal(ool.InputSchema, &schema); err != nil {
 			return LLMResponse{}, fmt.Errorf("failed to unmarshal tool parameters: %w", err)
 		}
 
 		toolUnionParam := anthropic.ToolParam{
-			Name:        anthropic.F(mcpTool.Name),
-			Description: anthropic.F(mcpTool.Description),
+			Name:        anthropic.F(ool.Name),
+			Description: anthropic.F(ool.Description),
 			InputSchema: anthropic.F(schema),
 		}
 		toolUnionParams = append(toolUnionParams, toolUnionParam)
@@ -173,7 +171,7 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 
 			case anthropic.ToolUseBlock:
 				// Execute the tool
-				toolResponse, err := config.toolsProvider.ExecuteTool(ctx, mcp.CallToolParams{
+				toolResponse, err := config.toolsProvider.ExecuteTool(ctx, CallToolParams{
 					Name:      block.Name,
 					Arguments: block.Input,
 				})

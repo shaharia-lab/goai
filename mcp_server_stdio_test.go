@@ -1,4 +1,4 @@
-package mcp
+package goai
 
 import (
 	"bytes"
@@ -11,8 +11,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/shaharia-lab/goai/observability"
 
 	"github.com/stretchr/testify/require"
 )
@@ -35,7 +33,7 @@ func waitForResponse(t *testing.T, out *bytes.Buffer, timeout time.Duration) *Re
 }
 
 func TestNewStdIOServer(t *testing.T) {
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewStdIOServer(
 		baseServer,
 		strings.NewReader(""),
@@ -55,7 +53,7 @@ func TestNewStdIOServer(t *testing.T) {
 
 func TestSendResponse(t *testing.T) {
 	out := &bytes.Buffer{}
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewStdIOServer(
 		baseServer,
 		strings.NewReader(""),
@@ -91,7 +89,7 @@ func TestSendResponse(t *testing.T) {
 
 func TestSendError(t *testing.T) {
 	out := &bytes.Buffer{}
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewStdIOServer(
 		baseServer,
 		strings.NewReader(""),
@@ -119,7 +117,7 @@ func TestSendError(t *testing.T) {
 
 func TestSendNotification(t *testing.T) {
 	out := &bytes.Buffer{}
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewStdIOServer(
 		baseServer,
 		strings.NewReader(""),
@@ -165,7 +163,7 @@ func TestRun(t *testing.T) {
 	}
 
 	out := &bytes.Buffer{}
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewStdIOServer(
 		baseServer,
 		newMockReader(messages),
@@ -277,7 +275,7 @@ func TestErrorHandling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			out := &bytes.Buffer{}
-			baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+			baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 			server := NewStdIOServer(
 				baseServer,
 				strings.NewReader(strings.Join(tt.messages, "")),
@@ -331,7 +329,7 @@ func TestErrorHandling(t *testing.T) {
 
 func TestResourceHandling(t *testing.T) {
 	out := &bytes.Buffer{}
-	baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 	server := NewStdIOServer(
 		baseServer,
 		strings.NewReader(""),
@@ -446,7 +444,7 @@ func TestStdIOServerRequests(t *testing.T) {
 			// Create a buffer to capture output
 			var out bytes.Buffer
 
-			baseServer, _ := NewBaseServer(UseLogger(observability.NewNullLogger()))
+			baseServer, _ := NewBaseServer(UseLogger(NewNullLogger()))
 			server := NewStdIOServer(
 				baseServer,
 				strings.NewReader(tt.input+"\n"),
@@ -513,7 +511,7 @@ func TestStdIOServerRequestsWithToolsMethod(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
 			baseServer, _ := NewBaseServer(
-				UseLogger(observability.NewNullLogger()),
+				UseLogger(NewNullLogger()),
 			)
 			err := baseServer.AddTools(tt.tools...)
 			require.NoError(t, err, "Failed to add tools to server")
@@ -656,7 +654,7 @@ func TestHandlePromptGet(t *testing.T) {
 
 			// Add the PromptManager when creating the server
 			baseServer, _ := NewBaseServer(
-				UseLogger(observability.NewNullLogger()),
+				UseLogger(NewNullLogger()),
 			)
 			baseServer.AddPrompts(codeReviewPrompt)
 
@@ -736,7 +734,7 @@ func (b *syncBuffer) ReadAll() []byte {
 }
 
 func TestSuccessfulConnectionEstablishedFlow(t *testing.T) {
-	baseServer, err := NewBaseServer(UseLogger(observability.NewNullLogger()))
+	baseServer, err := NewBaseServer(UseLogger(NewNullLogger()))
 	require.NoError(t, err)
 
 	in := &syncBuffer{}
