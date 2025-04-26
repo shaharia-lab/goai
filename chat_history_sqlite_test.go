@@ -2,6 +2,7 @@ package goai
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"github.com/shaharia-lab/goai/observability"
 	"os"
@@ -21,7 +22,11 @@ func setupTestDB(t *testing.T) (*SQLiteChatHistoryStorage, func()) {
 	tempFile.Close()
 
 	logger := &observability.NullLogger{}
-	storage, err := NewSQLiteChatHistoryStorage(tempFilePath, logger)
+
+	db, err := sql.Open("sqlite3", tempFilePath+"?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL")
+	require.NoError(t, err)
+
+	storage, err := NewSQLiteChatHistoryStorage(db, logger)
 	require.NoError(t, err)
 
 	cleanup := func() {
@@ -53,7 +58,10 @@ func TestNewSQLiteChatHistoryStorage(t *testing.T) {
 	logger := &observability.NullLogger{}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			storage, err := NewSQLiteChatHistoryStorage(tt.databasePath, logger)
+			db, err := sql.Open("sqlite3", tt.databasePath+"?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL")
+			require.NoError(t, err)
+
+			storage, err := NewSQLiteChatHistoryStorage(db, logger)
 			if tt.expectError {
 				assert.Error(t, err)
 				assert.Nil(t, storage)

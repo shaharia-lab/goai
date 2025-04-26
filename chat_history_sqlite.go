@@ -22,16 +22,7 @@ type SQLiteChatHistoryStorage struct {
 
 // NewSQLiteChatHistoryStorage creates a new instance of SQLiteChatHistoryStorage
 // It takes the path to the SQLite database file.
-func NewSQLiteChatHistoryStorage(databasePath string, logger observability.Logger) (*SQLiteChatHistoryStorage, error) {
-	db, err := sql.Open("sqlite3", databasePath+"?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL")
-	if err != nil {
-		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
-	}
-
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
-
+func NewSQLiteChatHistoryStorage(db *sql.DB, logger observability.Logger) (*SQLiteChatHistoryStorage, error) {
 	storage := &SQLiteChatHistoryStorage{
 		db:     db,
 		logger: logger,
