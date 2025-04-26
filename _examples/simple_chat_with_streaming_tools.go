@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/shaharia-lab/goai"
+
 	"github.com/anthropics/anthropic-sdk-go"
 
-	ools "github.com/shaharia-lab/tools"
+	mcpTools "github.com/shaharia-lab/mcp-tools"
 )
 
 // This example demonstrates how to use streaming response from a supported LLM provider
@@ -17,10 +19,10 @@ func main() {
 	llmProvider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 		Client: NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY")),
 		Model:  anthropic.ModelClaude3_5Sonnet20241022,
-	})
+	}, goai.NewDefaultLogger())
 
 	tools := []Tool{
-		ools.GetWeather,
+		mcpTools.GetWeather,
 	}
 
 	toolsProvider := NewToolsProvider()

@@ -15,6 +15,7 @@ import (
 type AnthropicLLMProvider struct {
 	client AnthropicClientProvider
 	model  anthropic.Model
+	logger Logger
 }
 
 // AnthropicProviderConfig holds the configuration options for creating an Anthropic provider.
@@ -41,65 +42,28 @@ type AnthropicProviderConfig struct {
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
-func NewAnthropicLLMProvider(config AnthropicProviderConfig) *AnthropicLLMProvider {
+func NewAnthropicLLMProvider(config AnthropicProviderConfig, log Logger) *AnthropicLLMProvider {
 	if config.Model == "" {
-		config.Model = anthropic.ModelClaude_3_5_Sonnet_20240620
+		config.Model = anthropic.ModelClaude3_7SonnetLatest
 	}
 
 	return &AnthropicLLMProvider{
 		client: config.Client,
 		model:  config.Model,
+		logger: log,
 	}
-}
-
-// prepareMessageParams creates the Anthropic message parameters from LLM messages and config.
-// This is an internal helper function to reduce code duplication.
-func (p *AnthropicLLMProvider) prepareMessageParams(messages []LLMMessage, config LLMRequestConfig) anthropic.MessageNewParams {
-	var anthropicMessages []anthropic.MessageParam
-	var systemMessage string
-
-	// Process messages based on their role
-	for _, msg := range messages {
-		switch msg.Role {
-		case SystemRole:
-			systemMessage = msg.Text
-		case UserRole:
-			anthropicMessages = append(anthropicMessages, anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Text)))
-		case AssistantRole:
-			anthropicMessages = append(anthropicMessages, anthropic.NewAssistantMessage(anthropic.NewTextBlock(msg.Text)))
-		default:
-			anthropicMessages = append(anthropicMessages, anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Text)))
-		}
-	}
-
-	params := anthropic.MessageNewParams{
-		Model:       anthropic.F(p.model),
-		Messages:    anthropic.F(anthropicMessages),
-		MaxTokens:   anthropic.F(config.maxToken),
-		TopP:        anthropic.Float(config.topP),
-		Temperature: anthropic.Float(config.temperature),
-	}
-
-	// Add system message if present
-	if systemMessage != "" {
-		params.System = anthropic.F([]anthropic.TextBlockParam{
-			anthropic.NewTextBlock(systemMessage),
-		})
-	}
-
-	return params
 }
 
 // GetResponse generates a response using Anthropic's API for the given messages and configuration.
 // It supports different message roles (user, assistant, system) and handles them appropriately.
 // System messages are handled separately through Anthropic's system parameter.
 func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMessage, config LLMRequestConfig) (LLMResponse, error) {
-	startTime := time.Now()
-
 	// Initialize token counters
 	var totalInputTokens, totalOutputTokens int64
 
-	// Convert our messages to Anthropic messages
+	var systemPromptBlocks []anthropic.TextBlockParam
+
+	// Convert messages to Anthropic messages
 	var anthropicMessages []anthropic.MessageParam
 	for _, msg := range messages {
 		switch msg.Role {
@@ -109,6 +73,8 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 		case AssistantRole:
 			anthropicMessages = append(anthropicMessages,
 				anthropic.NewAssistantMessage(anthropic.NewTextBlock(msg.Text)))
+		case SystemRole:
+			systemPromptBlocks = append(systemPromptBlocks, anthropic.NewTextBlock(msg.Text))
 		}
 	}
 
@@ -143,6 +109,10 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 		Tools:     anthropic.F(toolUnionParams),
 	}
 
+	if len(systemPromptBlocks) > 0 {
+		msgParams.System = anthropic.F(systemPromptBlocks)
+	}
+
 	if config.enableThinking && config.thinkingBudgetToken > 0 {
 		msgParams.Thinking = anthropic.F(anthropic.ThinkingConfigParamUnion(anthropic.ThinkingConfigParam{
 			Type:         anthropic.F(anthropic.ThinkingConfigParamTypeEnabled),
@@ -150,12 +120,38 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 		}))
 	}
 
+	logFields := map[string]interface{}{
+		"model":                    p.model,
+		"max_tokens":               config.maxToken,
+		"top_p":                    config.topP,
+		"temperature":              config.temperature,
+		"top_k":                    config.topK,
+		"system_prompt_count":      len(systemPromptBlocks),
+		"tools_count":              len(toolUnionParams),
+		"thinking_budget":          config.thinkingBudgetToken,
+		"enable_thinking":          config.enableThinking,
+		"allowed_tools":            config.allowedTools,
+		"anthropic_messages_count": len(anthropicMessages),
+	}
+	p.logger.WithFields(logFields).Debug("AnthropicLLMProvider: Sending request to Anthropic API")
+
+	startTime := time.Now()
+
 	// Start conversation loop
+	loop := 1
 	for {
 		message, err := p.client.CreateMessage(ctx, msgParams)
 		if err != nil {
+			p.logger.WithErr(err).Error("AnthropicLLMProvider: anthropic api error")
 			return LLMResponse{}, err
 		}
+
+		p.logger.WithFields(map[string]interface{}{
+			"conversation_loop_nth": loop,
+			"response_length":       len(message.Content),
+			"input_tokens":          message.Usage.InputTokens,
+			"output_tokens":         message.Usage.OutputTokens,
+		}).Debug("AnthropicLLMProvider: Received response from Anthropic API")
 
 		// Update token counts
 		totalInputTokens += message.Usage.InputTokens
@@ -170,38 +166,77 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 				finalResponse += block.Text + "\n"
 
 			case anthropic.ToolUseBlock:
-				// Execute the tool
+				p.logger.WithFields(map[string]interface{}{
+					"tool_name":  block.Name,
+					"tool_input": block.Input,
+				}).Debug("AnthropicLLMProvider: executing tool")
+
 				toolResponse, err := config.toolsProvider.ExecuteTool(ctx, CallToolParams{
 					Name:      block.Name,
 					Arguments: block.Input,
 				})
 				if err != nil {
-					return LLMResponse{}, fmt.Errorf("error executing tool '%s': %w", block.Name, err)
+					p.logger.WithFields(map[string]interface{}{
+						"tool_name":  block.Name,
+						"tool_input": block.Input,
+					}).WithErr(err).Error("AnthropicLLMProvider: tool execution error. Sending error to the model and continuing")
+
+					anthropic.NewToolResultBlock(block.ID, fmt.Sprintf("tool execution failed for %s. Error: %s", block.Name, err), true)
+					continue
 				}
 
 				if toolResponse.Content == nil || len(toolResponse.Content) == 0 {
-					return LLMResponse{}, fmt.Errorf("tool '%s' returned no content", block.Name)
+					p.logger.WithFields(map[string]interface{}{
+						"tool_name":  block.Name,
+						"tool_input": block.Input,
+						"loop_nth":   loop,
+					}).Debug("AnthropicLLMProvider: tool returned no content")
+
+					anthropic.NewToolResultBlock(block.ID, fmt.Sprintf("tool '%s' returned no content", block.Name), true)
+					continue
 				}
 
-				// Add tool result to collection
-				toolResults = append(toolResults,
-					anthropic.NewToolResultBlock(block.ID, toolResponse.Content[0].Text, toolResponse.IsError))
+				// Add tool results to collection
+				for _, content := range toolResponse.Content {
+					toolResults = append(toolResults,
+						anthropic.NewToolResultBlock(block.ID, content.Text, toolResponse.IsError))
+				}
 			default:
 			}
 		}
 
 		// Add the assistant's message to the conversation
+		p.logger.WithFields(map[string]interface{}{
+			"loop_nth": loop,
+		}).Debug("AnthropicLLMProvider: Adding assistant message to conversation")
+
 		anthropicMessages = append(anthropicMessages, message.ToParam())
 
 		// If no tool results, we're done
 		if len(toolResults) == 0 {
+			p.logger.WithFields(map[string]interface{}{
+				"loop_nth": loop,
+			}).Debug("AnthropicLLMProvider: No tool results, exiting loop")
 			break
 		}
 
 		// Add tool results as user message and continue the loop
+		p.logger.WithFields(map[string]interface{}{
+			"tool_results_count": len(toolResults),
+			"loop_nth":           loop,
+		}).Debug("AnthropicLLMProvider: Adding tool results to conversation")
+
 		anthropicMessages = append(anthropicMessages,
 			anthropic.NewUserMessage(toolResults...))
+
+		loop++
 	}
+
+	logFields["total_input_tokens"] = totalInputTokens
+	logFields["total_output_tokens"] = totalOutputTokens
+	logFields["total_loop"] = loop
+	logFields["final_response_length"] = len(finalResponse)
+	p.logger.WithFields(logFields).Debug("AnthropicLLMProvider: Returning final response")
 
 	return LLMResponse{
 		Text:             strings.TrimSpace(finalResponse),
