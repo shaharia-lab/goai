@@ -3,6 +3,7 @@ package goai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -230,18 +231,29 @@ func (p *AnthropicLLMProvider) GetResponse(ctx context.Context, messages []LLMMe
 			anthropic.NewUserMessage(toolResults...))
 
 		loop++
+
+		if loop > config.maxIterations {
+			p.logger.WithFields(map[string]interface{}{
+				"loop_nth": loop,
+			}).Debug("AnthropicLLMProvider: Max loop reached, exiting")
+
+			return LLMResponse{}, errors.New("max conversation turns exceeded")
+		}
 	}
 
+	finalResponseText := strings.TrimSpace(finalResponse)
+	completionTime := time.Since(startTime).Seconds()
 	logFields["total_input_tokens"] = totalInputTokens
 	logFields["total_output_tokens"] = totalOutputTokens
-	logFields["total_loop"] = loop
-	logFields["final_response_length"] = len(finalResponse)
+	logFields["total_iterations"] = loop
+	logFields["final_response_length"] = len(finalResponseText)
+	logFields["duration"] = completionTime
 	p.logger.WithFields(logFields).Debug("AnthropicLLMProvider: Returning final response")
 
 	return LLMResponse{
-		Text:             strings.TrimSpace(finalResponse),
+		Text:             finalResponseText,
 		TotalInputToken:  int(totalInputTokens),
 		TotalOutputToken: int(totalOutputTokens),
-		CompletionTime:   time.Since(startTime).Seconds(),
+		CompletionTime:   completionTime,
 	}, nil
 }

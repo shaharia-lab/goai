@@ -23,6 +23,7 @@ func NewBedrockClientWrapper(client *bedrockruntime.Client) BedrockClient {
 type BedrockLLMProvider struct {
 	client BedrockClient
 	model  string
+	logger Logger
 }
 
 // BedrockProviderConfig holds the configuration options for creating a Bedrock provider
@@ -33,7 +34,7 @@ type BedrockProviderConfig struct {
 
 // NewBedrockLLMProvider creates a new Bedrock provider with the specified configuration.
 // If no model is specified, it defaults to Claude 3.5 Sonnet.
-func NewBedrockLLMProvider(config BedrockProviderConfig) *BedrockLLMProvider {
+func NewBedrockLLMProvider(config BedrockProviderConfig, log Logger) *BedrockLLMProvider {
 	if config.Model == "" {
 		config.Model = "anthropic.claude-3-5-sonnet-20240620-v1:0"
 	}
@@ -41,6 +42,7 @@ func NewBedrockLLMProvider(config BedrockProviderConfig) *BedrockLLMProvider {
 	return &BedrockLLMProvider{
 		client: config.Client,
 		model:  config.Model,
+		logger: log,
 	}
 }
 
@@ -76,33 +78,30 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 				},
 			})
 		default:
-			bedrockMessages = append(bedrockMessages, types.Message{
-				Role: types.ConversationRoleUser,
-				Content: []types.ContentBlock{
-					&types.ContentBlockMemberText{Value: msg.Text},
-				},
-			})
 		}
 	}
 
 	var toolConfig *types.ToolConfiguration
 	if config.toolsProvider != nil {
-		ools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
+		tools, err := config.toolsProvider.ListTools(ctx, config.allowedTools)
 		if err != nil {
 			return LLMResponse{}, fmt.Errorf("error listing tools: %w", err)
 		}
 
-		if len(ools) > 0 {
+		if len(tools) > 0 {
 			var bedrockTools []types.Tool
-			for _, ool := range ools {
+			for _, tool := range tools {
 				var schemaDoc map[string]interface{}
-				if err := json.Unmarshal(ool.InputSchema, &schemaDoc); err != nil {
-					return LLMResponse{}, fmt.Errorf("failed to unmarshal tool input schema for '%s': %w", ool.Name, err)
+				if err := json.Unmarshal(tool.InputSchema, &schemaDoc); err != nil {
+					p.logger.WithErr(err).WithFields(map[string]interface{}{
+						"tool_name": tool.Name,
+					}).Error("failed to unmarshal tool input schema for bedrock client")
+					return LLMResponse{}, fmt.Errorf("failed to unmarshal tool input schema for '%s': %w", tool.Name, err)
 				}
 
 				toolSpec := types.ToolSpecification{
-					Name:        aws.String(ool.Name),
-					Description: aws.String(ool.Description),
+					Name:        aws.String(tool.Name),
+					Description: aws.String(tool.Description),
 					InputSchema: &types.ToolInputSchemaMemberJson{
 						Value: document.NewLazyDocument(schemaDoc),
 					},
@@ -152,11 +151,32 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 		converseInput.AdditionalModelRequestFields = thinkingDoc
 	}
 
+	logFields := map[string]interface{}{
+		"model":               p.model,
+		"max_tokens":          config.maxToken,
+		"top_p":               config.topP,
+		"temperature":         config.temperature,
+		"top_k":               config.topK,
+		"system_prompt_count": len(systemPrompts),
+		"thinking_budget":     config.thinkingBudgetToken,
+		"enable_thinking":     config.enableThinking,
+	}
+	if config.toolsProvider != nil && toolConfig != nil {
+		logFields["tools_count"] = len(toolConfig.Tools)
+	}
+
 	iterations := 0
 	for {
 		converseInput.Messages = bedrockMessages
+
+		p.logger.WithFields(logFields).WithFields(map[string]interface{}{
+			"iteration":                    iterations,
+			"converse_input_message_count": len(bedrockMessages),
+		}).Debug("BedrockLLMProvider: Sending request to Bedrock Converse API")
+
 		output, err := p.client.Converse(ctx, converseInput)
 		if err != nil {
+			p.logger.WithErr(err).Error("BedrockLLMProvider: Bedrock Converse API error")
 			return LLMResponse{}, fmt.Errorf("bedrock Converse API call failed: %w", err)
 		}
 
@@ -172,6 +192,7 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 				break
 			}
 
+			p.logger.WithErr(err).Error("BedrockLLMProvider: unexpected Bedrock response")
 			return LLMResponse{}, fmt.Errorf("unexpected Bedrock response: stop reason is %s, but output is not a message", output.StopReason)
 		}
 
@@ -179,7 +200,7 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 		bedrockMessages = append(bedrockMessages, assistantMessage)
 
 		var toolResultsContent []types.ContentBlock
-		var hasToolUse bool = false
+		var hasToolUse = false
 
 		for _, block := range assistantMessage.Content {
 			switch content := block.(type) {
@@ -263,6 +284,10 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 		}
 
 		if !hasToolUse {
+			p.logger.WithFields(map[string]interface{}{
+				"loop_nth": iterations,
+			}).Debug(
+				"BedrockLLMProvider: no tool use in response, stopping iteration")
 			break
 		}
 
@@ -272,11 +297,8 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 				Content: toolResultsContent,
 			}
 			bedrockMessages = append(bedrockMessages, userToolResultMessage)
-		} else {
-			break
 		}
 
-		// Optional: Add a safety break to prevent infinite loops
 		if iterations > config.maxIterations {
 			return LLMResponse{}, errors.New("max conversation turns exceeded")
 		}
@@ -284,10 +306,20 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 		iterations++
 	}
 
+	finalResponseText := strings.TrimSpace(finalResponseTextBuilder.String())
+	completionTime := time.Since(startTime).Seconds()
+
+	logFields["total_input_tokens"] = totalInputTokens
+	logFields["total_output_tokens"] = totalOutputTokens
+	logFields["total_iterations"] = iterations
+	logFields["final_response_length"] = len(finalResponseText)
+	logFields["duration"] = completionTime
+	p.logger.WithFields(logFields).Debug("BedrockLLMProvider: Bedrock Converse API response received")
+
 	return LLMResponse{
-		Text:             strings.TrimSpace(finalResponseTextBuilder.String()),
+		Text:             finalResponseText,
 		TotalInputToken:  int(totalInputTokens),
 		TotalOutputToken: int(totalOutputTokens),
-		CompletionTime:   time.Since(startTime).Seconds(),
+		CompletionTime:   completionTime,
 	}, nil
 }

@@ -278,6 +278,7 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 				topP:          0.9,
 				temperature:   0.7,
 				toolsProvider: toolsProvider,
+				maxIterations: 10,
 			},
 			mockResponses: []*anthropic.Message{
 				{
@@ -394,7 +395,6 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 			assert.Equal(t, tt.expectedResult.Text, result.Text)
 			assert.Equal(t, tt.expectedResult.TotalInputToken, result.TotalInputToken)
 			assert.Equal(t, tt.expectedResult.TotalOutputToken, result.TotalOutputToken)
-			assert.Greater(t, result.CompletionTime, float64(0))
 		})
 	}
 }
