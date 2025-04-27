@@ -49,7 +49,7 @@ func TestBedrockLLMProvider_GetResponse_BasicConversation(t *testing.T) {
 	provider := NewBedrockLLMProvider(BedrockProviderConfig{
 		Client: mockClient,
 		Model:  "test-model",
-	})
+	}, NewNullLogger())
 
 	// Test messages
 	messages := []LLMMessage{
@@ -178,7 +178,7 @@ func TestBedrockLLMProvider_GetResponse_WithTools(t *testing.T) {
 	provider := NewBedrockLLMProvider(BedrockProviderConfig{
 		Client: mockClient,
 		Model:  "test-model",
-	})
+	}, NewNullLogger())
 
 	// Test messages
 	messages := []LLMMessage{
@@ -365,7 +365,7 @@ func TestBedrockLLMProvider_GetResponse_WithMultipleTools(t *testing.T) {
 	provider := NewBedrockLLMProvider(BedrockProviderConfig{
 		Client: mockClient,
 		Model:  "test-model",
-	})
+	}, NewNullLogger())
 
 	// Test messages
 	messages := []LLMMessage{
@@ -409,7 +409,7 @@ func TestBedrockLLMProvider_GetResponse_Error(t *testing.T) {
 	provider := NewBedrockLLMProvider(BedrockProviderConfig{
 		Client: mockClient,
 		Model:  "test-model",
-	})
+	}, NewNullLogger())
 
 	// Test messages
 	messages := []LLMMessage{
@@ -463,7 +463,7 @@ func TestBedrockLLMProvider_DefaultModel(t *testing.T) {
 	// Create the provider with our mock but no specified model
 	provider := NewBedrockLLMProvider(BedrockProviderConfig{
 		Client: mockClient,
-	})
+	}, NewNullLogger())
 
 	// Test messages
 	messages := []LLMMessage{

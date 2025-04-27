@@ -272,7 +272,7 @@ if err != nil {
 llmProvider := goai.NewBedrockLLMProvider(goai.BedrockProviderConfig{
     Client: bedrockruntime.NewFromConfig(awsConfig),
     Model:  "anthropic.claude-3-5-sonnet-20240620-v1:0",
-})
+}, goai.NewDefaultLogger())
 ```
 
 For more details about AWS Bedrock API can be found [here](https://docs.aws.amazon.com/bedrock/latest/userguide/getting-started-api.html)

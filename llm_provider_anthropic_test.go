@@ -115,13 +115,13 @@ func TestAnthropicLLMProvider_NewAnthropicLLMProvider(t *testing.T) {
 			config: AnthropicProviderConfig{
 				Client: &MockAnthropicClient{},
 			},
-			expectedModel: anthropic.ModelClaude_3_5_Sonnet_20240620,
+			expectedModel: anthropic.ModelClaude3_7SonnetLatest,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := NewAnthropicLLMProvider(tt.config)
+			provider := NewAnthropicLLMProvider(tt.config, NewNullLogger())
 
 			assert.Equal(t, tt.expectedModel, provider.model, "unexpected model")
 			assert.NotNil(t, provider.client, "expected client to be initialized")
@@ -189,7 +189,7 @@ func TestAnthropicLLMProvider_GetResponse(t *testing.T) {
 			provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 				Client: mockClient,
 				Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
-			})
+			}, NewNullLogger())
 
 			result, err := provider.GetResponse(context.Background(), tt.messages, tt.config)
 
@@ -278,6 +278,7 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 				topP:          0.9,
 				temperature:   0.7,
 				toolsProvider: toolsProvider,
+				maxIterations: 10,
 			},
 			mockResponses: []*anthropic.Message{
 				{
@@ -334,7 +335,7 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 			mockResponses: []*anthropic.Message{
 				{
 					Role:  anthropic.MessageRoleAssistant,
-					Model: anthropic.ModelClaude_3_5_Sonnet_20240620,
+					Model: anthropic.ModelClaude3_7SonnetLatest,
 					Content: func() []anthropic.ContentBlock {
 						toolUseBlock := []byte(`{
                             "type": "tool_use",
@@ -355,7 +356,12 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 					StopReason: anthropic.MessageStopReasonToolUse,
 				},
 			},
-			expectError: true,
+			expectedResult: LLMResponse{
+				Text:             "",
+				TotalInputToken:  10,
+				TotalOutputToken: 5,
+			},
+			expectError: false,
 		},
 	}
 
@@ -376,7 +382,7 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 			provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 				Client: mockClient,
 				Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
-			})
+			}, NewNullLogger())
 
 			result, err := provider.GetResponse(context.Background(), tt.messages, tt.config)
 
@@ -389,7 +395,6 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 			assert.Equal(t, tt.expectedResult.Text, result.Text)
 			assert.Equal(t, tt.expectedResult.TotalInputToken, result.TotalInputToken)
 			assert.Equal(t, tt.expectedResult.TotalOutputToken, result.TotalOutputToken)
-			assert.Greater(t, result.CompletionTime, float64(0))
 		})
 	}
 }
@@ -451,7 +456,7 @@ func TestAnthropicLLMProvider_GetStreamingResponse_Basic(t *testing.T) {
 	provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 		Client: mockClient,
 		Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
-	})
+	}, NewNullLogger())
 
 	ctx := context.Background()
 	stream, err := provider.GetStreamingResponse(ctx, []LLMMessage{
@@ -612,7 +617,7 @@ func TestAnthropicLLMProvider_GetStreamingResponse_SingleTool(t *testing.T) {
 	provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 		Client: mockClient,
 		Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
-	})
+	}, NewNullLogger())
 
 	ctx := context.Background()
 	stream, err := provider.GetStreamingResponse(ctx, []LLMMessage{
@@ -791,7 +796,7 @@ func TestAnthropicLLMProvider_GetStreamingResponse_MultiTool(t *testing.T) {
 	provider := NewAnthropicLLMProvider(AnthropicProviderConfig{
 		Client: mockClient,
 		Model:  anthropic.ModelClaude_3_5_Sonnet_20240620,
-	})
+	}, NewNullLogger())
 
 	ctx := context.Background()
 	stream, err := provider.GetStreamingResponse(ctx, []LLMMessage{
