@@ -568,16 +568,20 @@ func (s *BaseServer) handleToolsList(ctx context.Context, clientID string, reque
 		}
 	}()
 
-	var params ListParams
-	if err = json.Unmarshal(request.Params, &params); err != nil {
-		s.logger.WithFields(map[string]interface{}{
-			"clientID": clientID,
-			"request":  request.ID,
-			"params":   string(request.Params),
-		}).WithErr(err).Error("Failed to parse list tools params")
+	params := ListParams{
+		Cursor: "",
+	}
+	if len(request.Params) > 0 {
+		if err = json.Unmarshal(request.Params, &params); err != nil {
+			s.logger.WithFields(map[string]interface{}{
+				"clientID": clientID,
+				"request":  request.ID,
+				"params":   string(request.Params),
+			}).WithErr(err).Error("Failed to parse list tools params")
 
-		s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
-		return
+			s.sendErr(clientID, request.ID, -32700, "Failed to parse params", err)
+			return
+		}
 	}
 
 	s.logger.WithFields(map[string]interface{}{
