@@ -16,28 +16,28 @@ import (
 // Run this example with `go run . simple_chat_with_streaming.go`
 func main() {
 	// Create OpenAI LLM Provider
-	llmProvider := NewAnthropicLLMProvider(AnthropicProviderConfig{
-		Client: NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY")),
+	llmProvider := goai.NewAnthropicLLMProvider(goai.AnthropicProviderConfig{
+		Client: goai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY")),
 		Model:  anthropic.ModelClaude3_5Sonnet20241022,
 	}, goai.NewDefaultLogger())
 
-	tools := []Tool{
+	tools := []goai.Tool{
 		mcpTools.GetWeather,
 	}
 
-	toolsProvider := NewToolsProvider()
+	toolsProvider := goai.NewToolsProvider()
 	toolsProvider.AddTools(tools)
 
 	// Configure LLM Request
-	llm := NewLLMRequest(NewRequestConfig(
-		WithMaxToken(100),
-		WithTemperature(0.7),
-		UseToolsProvider(toolsProvider),
-		WithAllowedTools([]string{"get_weather"}),
+	llm := goai.NewLLMRequest(goai.NewRequestConfig(
+		goai.WithMaxToken(100),
+		goai.WithTemperature(0.7),
+		goai.UseToolsProvider(toolsProvider),
+		goai.WithAllowedTools([]string{"get_weather"}),
 	), llmProvider)
 
-	stream, err := llm.GenerateStream(context.Background(), []LLMMessage{
-		{Role: UserRole, Text: "What's the weather in Berlin, Germany?"},
+	stream, err := llm.GenerateStream(context.Background(), []goai.LLMMessage{
+		{Role: goai.UserRole, Text: "What's the weather in Berlin, Germany?"},
 	})
 
 	if err != nil {
