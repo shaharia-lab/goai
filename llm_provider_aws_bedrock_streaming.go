@@ -132,11 +132,6 @@ func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages 
 		}
 	}
 
-	maxIterations := 10
-	if config.maxIterations > 0 {
-		maxIterations = config.maxIterations
-	}
-
 	go func() {
 		defer close(responseChan)
 
@@ -148,7 +143,7 @@ func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages 
 		var currentToolInputBuffer *strings.Builder
 
 	OuterLoop:
-		for turn := 0; turn < maxIterations; turn++ {
+		for turn := 0; turn < config.maxIterations; turn++ {
 
 			currentToolUseID = nil
 			currentToolName = nil
@@ -384,7 +379,7 @@ func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages 
 
 		}
 
-		responseChan <- StreamingLLMResponse{Error: fmt.Errorf("streaming: max tool iterations (%d) reached", maxIterations), Done: true}
+		responseChan <- StreamingLLMResponse{Error: fmt.Errorf("streaming: max tool iterations (%d) reached", config.maxIterations), Done: true}
 
 	}()
 

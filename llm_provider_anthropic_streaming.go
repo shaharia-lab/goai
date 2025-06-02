@@ -22,7 +22,7 @@ func (p *AnthropicLLMProvider) GetStreamingResponse(ctx context.Context, message
 
 	responseChan := make(chan StreamingLLMResponse)
 
-	go p.processStreamingResponse(ctx, anthropicMessages, toolUnionParams, config, responseChan, systemMessage)
+	go p.processStreamingResponse(ctx, anthropicMessages, toolUnionParams, config, responseChan, systemMessage, config.maxIterations)
 
 	return responseChan, nil
 }
@@ -84,11 +84,11 @@ func (p *AnthropicLLMProvider) processStreamingResponse(
 	config LLMRequestConfig,
 	responseChan chan<- StreamingLLMResponse,
 	systemMessage string,
+	maxIterations int,
 ) {
 	defer close(responseChan)
 
 	iterations := 0
-	maxIterations := 10
 	keepProcessing := true
 
 	for keepProcessing && iterations < maxIterations {
