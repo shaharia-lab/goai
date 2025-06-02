@@ -149,6 +149,7 @@ func TestAnthropicLLMProvider_GetResponse(t *testing.T) {
 				topP:          0.9,
 				temperature:   0.7,
 				toolsProvider: NewToolsProvider(),
+				maxIterations: 10,
 			},
 			expectedResult: LLMResponse{
 				Text:             "Test response",
@@ -331,6 +332,7 @@ func TestAnthropicLLMProvider_GetResponse_WithTools(t *testing.T) {
 				topP:          0.9,
 				temperature:   0.7,
 				toolsProvider: NewToolsProvider(),
+				maxIterations: 10,
 			},
 			mockResponses: []*anthropic.Message{
 				{
@@ -461,7 +463,7 @@ func TestAnthropicLLMProvider_GetStreamingResponse_Basic(t *testing.T) {
 	ctx := context.Background()
 	stream, err := provider.GetStreamingResponse(ctx, []LLMMessage{
 		{Role: UserRole, Text: "Hello"},
-	}, LLMRequestConfig{maxToken: 100, toolsProvider: func() *ToolsProvider {
+	}, LLMRequestConfig{maxIterations: 10, maxToken: 100, toolsProvider: func() *ToolsProvider {
 		return NewToolsProvider()
 	}()})
 	assert.NoError(t, err)
@@ -626,6 +628,7 @@ func TestAnthropicLLMProvider_GetStreamingResponse_SingleTool(t *testing.T) {
 		maxToken:      100,
 		toolsProvider: mockToolsProvider,
 		allowedTools:  []string{"get_weather"},
+		maxIterations: 10,
 	})
 	assert.NoError(t, err)
 
@@ -805,6 +808,7 @@ func TestAnthropicLLMProvider_GetStreamingResponse_MultiTool(t *testing.T) {
 		maxToken:      200,
 		toolsProvider: mockToolsProvider,
 		allowedTools:  []string{"get_weather", "get_stock_price"},
+		maxIterations: 10,
 	})
 	assert.NoError(t, err)
 

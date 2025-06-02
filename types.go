@@ -32,7 +32,7 @@ const (
 	DefaultTopK int64 = 40
 
 	// DefaultMaxIterations is the default maximum number of iterations for LLM responses
-	DefaultMaxIterations int = 10
+	DefaultMaxIterations int = 25
 )
 
 // DefaultConfig holds the default values for LLMRequestConfig
