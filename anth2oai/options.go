@@ -36,7 +36,9 @@ type config struct {
 	logger           goai.Logger
 }
 
-// Option customises a config using the functional-options pattern used across goai.
+// Option customises the client, transport, or handler built by New,
+// NewRoundTripper, or NewHandler, following the functional-options pattern used
+// across goai.
 type Option func(*config)
 
 func newConfig(baseURL, apiKey string, opts ...Option) *config {
