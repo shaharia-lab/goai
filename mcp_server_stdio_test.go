@@ -16,7 +16,7 @@ import (
 )
 
 // Test helper to wait for and parse response
-func waitForResponse(t *testing.T, out *bytes.Buffer, timeout time.Duration) *Response {
+func waitForResponse(t *testing.T, out *syncBuffer, timeout time.Duration) *Response {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if out.Len() > 0 {
@@ -631,7 +631,7 @@ func TestHandlePromptGet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			inR, inW := io.Pipe()
-			out := &bytes.Buffer{}
+			out := &syncBuffer{}
 
 			codeReviewPrompt := Prompt{
 				Name:        "code_review",
@@ -733,21 +733,40 @@ func (b *syncBuffer) ReadAll() []byte {
 	return data
 }
 
+func (b *syncBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Len()
+}
+
+func (b *syncBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]byte(nil), b.buffer.Bytes()...)
+}
+
+func (b *syncBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buffer.Reset()
+}
+
 func TestSuccessfulConnectionEstablishedFlow(t *testing.T) {
 	baseServer, err := NewBaseServer(UseLogger(NewNullLogger()))
 	require.NoError(t, err)
 
-	in := &syncBuffer{}
+	inR, inW := io.Pipe()
 	out := &syncBuffer{}
-	server := NewStdIOServer(baseServer, in, out)
+	server := NewStdIOServer(baseServer, inR, out)
 	require.NotNil(t, server)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go func() {
-		err := server.Run(ctx)
-		require.NoError(t, err)
+		if err := server.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("unexpected server error: %v", err)
+		}
 	}()
 
 	waitForResponse := func(t *testing.T, output *syncBuffer, timeout time.Duration) *Response {
@@ -773,7 +792,7 @@ func TestSuccessfulConnectionEstablishedFlow(t *testing.T) {
 
 	t.Run("Initialization Flow", func(t *testing.T) {
 		initializeRequest := `{"jsonrpc":"2.0","id":"1","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
-		_, err := in.Write([]byte(initializeRequest + "\n"))
+		_, err := inW.Write([]byte(initializeRequest + "\n"))
 		require.NoError(t, err)
 
 		initResponse := waitForResponse(t, out, 1*time.Second)
@@ -786,14 +805,14 @@ func TestSuccessfulConnectionEstablishedFlow(t *testing.T) {
 		require.Contains(t, serverInfo, "serverInfo")
 		require.Contains(t, serverInfo, "capabilities")
 
-		_, err = in.Write([]byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n"))
+		_, err = inW.Write([]byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n"))
 		require.NoError(t, err)
 		time.Sleep(100 * time.Millisecond)
 	})
 
 	t.Run("Notification Handling", func(t *testing.T) {
 		notificationRequest := `{"jsonrpc":"2.0","method":"notifications/test-notification"}`
-		_, err := in.Write([]byte(notificationRequest + "\n"))
+		_, err := inW.Write([]byte(notificationRequest + "\n"))
 		require.NoError(t, err)
 
 		// Notifications don't return a direct response; ensure no errors occurred

@@ -476,9 +476,12 @@ func (s *SSEServer) Run(ctx context.Context) error {
 	// Shutdown handling
 	errChan := make(chan error, 1)
 	go func() {
-		if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			s.logger.WithErr(err).Error("Error starting server")
-			errChan <- err
+		// Local error, not the outer err: this goroutine runs concurrently with
+		// the ctx.Done() branch (which writes err via server.Shutdown), so
+		// sharing err is a data race. Result is reported over errChan.
+		if serveErr := server.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			s.logger.WithErr(serveErr).Error("Error starting server")
+			errChan <- serveErr
 		}
 	}()
 
