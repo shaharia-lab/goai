@@ -71,15 +71,12 @@ repos:
         types: [go]
         pass_filenames: false
 
-      # gosec runs on demand only (stages: [manual]) — it is not enforced on
-      # every commit yet because of pre-existing findings in legacy code, which
-      # are tracked in issue #75 for a follow-up fix. Run it explicitly with:
-      #   pre-commit run gosec --hook-stage manual --all-files
+      # gosec runs on every commit and is blocking. Genuine false positives must
+      # be suppressed in-code with a justified `#nosec Gxxx -- reason`.
       - id: gosec
-        name: gosec (manual security scan)
-        description: Static security analysis with gosec (report-only for now).
+        name: gosec (security scan)
+        description: Static security analysis with gosec.
         entry: bash -c 'go run github.com/securego/gosec/v2/cmd/gosec@v2.27.1 -quiet ./...'
         language: system
         types: [go]
         pass_filenames: false
-        stages: [manual]

@@ -26,7 +26,9 @@ func main() {
 	}
 
 	toolsProvider := goai.NewToolsProvider()
-	toolsProvider.AddTools(tools)
+	if err := toolsProvider.AddTools(tools); err != nil {
+		panic(err)
+	}
 
 	// Configure LLM Request
 	llm := goai.NewLLMRequest(goai.NewRequestConfig(

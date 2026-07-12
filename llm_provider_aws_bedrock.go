@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -17,6 +18,19 @@ import (
 // NewBedrockClientWrapper creates a new wrapper for bedrockruntime.Client
 func NewBedrockClientWrapper(client *bedrockruntime.Client) BedrockClient {
 	return &BedrockClientWrapper{client: client}
+}
+
+// maxTokenToInt32 safely converts a configured max-token count to the int32
+// the Bedrock SDK expects, clamping to the valid [0, math.MaxInt32] range so
+// the conversion can never overflow (gosec G115).
+func maxTokenToInt32(maxToken int64) int32 {
+	if maxToken < 0 {
+		return 0
+	}
+	if maxToken > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(maxToken)
 }
 
 // BedrockLLMProvider implements the LLMProvider interface using AWS Bedrock's official Go SDK.
@@ -121,7 +135,7 @@ func (p *BedrockLLMProvider) GetResponse(ctx context.Context, messages []LLMMess
 
 	var finalResponseTextBuilder strings.Builder
 	inferenceCfg := &types.InferenceConfiguration{
-		MaxTokens: aws.Int32(int32(config.maxToken)),
+		MaxTokens: aws.Int32(maxTokenToInt32(config.maxToken)),
 	}
 
 	if config.temperature > 0 {

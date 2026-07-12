@@ -28,7 +28,7 @@ func NewSQLiteChatHistoryStorage(db *sql.DB, logger Logger) (*SQLiteChatHistoryS
 	}
 
 	if err := storage.initSchema(context.Background()); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to initialize database schema: %w", err)
 	}
 
@@ -191,7 +191,7 @@ func (s *SQLiteChatHistoryStorage) AddMessage(ctx context.Context, sessionID str
 	}
 
 	insertSQL := `
-	INSERT INTO messages (chat_uuid, role, text, generated_at, input_token, output_token, metadata) 
+	INSERT INTO messages (chat_uuid, role, text, generated_at, input_token, output_token, metadata)
 	VALUES (?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = tx.ExecContext(
@@ -268,9 +268,9 @@ func (s *SQLiteChatHistoryStorage) GetChat(ctx context.Context, sessionID string
 	}
 
 	messagesSQL := `
-	SELECT role, text, generated_at, input_token, output_token, metadata 
-	FROM messages 
-	WHERE chat_uuid = ? 
+	SELECT role, text, generated_at, input_token, output_token, metadata
+	FROM messages
+	WHERE chat_uuid = ?
 	ORDER BY generated_at ASC`
 
 	rows, err := s.db.QueryContext(ctx, messagesSQL, sessionID)

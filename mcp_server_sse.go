@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -295,9 +296,14 @@ func (s *SSEServer) handleSSEConnection(ctx context.Context, w http.ResponseWrit
 		}).Info("Client connection closed")
 	}()
 
-	endpointURL := fmt.Sprintf("http://%s/message?clientID=%s", r.Host, clientID)
+	// clientID is a server-generated UUID and is query-escaped for defense in
+	// depth; the response is a non-HTML text/event-stream, so this is not an
+	// HTML/JS sink (gosec G705).
+	endpointURL := fmt.Sprintf("http://%s/message?clientID=%s", r.Host, url.QueryEscape(clientID))
 	endpointEvent := fmt.Sprintf("event: endpoint\ndata: %s\n\n", endpointURL)
-	if _, err = fmt.Fprint(w, endpointEvent); err != nil {
+	// #nosec G705 -- SSE (non-HTML) text/event-stream, not an HTML/JS sink; clientID is a server-generated, escaped UUID
+	_, err = fmt.Fprint(w, endpointEvent)
+	if err != nil {
 		s.logger.WithErr(err).Error("Error sending endpoint data")
 	}
 	flusher.Flush()
@@ -469,6 +475,8 @@ func (s *SSEServer) Run(ctx context.Context) error {
 		},
 		Addr:    s.address,        // Use the configured address.
 		Handler: corsHandler(mux), // Wrap the mux with the CORS handler.
+		// Bound the header-read phase to defend against Slowloris (gosec G112).
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	s.LogMessage(LogLevelInfo, "startup", fmt.Sprintf("Starting SSE server on %s", s.address))

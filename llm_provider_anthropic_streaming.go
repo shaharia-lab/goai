@@ -173,7 +173,9 @@ func (p *AnthropicLLMProvider) streamAndProcessMessage(
 
 	for stream.Next() {
 		event := stream.Current()
-		msg.Accumulate(event)
+		if err := msg.Accumulate(event); err != nil {
+			return nil, fmt.Errorf("error accumulating streaming message: %w", err)
+		}
 
 		// we will accumulate the text for processing
 		// but at the same time we can send the delta

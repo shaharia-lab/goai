@@ -264,7 +264,7 @@ func (t *SSETransport) establishConnection(ctx context.Context, config ClientCon
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.logger.WithFields(map[string]interface{}{
 			"status_code": resp.StatusCode,
 			"url":         config.SSE.URL,
