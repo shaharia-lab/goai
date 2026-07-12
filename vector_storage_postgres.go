@@ -23,7 +23,7 @@ type PostgresProvider struct {
 // qualifiedTableName returns the fully-qualified table identifier
 // (schema.collection) with both parts escaped via pq.QuoteIdentifier. SQL
 // identifiers cannot be passed as bind parameters, so quoting them here is the
-// injection defense that justifies the // #nosec G201 markers on the query
+// injection defense that justifies the gosec G201 suppressions on the query
 // builders below.
 func (p *PostgresProvider) qualifiedTableName(collection string) string {
 	return pq.QuoteIdentifier(p.schema) + "." + pq.QuoteIdentifier(collection)
