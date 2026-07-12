@@ -152,7 +152,10 @@ func (s *StdIOServer) Run(ctx context.Context) error {
 				}
 
 				var request Request
-				if err = json.Unmarshal(raw, &request); err == nil && request.Method != "" && request.ID != nil {
+				// Local error, not the outer err: this goroutine runs
+				// concurrently with Run's deferred span handler (which reads
+				// err), so writing the shared err here is a data race.
+				if reqErr := json.Unmarshal(raw, &request); reqErr == nil && request.Method != "" && request.ID != nil {
 					if request.Method != "initialize" && !initialized {
 						s.logger.Error("Received request before 'initialize'")
 						s.sendError("", request.ID, -32000, "Server not initialized", nil) // Empty clientID
