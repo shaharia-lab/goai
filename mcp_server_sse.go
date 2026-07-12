@@ -266,8 +266,7 @@ func (s *SSEServer) handleSSEConnection(ctx context.Context, w http.ResponseWrit
 		}).Info("SSE client disconnecting")
 
 		s.handleClientDisconnect(r.Context(), clientID)
-		delete(s.clients, clientID)
-		close(messageChan)
+		s.closeClientLocked(clientID)
 		s.clientsMutex.Unlock()
 
 		s.logger.WithFields(map[string]interface{}{
@@ -516,14 +515,24 @@ func (s *SSEServer) Run(ctx context.Context) error {
 	}
 }
 
-func (s *SSEServer) removeClient(clientID string) {
-	s.clientsMutex.Lock()
-	defer s.clientsMutex.Unlock()
-
+// closeClientLocked closes a client's message channel and removes it from the
+// registry, but only if it is still registered. The caller MUST hold
+// clientsMutex. It is idempotent: a second call for the same client is a no-op,
+// so the two teardown paths (the handleSSEConnection cleanup defer and
+// removeClient) can never double-close the channel — which previously caused a
+// "close of closed channel" panic under concurrent disconnects (#77).
+func (s *SSEServer) closeClientLocked(clientID string) {
 	if ch, exists := s.clients[clientID]; exists {
 		close(ch)
 		delete(s.clients, clientID)
 	}
+}
+
+func (s *SSEServer) removeClient(clientID string) {
+	s.clientsMutex.Lock()
+	defer s.clientsMutex.Unlock()
+
+	s.closeClientLocked(clientID)
 	s.activeConnections.Delete(clientID)
 }
 
