@@ -23,7 +23,12 @@ type roundTripper struct {
 // NewRoundTripper builds the L2 transport. Plug it into any *http.Client or the
 // OpenAI SDK via option.WithHTTPClient.
 func NewRoundTripper(baseURL, apiKey string, opts ...Option) http.RoundTripper {
-	cfg := newConfig(baseURL, apiKey, opts...)
+	return newRoundTripper(newConfig(baseURL, apiKey, opts...))
+}
+
+// newRoundTripper builds the transport from an already-resolved config, so
+// callers that already hold a config (e.g. NewHandler) don't rebuild it.
+func newRoundTripper(cfg *config) *roundTripper {
 	return &roundTripper{
 		cfg:  cfg,
 		next: cfg.nextTransport(),

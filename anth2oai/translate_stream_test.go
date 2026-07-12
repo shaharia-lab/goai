@@ -149,6 +149,34 @@ func TestStream_IncludeUsage(t *testing.T) {
 	assert.Equal(t, int64(17), last.Usage.TotalTokens)
 }
 
+func TestStream_ToolNoArgsFlushesEmptyObject(t *testing.T) {
+	// A tool_use block with no input_json_delta must still yield valid JSON args.
+	events := []*anthStreamEvent{
+		{Type: "message_start", Message: &anthResponse{ID: "m", Model: "x"}},
+		{Type: "content_block_start", Index: 0, ContentBlock: &anthRespBlock{Type: "tool_use", ID: "t1", Name: "ping"}},
+		{Type: "content_block_stop", Index: 0},
+		{Type: "message_delta", Delta: &anthEventDelta{StopReason: "tool_use"}},
+		{Type: "message_stop"},
+	}
+	chunks, done := runTransformer(t, events, false)
+	require.True(t, done)
+
+	var name, args string
+	for _, c := range chunks {
+		if len(c.Choices) == 0 {
+			continue
+		}
+		for _, tc := range c.Choices[0].Delta.ToolCalls {
+			if tc.Function.Name != "" {
+				name = tc.Function.Name
+			}
+			args += tc.Function.Arguments
+		}
+	}
+	assert.Equal(t, "ping", name)
+	assert.JSONEq(t, `{}`, args, "empty tool args must serialize to valid JSON")
+}
+
 func TestStream_ErrorEvent(t *testing.T) {
 	tr := newStreamTransformer(1, false)
 	ev := &anthStreamEvent{Type: "error", Error: &anthErrorBody{Type: "overloaded_error", Message: "boom"}}

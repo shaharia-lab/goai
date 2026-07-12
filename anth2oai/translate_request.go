@@ -111,9 +111,16 @@ func translateMessages(msgs []oaiMessage, out *anthRequest) error {
 			appendBlocks(&out.Messages, "user", blocks)
 
 		case "tool":
-			content := m.Content
-			if len(content) == 0 || string(content) == "null" {
-				content = json.RawMessage(`""`)
+			// Normalize to a JSON string: OpenAI tool content may be a plain
+			// string or an array of content parts; Anthropic's tool_result takes
+			// a string (or blocks), so we flatten to text either way.
+			text, err := messageText(m.Content)
+			if err != nil {
+				return err
+			}
+			content, err := json.Marshal(text)
+			if err != nil {
+				return fmt.Errorf("anth2oai: encoding tool result: %w", err)
 			}
 			block := anthContentBlock{
 				Type:      "tool_result",

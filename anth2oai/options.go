@@ -62,6 +62,14 @@ func newConfig(baseURL, apiKey string, opts ...Option) *config {
 	if c.anthropicVersion == "" {
 		c.anthropicVersion = defaultAnthropicHeader
 	}
+	// Surface misconfiguration at construction rather than deep inside a request.
+	// The constructors return concrete types (not errors), so we warn rather than fail.
+	if c.baseURL == "" {
+		c.logger.Warn("anth2oai: empty baseURL; upstream requests will fail")
+	}
+	if c.apiKey == "" {
+		c.logger.Warn("anth2oai: empty apiKey; the upstream will reject requests")
+	}
 	return c
 }
 

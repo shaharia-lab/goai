@@ -12,7 +12,7 @@ import (
 func NewHandler(baseURL, apiKey string, opts ...Option) http.Handler {
 	cfg := newConfig(baseURL, apiKey, opts...)
 	return &handler{
-		rt:  NewRoundTripper(baseURL, apiKey, opts...),
+		rt:  newRoundTripper(cfg),
 		cfg: cfg,
 	}
 }

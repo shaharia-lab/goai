@@ -42,6 +42,12 @@
 //	base64 image blocks, http(s) URLs become URL image blocks) and passed
 //	through; upstream support varies.
 //
+// # Behaviors that differ from OpenAI
+//
+// temperature is clamped from OpenAI's 0..2 range to Anthropic's 0..1 (silently;
+// a value of 1.5 becomes 1.0). tool_choice "none" omits the tools entirely.
+// Tool-role message content is flattened to text for the Anthropic tool_result.
+//
 // # Unsupported OpenAI fields (ignored in v1)
 //
 //	n > 1 (treated as 1), logit_bias, presence_penalty, frequency_penalty,

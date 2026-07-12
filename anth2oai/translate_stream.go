@@ -19,8 +19,9 @@ type streamTransformer struct {
 	outputTokens int64
 
 	roleSent      bool
-	toolCallCount int         // number of tool_use blocks started so far
-	blockToolIdx  map[int]int // Anthropic block index -> OpenAI tool_call index
+	toolCallCount int          // number of tool_use blocks started so far
+	blockToolIdx  map[int]int  // Anthropic block index -> OpenAI tool_call index
+	toolArgsSeen  map[int]bool // Anthropic block index -> received any input_json_delta
 }
 
 func newStreamTransformer(created int64, includeUsage bool) *streamTransformer {
@@ -28,6 +29,7 @@ func newStreamTransformer(created int64, includeUsage bool) *streamTransformer {
 		created:      created,
 		includeUsage: includeUsage,
 		blockToolIdx: map[int]int{},
+		toolArgsSeen: map[int]bool{},
 	}
 }
 
@@ -79,9 +81,24 @@ func (s *streamTransformer) handle(ev *anthStreamEvent) (frames [][]byte, done b
 			if !ok {
 				return nil, false, nil
 			}
+			s.toolArgsSeen[ev.Index] = true
 			delta := oaiDelta{ToolCalls: []oaiToolCall{{
 				Index:    &idx,
 				Function: oaiFunctionCall{Arguments: ev.Delta.PartialJSON},
+			}}}
+			return s.frame(delta, nil), false, nil
+		}
+		return nil, false, nil
+
+	case "content_block_stop":
+		// A tool_use block that produced no input_json_delta would otherwise
+		// leave arguments as "" — emit "{}" so strict clients can json.Unmarshal,
+		// matching the non-streaming path's inputToArguments default.
+		if idx, ok := s.blockToolIdx[ev.Index]; ok && !s.toolArgsSeen[ev.Index] {
+			args := "{}"
+			delta := oaiDelta{ToolCalls: []oaiToolCall{{
+				Index:    &idx,
+				Function: oaiFunctionCall{Arguments: args},
 			}}}
 			return s.frame(delta, nil), false, nil
 		}
@@ -113,7 +130,7 @@ func (s *streamTransformer) handle(ev *anthStreamEvent) (frames [][]byte, done b
 		// The [DONE] terminator is written by the transport's finishStream on error.
 		return nil, true, fmt.Errorf("anth2oai: %s", msg)
 
-	case "ping", "content_block_stop":
+	case "ping":
 		return nil, false, nil
 
 	default:

@@ -191,6 +191,23 @@ func TestTranslateRequest_MergesConsecutiveToolResults(t *testing.T) {
 	assert.Len(t, out.Messages[0].Content, 2)
 }
 
+func TestTranslateRequest_ToolResultArrayContent(t *testing.T) {
+	// OpenAI's array content form for a tool result is flattened to a JSON string.
+	in := decodeOAIRequest(t, `{
+		"model":"m",
+		"messages":[{"role":"tool","tool_call_id":"c","content":[
+			{"type":"text","text":"18"},
+			{"type":"text","text":"C"}
+		]}]
+	}`)
+	out, err := translateRequest(in, 4096)
+	require.NoError(t, err)
+	require.Len(t, out.Messages, 1)
+	tr := out.Messages[0].Content[0]
+	assert.Equal(t, "tool_result", tr.Type)
+	assert.JSONEq(t, `"18C"`, string(tr.Content))
+}
+
 func TestTranslateRequest_ImageParts(t *testing.T) {
 	in := decodeOAIRequest(t, `{
 		"model":"m",
