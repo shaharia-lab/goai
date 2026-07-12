@@ -34,6 +34,23 @@ jobs:
           VALIDATE_GO: true
           VALIDATE_MARKDOWN: true
 
+  gosec:
+    name: gosec (security scan)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Non-blocking for now: legacy code has pre-existing findings tracked in
+    # issue #75. This surfaces issues without failing the build.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run gosec
+        uses: securego/gosec@master
+        with:
+          args: ./...
+
   test:
     runs-on: ubuntu-latest
     steps:
