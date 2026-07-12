@@ -20,6 +20,20 @@ type PostgresProvider struct {
 	schema    string
 }
 
+// qualifiedTableName returns the fully-qualified table identifier
+// (schema.collection) with both parts escaped via pq.QuoteIdentifier. SQL
+// identifiers cannot be passed as bind parameters, so quoting them here is the
+// injection defense that justifies the // #nosec G201 markers on the query
+// builders below.
+func (p *PostgresProvider) qualifiedTableName(collection string) string {
+	return pq.QuoteIdentifier(p.schema) + "." + pq.QuoteIdentifier(collection)
+}
+
+// quotedSchema returns the provider's schema name escaped as a SQL identifier.
+func (p *PostgresProvider) quotedSchema() string {
+	return pq.QuoteIdentifier(p.schema)
+}
+
 // PostgresStorageConfig holds configuration for PostgreSQL vector storage.
 type PostgresStorageConfig struct {
 	// ConnectionString is the PostgreSQL connection string
@@ -49,7 +63,7 @@ func NewPostgresProvider(config PostgresStorageConfig) (*PostgresProvider, error
 
 	// Test connection and check pgvector extension
 	if err := initializePostgres(db, config.SchemaName); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 
@@ -72,7 +86,7 @@ func (p *PostgresProvider) Initialize(ctx context.Context) error {
 	}
 
 	// Create schema if not exists
-	if _, err := p.db.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", p.schema)); err != nil {
+	if _, err := p.db.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", p.quotedSchema())); err != nil {
 		return &VectorError{
 			Code:    ErrCodeOperationFailed,
 			Message: "failed to create schema",
@@ -91,7 +105,7 @@ func (p *PostgresProvider) Initialize(ctx context.Context) error {
 			custom_fields JSONB,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		)
-	`, p.schema)
+	`, p.quotedSchema())
 
 	if _, err := p.db.ExecContext(ctx, query); err != nil {
 		return &VectorError{
@@ -122,7 +136,7 @@ func (p *PostgresProvider) CreateCollection(ctx context.Context, config *VectorC
 	defer tx.Rollback()
 
 	// Create collection table
-	tableName := fmt.Sprintf("%s.%s", p.schema, config.Name)
+	tableName := p.qualifiedTableName(config.Name)
 	if err := p.createCollectionTable(ctx, tx, tableName, config); err != nil {
 		return err
 	}
@@ -144,7 +158,7 @@ func (p *PostgresProvider) DeleteCollection(ctx context.Context, name string) er
 	defer tx.Rollback()
 
 	// Drop collection table
-	tableName := fmt.Sprintf("%s.%s", p.schema, name)
+	tableName := p.qualifiedTableName(name)
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName)); err != nil {
 		return &VectorError{
 			Code:    ErrCodeOperationFailed,
@@ -164,8 +178,8 @@ func (p *PostgresProvider) DeleteCollection(ctx context.Context, name string) er
 // ListCollections implements VectorStorage.ListCollections.
 func (p *PostgresProvider) ListCollections(ctx context.Context) ([]string, error) {
 	query := `
-		SELECT name 
-		FROM vector_collections 
+		SELECT name
+		FROM vector_collections
 		WHERE schema_name = $1
 		ORDER BY name`
 
@@ -202,7 +216,8 @@ func (p *PostgresProvider) UpsertDocument(ctx context.Context, collection string
 		return err
 	}
 
-	tableName := fmt.Sprintf("%s.%s", p.schema, collection)
+	tableName := p.qualifiedTableName(collection)
+	// #nosec G201 -- table identifier is escaped via pq.QuoteIdentifier; all values use bind params
 	query := fmt.Sprintf(`
 		INSERT INTO %s (id, vector, content, metadata, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -303,7 +318,8 @@ func (p *PostgresProvider) UpsertDocuments(ctx context.Context, collection strin
 
 // GetDocument implements VectorStorage.GetDocument.
 func (p *PostgresProvider) GetDocument(ctx context.Context, collection, id string) (*VectorDocument, error) {
-	tableName := fmt.Sprintf("%s.%s", p.schema, collection)
+	tableName := p.qualifiedTableName(collection)
+	// #nosec G201 -- table identifier is escaped via pq.QuoteIdentifier; all values use bind params
 	query := fmt.Sprintf(`
 		SELECT id, vector, content, metadata, created_at, updated_at
 		FROM %s
@@ -347,7 +363,8 @@ func (p *PostgresProvider) GetDocument(ctx context.Context, collection, id strin
 
 // DeleteDocument implements VectorStorage.DeleteDocument.
 func (p *PostgresProvider) DeleteDocument(ctx context.Context, collection, id string) error {
-	tableName := fmt.Sprintf("%s.%s", p.schema, collection)
+	tableName := p.qualifiedTableName(collection)
+	// #nosec G201 -- table identifier is escaped via pq.QuoteIdentifier; id uses a bind param
 	query := fmt.Sprintf("DELETE FROM %s WHERE id = $1", tableName)
 
 	result, err := p.db.ExecContext(ctx, query, id)
@@ -389,7 +406,7 @@ func (p *PostgresProvider) SearchByVector(ctx context.Context, collection string
 		}
 	}
 
-	tableName := fmt.Sprintf("%s.%s", p.schema, collection)
+	tableName := p.qualifiedTableName(collection)
 	query := p.buildSearchQuery(tableName, opts)
 
 	vec := pgvector.NewVector(vector)
@@ -431,7 +448,7 @@ func initializePostgres(db *sql.DB, schema string) error {
 	}
 
 	// Create schema if not exists
-	if _, err := db.Exec(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", schema)); err != nil {
+	if _, err := db.Exec(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", pq.QuoteIdentifier(schema))); err != nil {
 		return &VectorError{
 			Code:    ErrCodeOperationFailed,
 			Message: "failed to create schema",
@@ -449,7 +466,7 @@ func initializePostgres(db *sql.DB, schema string) error {
 			distance_type TEXT NOT NULL,
 			custom_fields JSONB,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-		)`, schema)
+		)`, pq.QuoteIdentifier(schema))
 
 	if _, err := db.Exec(query); err != nil {
 		return &VectorError{
@@ -506,11 +523,12 @@ func (p *PostgresProvider) storeCollectionMetadata(ctx context.Context, tx *sql.
 		}
 	}
 
+	// #nosec G201 -- schema identifier is escaped via pq.QuoteIdentifier; all values use bind params
 	query := fmt.Sprintf(`
-		INSERT INTO %s.vector_collections 
+		INSERT INTO %s.vector_collections
 		(name, schema_name, dimension, index_type, distance_type, custom_fields)
 		VALUES ($1, $2, $3, $4, $5, $6)
-	`, p.schema)
+	`, p.quotedSchema())
 
 	_, err = tx.ExecContext(ctx, query,
 		config.Name,
@@ -536,10 +554,11 @@ func (p *PostgresProvider) storeCollectionMetadata(ctx context.Context, tx *sql.
 }
 
 func (p *PostgresProvider) deleteCollectionMetadata(ctx context.Context, tx *sql.Tx, name string) error {
+	// #nosec G201 -- schema identifier is escaped via pq.QuoteIdentifier; all values use bind params
 	query := fmt.Sprintf(`
-		DELETE FROM %s.vector_collections 
+		DELETE FROM %s.vector_collections
 		WHERE name = $1 AND schema_name = $2
-	`, p.schema)
+	`, p.quotedSchema())
 
 	result, err := tx.ExecContext(ctx, query, name, p.schema)
 	if err != nil {
@@ -563,11 +582,12 @@ func (p *PostgresProvider) deleteCollectionMetadata(ctx context.Context, tx *sql
 }
 
 func (p *PostgresProvider) getCollectionConfig(ctx context.Context, name string) (*VectorCollectionConfig, error) {
+	// #nosec G201 -- schema identifier is escaped via pq.QuoteIdentifier; all values use bind params
 	query := fmt.Sprintf(`
 		SELECT dimension, index_type, distance_type, custom_fields
 		FROM %s.vector_collections
 		WHERE name = $1 AND schema_name = $2
-	`, p.schema)
+	`, p.quotedSchema())
 
 	var config VectorCollectionConfig
 	var customFields []byte
@@ -604,9 +624,9 @@ func (p *PostgresProvider) getCollectionConfig(ctx context.Context, name string)
 func (p *PostgresProvider) buildSearchQuery(tableName string, opts *VectorSearchOptions) string {
 	var query strings.Builder
 	query.WriteString(`
-		SELECT 
-			id, 
-			content, 
+		SELECT
+			id,
+			content,
 			metadata,
 			created_at,
 			updated_at,
@@ -660,7 +680,7 @@ func (p *PostgresProvider) buildIndexQuery(tableName string, config *VectorColle
 }
 
 func (p *PostgresProvider) prepareBulkInsertStmt(ctx context.Context, tx *sql.Tx, collection string) (*sql.Stmt, error) {
-	tableName := fmt.Sprintf("%s.%s", p.schema, collection)
+	tableName := p.qualifiedTableName(collection)
 	query := fmt.Sprintf(`
 		INSERT INTO %s (id, vector, content, metadata, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
