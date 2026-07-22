@@ -15,18 +15,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v3
+      - uses: actions/setup-go@be3c94b385c4f180051c996d336f57a34c397495 # v3
         with:
           go-version: '^1.22'
           check-latest: true
           cache: true
 
       - name: Lint Code Base
-        uses: github/super-linter/slim@v4
+        uses: github/super-linter/slim@985ef206aaca4d560cb9ee2af2b42ba44adc1d55 # v4
         env:
           VALIDATE_ALL_CODEBASE: false
           DEFAULT_BRANCH: main
@@ -34,27 +34,43 @@ jobs:
           VALIDATE_GO: true
           VALIDATE_MARKDOWN: true
 
+  gosec:
+    name: gosec (security scan)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Blocking: a gosec finding fails the build. Genuine false positives must be
+    # suppressed in-code with a justified `#nosec Gxxx -- reason`.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Run gosec
+        uses: securego/gosec@9e6a9843d7a4a6e3e9a8539b02612c8a4aa3f889 # v2.27.1
+        with:
+          args: ./...
+
   test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@be3c94b385c4f180051c996d336f57a34c397495 # v3
         with:
           go-version: '^1.22'
           check-latest: true
           cache: true
 
       - name: Test
-        run: go test ./... -covermode=atomic -coverprofile=coverage.out
+        run: go test -race ./... -covermode=atomic -coverprofile=coverage.out
 
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@ab904c41d6ece82784817410c45d8b8c02684457 # v3
 
       - name: Publish artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           retention-days: 1
           name: coverage.out
@@ -65,17 +81,17 @@ jobs:
     needs: test
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: coverage.out
 
       - name: SonarCloud Scan
-        uses: sonarsource/sonarcloud-github-action@master
+        uses: sonarsource/sonarcloud-github-action@ffc3010689be73b8e5ae0c57ce35968afd7909e8 # v5.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

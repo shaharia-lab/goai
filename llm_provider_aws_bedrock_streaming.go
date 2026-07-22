@@ -150,7 +150,7 @@ func (p *BedrockLLMProvider) GetStreamingResponse(ctx context.Context, messages 
 			currentToolInputBuffer = nil
 
 			inferenceCfg := &types.InferenceConfiguration{
-				MaxTokens: aws.Int32(int32(config.maxToken)),
+				MaxTokens: aws.Int32(maxTokenToInt32(config.maxToken)),
 			}
 
 			if config.temperature > 0 {

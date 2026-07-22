@@ -1,0 +1,82 @@
+# Pre-commit hooks for goai — https://pre-commit.com
+#
+# Setup (once per clone):
+#   pip install pre-commit    # or: brew install pre-commit
+#   pre-commit install        # install the git hook
+#
+# Run manually:
+#   pre-commit run --all-files
+#
+# The Go hooks use your local `go` toolchain. gofmt + goimports mirror the Go
+# linting CI enforces (.github/linters/.golangci.yml). gitleaks is built from
+# source in an isolated environment by pre-commit, so no system install is needed.
+minimum_pre_commit_version: "3.5.0"
+
+# testdata holds byte-exact SSE/JSON fixtures — never rewrite them.
+exclude: '^anth2oai/testdata/'
+
+repos:
+  # ---- General file hygiene ----
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  # ---- Secret scanning (must stay green per CLAUDE.md) ----
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  # ---- Go toolchain checks (local, via installed `go`) ----
+  - repo: local
+    hooks:
+      - id: go-fmt
+        name: go fmt
+        description: Format Go code with gofmt.
+        entry: gofmt -l -w
+        language: system
+        types: [go]
+
+      - id: go-imports
+        name: go imports
+        description: Fix and order imports with goimports (mirrors CI).
+        entry: bash -c 'go run golang.org/x/tools/cmd/goimports@v0.28.0 -l -w "$@"' --
+        language: system
+        types: [go]
+
+      - id: go-vet
+        name: go vet
+        description: Report suspicious constructs with go vet.
+        entry: bash -c 'go vet ./...'
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-build
+        name: go build
+        description: Ensure the whole module compiles.
+        entry: bash -c 'go build ./...'
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      # gosec runs on every commit and is blocking. Genuine false positives must
+      # be suppressed in-code with a justified `#nosec Gxxx -- reason`.
+      - id: gosec
+        name: gosec (security scan)
+        description: Static security analysis with gosec.
+        entry: bash -c 'go run github.com/securego/gosec/v2/cmd/gosec@v2.27.1 -quiet ./...'
+        language: system
+        types: [go]
+        pass_filenames: false
