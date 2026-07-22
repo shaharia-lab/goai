@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"strings"
 	"sync"
 	"time"
@@ -805,7 +805,9 @@ func (c *Client) GetProtocolVersion() string {
 func calculateBackoff(initial time.Duration, retryCount int) time.Duration {
 	// Exponential backoff with jitter
 	backoff := float64(initial) * math.Pow(2, float64(retryCount-1))
-	// Add jitter (±20%)
+	// Add jitter (±20%). math/rand/v2 is used deliberately: this is
+	// non-cryptographic timing jitter for retry backoff, not a security context.
+	// #nosec G404 -- non-cryptographic jitter for retry backoff, not a security context
 	jitter := (rand.Float64()*0.4 - 0.2) * backoff
 	duration := time.Duration(backoff + jitter)
 

@@ -46,14 +46,18 @@ func TestHandleSSEConnection(t *testing.T) {
 	server := NewSSEServer(baseServer)
 
 	req := httptest.NewRequest("GET", "/events", nil)
-	w := httptest.NewRecorder()
+	w := newFlushSignalRecorder()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	req = req.WithContext(ctx)
 
 	go server.handleSSEConnection(ctx, w, req)
 
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-w.flushed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SSE handler to write headers")
+	}
 
 	headers := w.Header()
 	if headers.Get("Content-Type") != "text/event-stream" {
@@ -453,14 +457,19 @@ func TestSSEConnectionFlow(t *testing.T) {
 
 	t.Run("Complete Connection Flow", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/events", nil)
-		w := httptest.NewRecorder()
+		sseW := newFlushSignalRecorder()
 		clientCtx, clientCancel := context.WithCancel(context.Background())
 		defer clientCancel()
 
-		go server.handleSSEConnection(context.Background(), w, req.WithContext(clientCtx))
-		time.Sleep(100 * time.Millisecond)
+		go server.handleSSEConnection(context.Background(), sseW, req.WithContext(clientCtx))
 
-		headers := w.Header()
+		select {
+		case <-sseW.flushed:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for SSE handler to write headers")
+		}
+
+		headers := sseW.Header()
 		require.Equal(t, "text/event-stream", headers.Get("Content-Type"))
 		require.Equal(t, "no-cache", headers.Get("Cache-Control"))
 
@@ -486,7 +495,7 @@ func TestSSEConnectionFlow(t *testing.T) {
 		require.NoError(t, err)
 
 		req = httptest.NewRequest("POST", "/message?clientID="+clientID, bytes.NewBuffer(payloadBytes))
-		w = httptest.NewRecorder()
+		w := httptest.NewRecorder()
 
 		server.handleClientMessage(context.Background(), w, req)
 		require.Equal(t, http.StatusOK, w.Code)
@@ -497,17 +506,24 @@ func TestSSEConnectionFlow(t *testing.T) {
 			Result  map[string]interface{} `json:"result"`
 		}
 
-		select {
-		case msg := <-server.clients[clientID]:
-			err := json.Unmarshal(msg, &initResponse)
-			require.NoError(t, err)
-			require.Equal(t, "2.0", initResponse.JsonRPC)
-			require.Equal(t, "1", initResponse.ID)
-			require.Contains(t, initResponse.Result, "serverInfo")
-			require.Contains(t, initResponse.Result, "capabilities")
-		case <-time.After(1 * time.Second):
-			t.Fatal("Timeout waiting for initialize response")
+		server.clientsMutex.RLock()
+		clientCh := server.clients[clientID]
+		server.clientsMutex.RUnlock()
+		// Drain to the initialize response (id "1"), skipping any unrelated
+		// notification-style messages that may be delivered first.
+		deadline := time.After(2 * time.Second)
+		for initResponse.ID != "1" {
+			select {
+			case msg := <-clientCh:
+				_ = json.Unmarshal(msg, &initResponse)
+			case <-deadline:
+				t.Fatal("Timeout waiting for initialize response")
+			}
 		}
+		require.Equal(t, "2.0", initResponse.JsonRPC)
+		require.Equal(t, "1", initResponse.ID)
+		require.Contains(t, initResponse.Result, "serverInfo")
+		require.Contains(t, initResponse.Result, "capabilities")
 	})
 
 	t.Run("Concurrent Connections", func(t *testing.T) {
@@ -541,4 +557,24 @@ func TestSSEConnectionFlow(t *testing.T) {
 
 		wgClients.Wait()
 	})
+}
+
+// flushSignalRecorder wraps httptest.ResponseRecorder and closes flushed on the
+// first Flush. Tests that run an SSE handler in a goroutine wait on flushed
+// before reading headers: the handler sets all headers before its first flush
+// and never touches them after, so the send/receive is a happens-before edge
+// that makes those reads race-free.
+type flushSignalRecorder struct {
+	*httptest.ResponseRecorder
+	flushed chan struct{}
+	once    sync.Once
+}
+
+func newFlushSignalRecorder() *flushSignalRecorder {
+	return &flushSignalRecorder{ResponseRecorder: httptest.NewRecorder(), flushed: make(chan struct{})}
+}
+
+func (r *flushSignalRecorder) Flush() {
+	r.once.Do(func() { close(r.flushed) })
+	r.ResponseRecorder.Flush()
 }

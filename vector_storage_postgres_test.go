@@ -36,12 +36,12 @@ func TestNewPostgresProvider(t *testing.T) {
 		mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM pg_extension WHERE extname = 'vector'\)`).
 			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
-		// Then expect schema creation
-		mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS public").
+		// Then expect schema creation (identifiers are pq.QuoteIdentifier-quoted)
+		mock.ExpectExec(`CREATE SCHEMA IF NOT EXISTS "public"`).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 
 		// Finally expect metadata table creation
-		mock.ExpectExec("CREATE TABLE IF NOT EXISTS public.vector_collections").
+		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS "public".vector_collections`).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 
 		provider := &PostgresProvider{

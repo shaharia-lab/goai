@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"github.com/shaharia-lab/goai"
 )
 
@@ -31,7 +32,9 @@ func main() {
 			var input struct {
 				Name string `json:"name"`
 			}
-			json.Unmarshal(params.Arguments, &input)
+			if err := json.Unmarshal(params.Arguments, &input); err != nil {
+				return goai.CallToolResult{}, err
+			}
 			return goai.CallToolResult{
 				Content: []goai.ToolResultContent{{
 					Type: "text",
@@ -40,7 +43,9 @@ func main() {
 			}, nil
 		},
 	}
-	baseServer.AddTools(tool)
+	if err := baseServer.AddTools(tool); err != nil {
+		panic(err)
+	}
 
 	// Create and run SSE server
 	server := goai.NewSSEServer(baseServer)

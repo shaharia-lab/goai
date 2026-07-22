@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -266,8 +267,7 @@ func (s *SSEServer) handleSSEConnection(ctx context.Context, w http.ResponseWrit
 		}).Info("SSE client disconnecting")
 
 		s.handleClientDisconnect(r.Context(), clientID)
-		delete(s.clients, clientID)
-		close(messageChan)
+		s.closeClientLocked(clientID)
 		s.clientsMutex.Unlock()
 
 		s.logger.WithFields(map[string]interface{}{
@@ -296,9 +296,14 @@ func (s *SSEServer) handleSSEConnection(ctx context.Context, w http.ResponseWrit
 		}).Info("Client connection closed")
 	}()
 
-	endpointURL := fmt.Sprintf("http://%s/message?clientID=%s", r.Host, clientID)
+	// clientID is a server-generated UUID and is query-escaped for defense in
+	// depth; the response is a non-HTML text/event-stream, so this is not an
+	// HTML/JS sink (gosec G705).
+	endpointURL := fmt.Sprintf("http://%s/message?clientID=%s", r.Host, url.QueryEscape(clientID))
 	endpointEvent := fmt.Sprintf("event: endpoint\ndata: %s\n\n", endpointURL)
-	if _, err = fmt.Fprint(w, endpointEvent); err != nil {
+	// #nosec G705 -- SSE (non-HTML) text/event-stream, not an HTML/JS sink; clientID is a server-generated, escaped UUID
+	_, err = fmt.Fprint(w, endpointEvent)
+	if err != nil {
 		s.logger.WithErr(err).Error("Error sending endpoint data")
 	}
 	flusher.Flush()
@@ -470,6 +475,8 @@ func (s *SSEServer) Run(ctx context.Context) error {
 		},
 		Addr:    s.address,        // Use the configured address.
 		Handler: corsHandler(mux), // Wrap the mux with the CORS handler.
+		// Bound the header-read phase to defend against Slowloris (gosec G112).
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	s.LogMessage(LogLevelInfo, "startup", fmt.Sprintf("Starting SSE server on %s", s.address))
@@ -477,9 +484,12 @@ func (s *SSEServer) Run(ctx context.Context) error {
 	// Shutdown handling
 	errChan := make(chan error, 1)
 	go func() {
-		if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			s.logger.WithErr(err).Error("Error starting server")
-			errChan <- err
+		// Local error, not the outer err: this goroutine runs concurrently with
+		// the ctx.Done() branch (which writes err via server.Shutdown), so
+		// sharing err is a data race. Result is reported over errChan.
+		if serveErr := server.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			s.logger.WithErr(serveErr).Error("Error starting server")
+			errChan <- serveErr
 		}
 	}()
 
@@ -516,14 +526,24 @@ func (s *SSEServer) Run(ctx context.Context) error {
 	}
 }
 
-func (s *SSEServer) removeClient(clientID string) {
-	s.clientsMutex.Lock()
-	defer s.clientsMutex.Unlock()
-
+// closeClientLocked closes a client's message channel and removes it from the
+// registry, but only if it is still registered. The caller MUST hold
+// clientsMutex. It is idempotent: a second call for the same client is a no-op,
+// so the two teardown paths (the handleSSEConnection cleanup defer and
+// removeClient) can never double-close the channel — which previously caused a
+// "close of closed channel" panic under concurrent disconnects (#77).
+func (s *SSEServer) closeClientLocked(clientID string) {
 	if ch, exists := s.clients[clientID]; exists {
 		close(ch)
 		delete(s.clients, clientID)
 	}
+}
+
+func (s *SSEServer) removeClient(clientID string) {
+	s.clientsMutex.Lock()
+	defer s.clientsMutex.Unlock()
+
+	s.closeClientLocked(clientID)
 	s.activeConnections.Delete(clientID)
 }
 
